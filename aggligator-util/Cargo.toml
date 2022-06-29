@@ -1,0 +1,67 @@
+[package]
+name = "aggligator-util"
+version = "0.1.0-pre2"
+edition = "2021"
+rust-version = "1.65"
+authors = ["Sebastian Urban <surban@surban.net>"]
+description = "Aggligator utilities"
+categories = ["asynchronous", "network-programming", "command-line-utilities"]
+keywords = ["aggligator", "multipath", "multiplex", "tcp", "mptcp"]
+license = "Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/surban/aggligator"
+
+[features]
+default = ["cli"]
+cli = [
+    "speed-test",
+    "monitor",
+    "dump",
+    "clap",
+    "tracing-subscriber",
+    "anyhow",
+    "crossterm",
+    "serde",
+    "serde_json",
+    "tokio/rt-multi-thread",
+]
+raw-speed-cli = ["cli"]
+speed-test = ["rand", "rand_xoshiro"]
+monitor = ["crossterm"]
+dump = ["aggligator/dump"]
+
+[dependencies]
+aggligator = { version = "0.1.0-pre2", path = "../aggligator" }
+
+futures = "0.3"
+tokio = { version = "1.21", features = ["net", "rt", "rt-multi-thread"] }
+tracing = "0.1"
+network-interface = "0.1.4"
+
+rand = { version = "0.8", optional = true }
+rand_xoshiro = { version = "0.6", optional = true }
+clap = { version = "4", features = ["derive"], optional = true }
+anyhow = { version = "1", optional = true }
+crossterm = { version = "0.25", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "env-filter",
+    "fmt",
+], optional = true }
+
+[[bin]]
+name = "agg-speed"
+required-features = ["cli"]
+
+[[bin]]
+name = "agg-tunnel"
+required-features = ["cli"]
+
+[[bin]]
+name = "raw-speed"
+required-features = ["raw-speed-cli"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

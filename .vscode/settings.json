@@ -1,0 +1,15 @@
+{
+    "files.exclude": {
+        "target/": true
+    },
+    "cSpell.words": [
+        "Aggligator",
+        "datas",
+        "hostnames",
+        "Multipath",
+        "oneshot",
+        "SCTP",
+        "Serde",
+        "unconsumable"
+    ],
+}
