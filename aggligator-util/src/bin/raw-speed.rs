@@ -114,12 +114,12 @@ impl RawClientCli {
             IpAddr::V6(_) => TcpSocket::new_v6(),
         }?;
 
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
         socket.bind_device(Some(iface))?;
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
         let _ = ifaces;
 
-        #[cfg(target_os = "windows")]
+        #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
         {
             let mut bound = false;
 
