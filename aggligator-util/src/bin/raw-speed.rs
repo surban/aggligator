@@ -1,6 +1,6 @@
 //! Raw connections for comparison of performance.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 use crossterm::{
     cursor::{MoveTo, MoveToNextLine},
@@ -108,13 +108,44 @@ impl RawClientCli {
         Err(anyhow!("cannot resolve IP address of target"))
     }
 
-    async fn tcp_connect(iface: &[u8], target: SocketAddr) -> Result<TcpStream> {
+    async fn tcp_connect(iface: &[u8], ifaces: &[NetworkInterface], target: SocketAddr) -> Result<TcpStream> {
         let socket = match target.ip() {
             IpAddr::V4(_) => TcpSocket::new_v4(),
             IpAddr::V6(_) => TcpSocket::new_v6(),
+        }?;
+
+        #[cfg(not(target_os = "windows"))]
+        socket.bind_device(Some(iface))?;
+
+        #[cfg(target_os = "windows")]
+        {
+            let mut bound = false;
+
+            for ifn in ifaces {
+                if ifn.name.as_bytes() == iface {
+                    let Some(addr) = ifn.addr else { continue };
+                    match (addr.ip(), target.ip()) {
+                        (IpAddr::V4(_), IpAddr::V4(_)) => (),
+                        (IpAddr::V6(_), IpAddr::V6(_)) => (),
+                        _ => continue,
+                    }
+
+                    if addr.ip().is_loopback() != target.ip().is_loopback() {
+                        continue;
+                    }
+
+                    tracing::debug!("binding to {addr:?} on interface {}", &ifn.name);
+                    socket.bind(SocketAddr::new(addr.ip(), 0))?;
+                    bound = true;
+                    break;
+                }
+            }
+
+            if !bound {
+                bail!("no IP address for interface");
+            }
         }
-        .context("cannot create socket")?;
-        socket.bind_device(Some(iface)).context("cannot bind to interface")?;
+
         Ok(socket.connect(target).await?)
     }
 
@@ -132,7 +163,7 @@ impl RawClientCli {
             }
 
             let interfaces = NetworkInterface::show().context("cannot get network interfaces")?;
-            let iface_names: HashSet<_> = interfaces.into_iter().map(|iface| iface.name).collect();
+            let iface_names: HashSet<_> = interfaces.clone().into_iter().map(|iface| iface.name).collect();
 
             for iface in iface_names {
                 if connected.contains(&iface) {
@@ -142,12 +173,15 @@ impl RawClientCli {
 
                 let iface_disconnected_tx = disconnected_tx.clone();
                 let iface_speeds_tx = speeds_tx.clone();
+                let interfaces = interfaces.clone();
                 tokio::spawn(async move {
                     if iface_speeds_tx.is_none() {
                         eprintln!("Trying TCP connection from {iface}");
                     }
 
-                    match timeout(TCP_CONNECT_TIMEOUT, Self::tcp_connect(iface.as_bytes(), target)).await {
+                    match timeout(TCP_CONNECT_TIMEOUT, Self::tcp_connect(iface.as_bytes(), &interfaces, target))
+                        .await
+                    {
                         Ok(Ok(strm)) => {
                             if iface_speeds_tx.is_none() {
                                 eprintln!("TCP connection established from {iface}");

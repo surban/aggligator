@@ -286,15 +286,44 @@ pub async fn connect_links_and_monitor(
     tags_tx: watch::Sender<Vec<TcpLinkTag>>, tag_err_tx: mpsc::Sender<TagError<TcpLinkTag>>,
     mut disabled_tags_rx: watch::Receiver<HashSet<TcpLinkTag>>,
 ) -> Result<()> {
-    /// Establishes a TCP connection.
-    ///
-    /// Chooses between an IPv4 and IPv6 socket depending on the target address.
-    async fn do_connect(iface: &[u8], target: SocketAddr) -> Result<TcpStream> {
+    async fn do_connect(iface: &[u8], ifaces: &[NetworkInterface], target: SocketAddr) -> Result<TcpStream> {
         let socket = match target.ip() {
             IpAddr::V4(_) => TcpSocket::new_v4(),
             IpAddr::V6(_) => TcpSocket::new_v6(),
         }?;
+
+        #[cfg(not(target_os = "windows"))]
         socket.bind_device(Some(iface))?;
+
+        #[cfg(target_os = "windows")]
+        {
+            let mut bound = false;
+
+            for ifn in ifaces {
+                if ifn.name.as_bytes() == iface {
+                    let Some(addr) = ifn.addr else { continue };
+                    match (addr.ip(), target.ip()) {
+                        (IpAddr::V4(_), IpAddr::V4(_)) => (),
+                        (IpAddr::V6(_), IpAddr::V6(_)) => (),
+                        _ => continue,
+                    }
+
+                    if addr.ip().is_loopback() != target.ip().is_loopback() {
+                        continue;
+                    }
+
+                    tracing::debug!("binding to {addr:?} on interface {}", &ifn.name);
+                    socket.bind(SocketAddr::new(addr.ip(), 0))?;
+                    bound = true;
+                    break;
+                }
+            }
+
+            if !bound {
+                return Err(Error::new(ErrorKind::NotFound, "no IP address for interface"));
+            }
+        }
+
         socket.connect(target).await
     }
 
@@ -323,12 +352,13 @@ pub async fn connect_links_and_monitor(
                 running.insert(tag.clone());
 
                 let control = control.clone();
+                let interfaces = interfaces.clone();
                 let disconnected_tx = disconnected_tx.clone();
                 let tag_err_tx = tag_err_tx.clone();
                 tokio::spawn(async move {
                     tracing::debug!("Trying TCP connection for {tag}");
 
-                    match timeout(TCP_CONNECT_TIMEOUT, do_connect(iface.as_bytes(), target)).await {
+                    match timeout(TCP_CONNECT_TIMEOUT, do_connect(iface.as_bytes(), &interfaces, target)).await {
                         Ok(Ok(strm)) => {
                             tracing::debug!("TCP connection established for {tag}");
 

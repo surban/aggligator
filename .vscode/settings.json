@@ -12,4 +12,5 @@
         "Serde",
         "unconsumable"
     ],
+    "rust-analyzer.cargo.features": "all",
 }
