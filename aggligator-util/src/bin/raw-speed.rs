@@ -1,6 +1,6 @@
 //! Raw connections for comparison of performance.
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::{Args, Parser, Subcommand};
 use crossterm::{
     cursor::{MoveTo, MoveToNextLine},
@@ -116,6 +116,8 @@ impl RawClientCli {
 
         #[cfg(not(target_os = "windows"))]
         socket.bind_device(Some(iface))?;
+        #[cfg(not(target_os = "windows"))]
+        let _ = ifaces;
 
         #[cfg(target_os = "windows")]
         {
@@ -142,7 +144,7 @@ impl RawClientCli {
             }
 
             if !bound {
-                bail!("no IP address for interface");
+                anyhow::bail!("no IP address for interface");
             }
         }
 

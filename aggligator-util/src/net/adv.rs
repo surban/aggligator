@@ -294,6 +294,8 @@ pub async fn connect_links_and_monitor(
 
         #[cfg(not(target_os = "windows"))]
         socket.bind_device(Some(iface))?;
+        #[cfg(not(target_os = "windows"))]
+        let _ = ifaces;
 
         #[cfg(target_os = "windows")]
         {
