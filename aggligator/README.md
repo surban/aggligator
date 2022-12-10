@@ -63,6 +63,9 @@ traffic over the remaining links, but has no effect on the connection.
 If the ethernet cable is plugged in again or Wi-Fi is re-enabled, the link is 
 automatically re-established.
 
+## Minimum supported Rust version
+
+The minimum supported Rust version (MSRV) is 1.65.
 
 ## License
 
