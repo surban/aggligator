@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use crossterm::{style::Stylize, tty::IsTty};
 use futures::future;
+use std::process::exit;
 use std::{
     collections::HashMap,
     io::stdout,
@@ -156,13 +157,23 @@ impl ClientCli {
                     let _ =
                         control_tx.send((control.clone(), format!("{src}: {server_port}->{client_port}"))).await;
 
-                    tokio::spawn(connect_links_and_monitor(
-                        control,
-                        target.clone(),
-                        watch::channel(Default::default()).0,
-                        tag_err_tx.clone(),
-                        disabled_tags_rx.clone(),
-                    ));
+                    let connect_target = target.clone();
+                    let connect_tag_err_tx = tag_err_tx.clone();
+                    let connect_disabled_tag_rx = disabled_tags_rx.clone();
+                    tokio::spawn(async move {
+                        if let Err(err) = connect_links_and_monitor(
+                            control,
+                            connect_target,
+                            watch::channel(Default::default()).0,
+                            connect_tag_err_tx,
+                            connect_disabled_tag_rx,
+                        )
+                        .await
+                        {
+                            eprintln!("Connecting links failed: {err}");
+                            exit(10);
+                        }
+                    });
 
                     tokio::spawn(async move {
                         if no_monitor {

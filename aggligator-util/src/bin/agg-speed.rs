@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use crossterm::{style::Stylize, tty::IsTty};
 use serde::Serialize;
+use std::process::exit;
 use std::{
     io::stdout,
     net::{Ipv6Addr, SocketAddr},
@@ -138,7 +139,8 @@ impl ClientCli {
             if let Err(err) =
                 connect_links_and_monitor(control, links_target, tags_tx, tag_err_tx, disabled_tags_rx).await
             {
-                tracing::error!("connecting links failed: {err}");
+                eprintln!("Connecting links failed: {err}");
+                exit(10);
             }
         });
 
