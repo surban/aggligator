@@ -4,12 +4,12 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use crossterm::{style::Stylize, tty::IsTty};
 use futures::future;
-use std::process::exit;
 use std::{
     collections::HashMap,
     io::stdout,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     path::PathBuf,
+    process::exit,
     sync::Arc,
     time::Duration,
 };

@@ -4,11 +4,11 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use crossterm::{style::Stylize, tty::IsTty};
 use serde::Serialize;
-use std::process::exit;
 use std::{
     io::stdout,
     net::{Ipv6Addr, SocketAddr},
     path::PathBuf,
+    process::exit,
     time::Duration,
 };
 use tokio::{
