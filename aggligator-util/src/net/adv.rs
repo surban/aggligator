@@ -343,58 +343,67 @@ pub async fn connect_links_and_monitor(
             running.remove(&tag);
         }
 
-        for target in target.resolve().await? {
-            for iface in interface_names_for_target(&interfaces, target) {
-                let tag = TcpLinkTag::new(&iface, target, Direction::Outgoing);
-                tags.push(tag.clone());
+        match target.resolve().await {
+            Ok(targets) => {
+                for target in targets {
+                    for iface in interface_names_for_target(&interfaces, target) {
+                        let tag = TcpLinkTag::new(&iface, target, Direction::Outgoing);
+                        tags.push(tag.clone());
 
-                if running.contains(&tag) || disabled.contains(&tag) {
-                    continue;
-                }
-                running.insert(tag.clone());
+                        if running.contains(&tag) || disabled.contains(&tag) {
+                            continue;
+                        }
+                        running.insert(tag.clone());
 
-                let control = control.clone();
-                let interfaces = interfaces.clone();
-                let disconnected_tx = disconnected_tx.clone();
-                let tag_err_tx = tag_err_tx.clone();
-                tokio::spawn(async move {
-                    tracing::debug!("Trying TCP connection for {tag}");
+                        let control = control.clone();
+                        let interfaces = interfaces.clone();
+                        let disconnected_tx = disconnected_tx.clone();
+                        let tag_err_tx = tag_err_tx.clone();
+                        tokio::spawn(async move {
+                            tracing::debug!("Trying TCP connection for {tag}");
 
-                    match timeout(TCP_CONNECT_TIMEOUT, do_connect(iface.as_bytes(), &interfaces, target)).await {
-                        Ok(Ok(strm)) => {
-                            tracing::debug!("TCP connection established for {tag}");
+                            match timeout(TCP_CONNECT_TIMEOUT, do_connect(iface.as_bytes(), &interfaces, target))
+                                .await
+                            {
+                                Ok(Ok(strm)) => {
+                                    tracing::debug!("TCP connection established for {tag}");
 
-                            let (read, write) = strm.into_split();
-                            match control.add_io(read, write, tag.clone(), iface.as_bytes()).await {
-                                Ok(link) => {
-                                    tracing::info!("Link established for {tag}");
+                                    let (read, write) = strm.into_split();
+                                    match control.add_io(read, write, tag.clone(), iface.as_bytes()).await {
+                                        Ok(link) => {
+                                            tracing::info!("Link established for {tag}");
 
-                                    let reason = link.disconnected().await;
-                                    tracing::warn!("Link for {tag} disconnected: {reason}");
+                                            let reason = link.disconnected().await;
+                                            tracing::warn!("Link for {tag} disconnected: {reason}");
 
-                                    let _ =
-                                        tag_err_tx.send(TagError::new(control.id(), link.tag(), reason)).await;
+                                            let _ = tag_err_tx
+                                                .send(TagError::new(control.id(), link.tag(), reason))
+                                                .await;
+                                        }
+                                        Err(err) => {
+                                            tracing::warn!("Establishing link for {tag} failed: {err}");
+                                            let _ = tag_err_tx.send(TagError::new(control.id(), &tag, err)).await;
+                                        }
+                                    }
                                 }
-                                Err(err) => {
-                                    tracing::warn!("Establishing link for {tag} failed: {err}");
+                                Ok(Err(err)) => {
+                                    tracing::warn!("TCP connection for {tag} failed: {}", &err);
                                     let _ = tag_err_tx.send(TagError::new(control.id(), &tag, err)).await;
                                 }
+                                Err(_) => {
+                                    tracing::warn!("TCP connection for {tag} timed out");
+                                    let _ = tag_err_tx
+                                        .send(TagError::new(control.id(), &tag, "TCP connect timeout"))
+                                        .await;
+                                }
                             }
-                        }
-                        Ok(Err(err)) => {
-                            tracing::warn!("TCP connection for {tag} failed: {}", &err);
-                            let _ = tag_err_tx.send(TagError::new(control.id(), &tag, err)).await;
-                        }
-                        Err(_) => {
-                            tracing::warn!("TCP connection for {tag} timed out");
-                            let _ =
-                                tag_err_tx.send(TagError::new(control.id(), &tag, "TCP connect timeout")).await;
-                        }
-                    }
 
-                    let _ = disconnected_tx.send(tag.clone()).await;
-                });
+                            let _ = disconnected_tx.send(tag.clone()).await;
+                        });
+                    }
+                }
             }
+            Err(err) => tracing::warn!("cannot lookup target: {err}"),
         }
 
         tags.sort();

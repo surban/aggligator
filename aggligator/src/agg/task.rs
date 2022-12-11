@@ -1255,8 +1255,6 @@ where
                         old_link.txed_unacked_data -= data.len();
                     }
 
-                    //msg.clone()
-
                     *status = SentReliableStatus::ResendQueued { msg: msg.clone() };
                     self.resend_queue.push_back(p.clone());
                 }

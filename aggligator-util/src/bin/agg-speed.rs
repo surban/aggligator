@@ -134,7 +134,13 @@ impl ClientCli {
         drop(control_tx);
 
         let links_target = target.clone();
-        tokio::spawn(connect_links_and_monitor(control, links_target, tags_tx, tag_err_tx, disabled_tags_rx));
+        tokio::spawn(async move {
+            if let Err(err) =
+                connect_links_and_monitor(control, links_target, tags_tx, tag_err_tx, disabled_tags_rx).await
+            {
+                tracing::error!("connecting links failed: {err}");
+            }
+        });
 
         if !self.no_monitor {
             tokio::spawn(async move {
