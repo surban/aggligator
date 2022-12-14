@@ -4,9 +4,11 @@
 //! and managed internally.
 //!
 
+use byteorder::{ByteOrder, LE};
 use rand::random;
 use std::{fmt, num::NonZeroU128, sync::Arc};
 use tokio::sync::mpsc;
+use x25519_dalek::SharedSecret;
 
 /// Connection identifier.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -28,6 +30,30 @@ impl ConnId {
     /// Generates a new connection id.
     pub(crate) fn generate() -> Self {
         Self(random())
+    }
+}
+
+/// Encrypted connection identifier.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct EncryptedConnId(pub u128);
+
+impl fmt::Debug for EncryptedConnId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "*{:016x}*", self.0)
+    }
+}
+
+impl EncryptedConnId {
+    /// Encrypts the connection id with the first 16 bytes of the shared secret.
+    pub fn new(id: ConnId, secret: &SharedSecret) -> Self {
+        let key = LE::read_u128(secret.as_bytes());
+        Self(key ^ id.0)
+    }
+
+    /// Decrypts the connection id with the first 16 bytes of the shared secret.
+    pub fn decrypt(self, secret: &SharedSecret) -> ConnId {
+        let key = LE::read_u128(secret.as_bytes());
+        ConnId(key ^ self.0)
     }
 }
 

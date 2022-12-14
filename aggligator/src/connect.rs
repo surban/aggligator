@@ -21,6 +21,7 @@ use tokio::{
     sync::{mpsc, oneshot, Mutex},
     time::{error::Elapsed, timeout, Instant},
 };
+use x25519_dalek::{EphemeralSecret, PublicKey};
 
 use crate::{
     agg::{link_int::LinkInt, task::Task, AggParts},
@@ -373,14 +374,34 @@ where
         // Perform protocol handshake.
         let (remote_server_id, conn_id, existing, remote_cfg, roundtrip, remote_user_data) =
             timeout(cfg.link_non_working_timeout, async {
-                let start = Instant::now();
-                LinkMsg::Welcome { extensions: 0, server_id, user_data: user_data.to_vec(), cfg: (&*cfg).into() }.send(&mut tx).await?;
+                let server_secret = EphemeralSecret::new(rand_core::OsRng);
+                let server_public_key = PublicKey::from(&server_secret);
 
-                let LinkMsg::Connect { extensions: _, server_id, connection_id, existing_connection, user_data: remote_user_data, cfg }
-                        = LinkMsg::recv(&mut rx).await?
+                let start = Instant::now();
+                LinkMsg::Welcome {
+                    extensions: 0,
+                    public_key: server_public_key,
+                    server_id,
+                    user_data: user_data.to_vec(),
+                    cfg: (&*cfg).into(),
+                }
+                .send(&mut tx)
+                .await?;
+
+                let LinkMsg::Connect {
+                    extensions: _,
+                    public_key: client_public_key,
+                    server_id,
+                    connection_id: encrypted_conn_id,
+                    existing_connection,
+                    user_data: remote_user_data, cfg
+                } = LinkMsg::recv(&mut rx).await?
                     else { return Err::<_, IncomingError>(protocol_err!("expected Connect message").into()) };
 
-                Ok((server_id, connection_id, existing_connection, cfg, start.elapsed(), remote_user_data))
+                let shared_secret = server_secret.diffie_hellman(&client_public_key);
+                let conn_id = encrypted_conn_id.decrypt(&shared_secret);
+
+                Ok((server_id, conn_id, existing_connection, cfg, start.elapsed(), remote_user_data))
             })
             .await??;
 

@@ -25,6 +25,7 @@ tracing = "0.1"
 bytes = "1.1"
 rand = "0.8"
 atomic_refcell = "0.1.8"
+rand_core = "0.5"
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 

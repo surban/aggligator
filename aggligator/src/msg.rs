@@ -5,10 +5,11 @@ use bytes::Bytes;
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use rand::{prelude::*, thread_rng};
 use std::{fmt, io, num::NonZeroU128};
+use x25519_dalek::PublicKey;
 
 use crate::{
     cfg::ExchangedCfg,
-    id::{ConnId, ServerId},
+    id::{EncryptedConnId, ServerId},
     protocol_err,
 };
 
@@ -65,6 +66,8 @@ pub(crate) enum LinkMsg {
         // Protocol version of server.
         /// Flags of supported protocol extensions.
         extensions: u32,
+        /// Diffie-Hellman public key for this link of server.
+        public_key: PublicKey,
         /// Unique identifier of this server.
         server_id: ServerId,
         /// User-specified link data.
@@ -78,11 +81,13 @@ pub(crate) enum LinkMsg {
         // Protocol version of client.
         /// Flags of supported protocol extensions.
         extensions: u32,
+        /// Diffie-Hellman public key for this link of client.
+        public_key: PublicKey,
         /// Unique identifier of this server.
         /// Is zero, if the endpoint does not accept incoming connections.
         server_id: Option<ServerId>,
-        /// Connection identifier.
-        connection_id: ConnId,
+        /// Encrypted connection identifier.
+        connection_id: EncryptedConnId,
         /// Whether connection must already exist on the server.
         existing_connection: bool,
         /// User-specified link data.
@@ -110,7 +115,7 @@ pub(crate) enum LinkMsg {
     },
     /// Acknowledges data received over this link.
     Ack {
-        /// Sequence number up to which data has been received on this link.
+        /// Sequence that has been received on this link.
         received: u32,
     },
     /// Notifies that received data has been consumed.
@@ -148,7 +153,7 @@ pub(crate) enum LinkMsg {
 
 impl LinkMsg {
     /// Protocol version.
-    pub const PROTOCOL_VERSION: u8 = 1;
+    pub const PROTOCOL_VERSION: u8 = 2;
 
     /// Magic identifier.
     const MAGIC: &'static [u8; 5] = b"LIAG\0";
@@ -170,11 +175,12 @@ impl LinkMsg {
 
     fn write(&self, mut writer: impl io::Write) -> Result<(), io::Error> {
         match self {
-            LinkMsg::Welcome { server_id, extensions, user_data, cfg } => {
+            LinkMsg::Welcome { server_id, extensions, public_key, user_data, cfg } => {
                 writer.write_u8(Self::MSG_WELCOME)?;
                 writer.write_all(Self::MAGIC)?;
                 writer.write_u8(Self::PROTOCOL_VERSION)?;
                 writer.write_u32::<LE>(*extensions)?;
+                writer.write_all(public_key.as_bytes())?;
                 writer.write_u128::<LE>(server_id.0.get())?;
                 writer.write_u16::<LE>(
                     user_data
@@ -185,11 +191,20 @@ impl LinkMsg {
                 writer.write_all(user_data)?;
                 cfg.write(&mut writer)?;
             }
-            LinkMsg::Connect { extensions, server_id, connection_id, existing_connection, user_data, cfg } => {
+            LinkMsg::Connect {
+                extensions,
+                public_key,
+                server_id,
+                connection_id,
+                existing_connection,
+                user_data,
+                cfg,
+            } => {
                 writer.write_u8(Self::MSG_CONNECT)?;
                 writer.write_all(Self::MAGIC)?;
                 writer.write_u8(Self::PROTOCOL_VERSION)?;
                 writer.write_u32::<LE>(*extensions)?;
+                writer.write_all(public_key.as_bytes())?;
                 writer.write_u128::<LE>(server_id.map(|si| si.0.get()).unwrap_or(0))?;
                 writer.write_u128::<LE>(connection_id.0)?;
                 writer.write_u8(*existing_connection as u8)?;
@@ -271,6 +286,11 @@ impl LinkMsg {
                 }
                 Self::Welcome {
                     extensions: reader.read_u32::<LE>()?,
+                    public_key: {
+                        let mut buf = [0; 32];
+                        reader.read_exact(&mut buf)?;
+                        buf.into()
+                    },
                     server_id: ServerId(
                         NonZeroU128::new(reader.read_u128::<LE>()?)
                             .ok_or_else(|| protocol_err!("server id must not be zero"))?,
@@ -299,8 +319,13 @@ impl LinkMsg {
                 }
                 Self::Connect {
                     extensions: reader.read_u32::<LE>()?,
+                    public_key: {
+                        let mut buf = [0; 32];
+                        reader.read_exact(&mut buf)?;
+                        buf.into()
+                    },
                     server_id: NonZeroU128::new(reader.read_u128::<LE>()?).map(ServerId),
-                    connection_id: ConnId(reader.read_u128::<LE>()?),
+                    connection_id: EncryptedConnId(reader.read_u128::<LE>()?),
                     existing_connection: reader.read_u8()? != 0,
                     user_data: {
                         let len = reader.read_u16::<LE>()?;

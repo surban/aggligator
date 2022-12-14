@@ -17,11 +17,12 @@ use tokio::{
     sync::{mpsc, watch, Mutex},
     time::{error::Elapsed, timeout, Instant},
 };
+use x25519_dalek::{EphemeralSecret, PublicKey};
 
 use crate::{
     agg::link_int::LinkInt,
     cfg::Cfg,
-    id::{ConnId, LinkId, ServerId},
+    id::{ConnId, EncryptedConnId, LinkId, ServerId},
     io::{IoRx, IoTx},
     msg::{LinkMsg, RefusedReason},
     protocol_err,
@@ -149,7 +150,7 @@ impl<TX, RX, TAG> Clone for Control<TX, RX, TAG> {
 
 impl<TX, RX, TAG> fmt::Debug for Control<TX, RX, TAG> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("Control").field("conn_id", &self.conn_id).finish()
+        f.debug_struct("Control").field("id", &self.conn_id).finish()
     }
 }
 
@@ -263,8 +264,19 @@ where
 
         // Perform protocol handshake.
         let (remote_cfg, roundtrip, remote_user_data) = timeout(self.cfg.link_non_working_timeout, async {
-            let LinkMsg::Welcome { extensions: _, server_id, cfg, user_data: remote_user_data } = LinkMsg::recv(&mut rx).await?
-                    else { return Err::<_, AddLinkError>(protocol_err!("expected Welcome message").into()) };
+            let client_secret = EphemeralSecret::new(rand_core::OsRng);
+            let client_public_key = PublicKey::from(&client_secret);
+
+            let LinkMsg::Welcome {
+                extensions: _,
+                public_key: server_public_key,
+                server_id,
+                cfg,
+                user_data: remote_user_data
+            } = LinkMsg::recv(&mut rx).await?
+                else { return Err::<_, AddLinkError>(protocol_err!("expected Welcome message").into()) };
+
+            let shared_secret = client_secret.diffie_hellman(&server_public_key);
 
             {
                 let mut remote_server_id = self.remote_server_id.lock().await;
@@ -285,8 +297,9 @@ where
             let start = Instant::now();
             LinkMsg::Connect {
                 extensions: 0,
+                public_key: client_public_key,
                 server_id: self.server_id,
-                connection_id: self.conn_id,
+                connection_id: EncryptedConnId::new(self.conn_id, &shared_secret),
                 existing_connection: self.connected.load(Ordering::Acquire),
                 user_data: user_data.to_vec(),
                 cfg: (&*self.cfg).into(),
