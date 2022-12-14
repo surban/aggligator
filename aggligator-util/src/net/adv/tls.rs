@@ -19,6 +19,7 @@ use super::{
 use crate::TagError;
 
 /// Boxes a TLS stream so that it can be used with IoTxBox and IoRxBox.
+#[allow(clippy::type_complexity)]
 fn box_tls_stream(
     stream: TlsStream<TcpStream>,
 ) -> (Pin<Box<dyn AsyncRead + Send + Sync + 'static>>, Pin<Box<dyn AsyncWrite + Send + Sync + 'static>>) {
