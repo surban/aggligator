@@ -8,7 +8,8 @@ This crate provides utility functions and command line tools for working with th
 [Aggligator link aggregator].
 
 It provides the following modules:
-  * functions for establishing a connection consisting of aggregated TCP links,
+  * functions for establishing a connection consisting of aggregated TCP links
+    with optional TLS encryption,
   * a text-based, interactive connection and link montor,
   * a speed test.
 

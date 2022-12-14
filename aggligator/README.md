@@ -24,19 +24,20 @@ asynchronous runtime.
 [Rust]: https://www.rust-lang.org/
 [Tokio]: https://tokio.rs/
 
-## Features
+## Crate features
 
-The following crate features are available:
+The following optional crate features are available:
 
   * `dump` — enables saving of analysis data to disk, mainly useful for debugging 
     connection performance issues; also enables [Serde] support on some data types.
 
 [Serde]: https://serde.rs/
 
-## Working with TCP links and examples
+## Working with TCP links, TLS encryption and examples
 
-Useful utils for working with TCP-based links, a visualizing link monitor
-and a completely worked out example are provided in the [aggligator-util] crate.
+Useful functions for working with TCP-based links, encryption and authentication using TLS,
+a visualizing link monitor and a completely worked out example are provided in the
+**[aggligator-util]** crate.
 
 [aggligator-util]: https://crates.io/crates/aggligator-util
 

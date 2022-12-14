@@ -29,7 +29,8 @@
 //! Aggligator link aggregator.
 //!
 //! It provides the following modules:
-//!   * functions for establishing a connection consisting of [aggregated TCP links](net),
+//!   * functions for establishing a connection consisting of [aggregated TCP links](net) 
+//!     with optional TLS encryption,
 //!   * a text-based, interactive [connection and link montor](monitor),
 //!   * a [speed test](speed).
 //!
