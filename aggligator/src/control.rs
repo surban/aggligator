@@ -263,7 +263,7 @@ where
         assert!(user_data.len() <= u16::MAX as usize, "user_data is too big");
 
         // Perform protocol handshake.
-        let (remote_cfg, roundtrip, remote_user_data) = timeout(self.cfg.link_non_working_timeout, async {
+        let (remote_cfg, roundtrip, remote_user_data) = timeout(self.cfg.link_ping_timeout, async {
             let client_secret = EphemeralSecret::new(rand_core::OsRng);
             let client_public_key = PublicKey::from(&client_secret);
 

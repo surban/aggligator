@@ -373,7 +373,7 @@ where
 
         // Perform protocol handshake.
         let (remote_server_id, conn_id, existing, remote_cfg, roundtrip, remote_user_data) =
-            timeout(cfg.link_non_working_timeout, async {
+            timeout(cfg.link_ping_timeout, async {
                 let server_secret = EphemeralSecret::new(rand_core::OsRng);
                 let server_public_key = PublicKey::from(&server_secret);
 
@@ -435,7 +435,7 @@ where
                     }
                     Err(_) => {
                         timeout(
-                            cfg.link_non_working_timeout,
+                            cfg.link_ping_timeout,
                             LinkMsg::Refused { reason: RefusedReason::Closed }.send(&mut tx),
                         )
                         .await??;
@@ -478,7 +478,7 @@ where
                 }
                 Err(_) => {
                     timeout(
-                        cfg.link_non_working_timeout,
+                        cfg.link_ping_timeout,
                         LinkMsg::Refused { reason: RefusedReason::NotListening }.send(&mut tx),
                     )
                     .await??;
@@ -488,11 +488,8 @@ where
 
             // Link belongs to unknown connection, but existing connection was expected.
             Entry::Vacant(_) => {
-                timeout(
-                    cfg.link_non_working_timeout,
-                    LinkMsg::Refused { reason: RefusedReason::Closed }.send(&mut tx),
-                )
-                .await??;
+                timeout(cfg.link_ping_timeout, LinkMsg::Refused { reason: RefusedReason::Closed }.send(&mut tx))
+                    .await??;
                 Err(IncomingError::Closed)
             }
         }
