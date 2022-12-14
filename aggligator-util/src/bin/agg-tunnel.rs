@@ -32,8 +32,8 @@ use aggligator_util::{
     cli::{init_log, load_cfg, print_default_cfg},
     monitor::interactive_monitor,
     net::adv::{
-        alc_connect, alc_listen_and_monitor, connect_links_and_monitor, monitor_potential_link_tags, tcp_listen,
-        IpVersion, TargetSet,
+        alc_connect, alc_listen_and_monitor, monitor_potential_link_tags, tcp_connect_links_and_monitor,
+        tcp_listen, IpVersion, TargetSet,
     },
 };
 
@@ -161,7 +161,7 @@ impl ClientCli {
                     let connect_tag_err_tx = tag_err_tx.clone();
                     let connect_disabled_tag_rx = disabled_tags_rx.clone();
                     tokio::spawn(async move {
-                        if let Err(err) = connect_links_and_monitor(
+                        if let Err(err) = tcp_connect_links_and_monitor(
                             control,
                             connect_target,
                             watch::channel(Default::default()).0,

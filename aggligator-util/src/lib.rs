@@ -39,8 +39,12 @@
 //!
 //! Both tools display a text-based, interactive connection and link monitor.
 //!
-//! # Simple aggregation of TCP links
+//! #### Simple aggregation of TCP links
 //! Use the [tcp_connect](net::tcp_connect) and [tcp_server](net::tcp_server) functions
+//! from the [net module](net).
+//!
+//! #### Encryption and authentication using TLS
+//! Use the [tls_connect](net::tls_connect) and [tls_server](net::tls_server) functions
 //! from the [net module](net).
 //!
 

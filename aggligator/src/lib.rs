@@ -84,15 +84,14 @@
 //! [tokio-rustls]: https://docs.rs/tokio-rustls/
 //! [Diffie-Hellman key exchange]: https://en.wikipedia.org/wiki/Diffie%E2%80%93Hellman_key_exchange
 //!
-//! # Basic usage
+//! # Basic usage and utility functions
 //!
 //! See the [connect module](connect) on how to accept incoming connections
-//! and establish outgoing connections.
+//! and establish outgoing connections. This is agnostic of the underlying protocol.
 //!
-//! #### Working with TCP links and examples
-//!
-//! Useful utils for working with TCP-based links, a visualizing link monitor
-//! and a completely worked out example are provided in the [aggligator-util] crate.
+//! Useful functions for working with TCP-based links, encryption and authentication using TLS,
+//! a visualizing link monitor and a completely worked out example are provided in the
+//! **[aggligator-util]** crate.
 //!
 //! [aggligator-util]: https://docs.rs/aggligator-util/latest/aggligator_util/
 //!

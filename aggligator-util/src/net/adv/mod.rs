@@ -5,6 +5,14 @@
 //! these functions.
 //!
 
+#[cfg(feature = "tls")]
+#[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
+mod tls;
+use aggligator::io::{IoRxBox, IoTxBox};
+#[cfg(feature = "tls")]
+#[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
+pub use tls::*;
+
 use aggligator::{
     alc::Stream,
     cfg::Cfg,
@@ -21,14 +29,12 @@ use std::{
     io::{Error, ErrorKind, Result},
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
+    pin::Pin,
     time::Duration,
 };
 use tokio::{
-    net::{
-        lookup_host,
-        tcp::{OwnedReadHalf, OwnedWriteHalf},
-        TcpListener, TcpSocket, TcpStream,
-    },
+    io::{AsyncRead, AsyncWrite},
+    net::{lookup_host, TcpListener, TcpSocket, TcpStream},
     sync::{mpsc, watch},
     time::{sleep, timeout},
 };
@@ -241,7 +247,7 @@ pub async fn monitor_potential_link_tags(
 }
 
 /// Connects links of the aggregated connection to the target via all possible local interfaces
-/// and target's IP addresses.
+/// and target's IP addresses using TCP.
 ///
 /// This function monitors the locally available network interfaces and IP addresses that
 /// `target` resolves to and tries to establish a link from every local interface to every
@@ -251,10 +257,8 @@ pub async fn monitor_potential_link_tags(
 /// Links that cannot be established or that fail are retried periodically.
 ///
 /// The function returns when the connection is terminated.
-pub async fn connect_links(
-    control: Control<IoTx<OwnedWriteHalf>, IoRx<OwnedReadHalf>, TcpLinkTag>, target: TargetSet,
-) -> Result<()> {
-    connect_links_and_monitor(
+pub async fn tcp_connect_links(control: Control<IoTxBox, IoRxBox, TcpLinkTag>, target: TargetSet) -> Result<()> {
+    tcp_connect_links_and_monitor(
         control,
         target,
         watch::channel(Default::default()).0,
@@ -265,7 +269,50 @@ pub async fn connect_links(
 }
 
 /// Connects links of the aggregated connection to the target via all possible local interfaces
-/// and target's IP addresses, providing an additional interface for the interactive monitor.
+/// and target's IP addresses using TCP, wrapping each outgoing stream through a function.
+///
+/// This function monitors the locally available network interfaces and IP addresses that
+/// `target` resolves to and tries to establish a link from every local interface to every
+/// IP address of the target. If the link is successfully established, it is added to the
+/// connection specified via `control`.
+///
+/// Links that cannot be established or that fail are retried periodically.
+///
+/// Each outgoing connection is wrapped through `wrap_fn`, which can, for example,
+/// set up TLS encryption or perform some other form of authentication before
+/// the link is used.
+///
+/// The function returns when the connection is terminated.
+pub async fn tcp_connect_links_wrapped<R, W, F, Fut>(
+    control: Control<IoTx<W>, IoRx<R>, TcpLinkTag>, target: TargetSet, wrap_fn: F,
+) -> Result<()>
+where
+    F: FnOnce(TcpStream) -> Fut + Send + Sync + Clone + 'static,
+    Fut: Future<Output = Result<(R, W)>> + Send,
+    R: AsyncRead + Send + Sync + Unpin + 'static,
+    W: AsyncWrite + Send + Sync + Unpin + 'static,
+{
+    tcp_connect_links_and_monitor_wrapped(
+        control,
+        target,
+        wrap_fn,
+        watch::channel(Default::default()).0,
+        mpsc::channel(1).0,
+        watch::channel(Default::default()).1,
+    )
+    .await
+}
+
+/// Boxes a TCP stream so that it can be used with IoTxBox and IoRxBox.
+async fn box_tcp_stream(
+    stream: TcpStream,
+) -> Result<(Pin<Box<dyn AsyncRead + Send + Sync + 'static>>, Pin<Box<dyn AsyncWrite + Send + Sync + 'static>>)> {
+    let (r, w) = stream.into_split();
+    Ok((Box::pin(r), Box::pin(w)))
+}
+
+/// Connects links of the aggregated connection to the target via all possible local interfaces
+/// and target's IP addresses using TCP, providing an additional interface for the interactive monitor.
 ///
 /// This function monitors the locally available network interfaces and IP addresses that
 /// `target` resolves to and tries to establish a link from every local interface to every
@@ -281,11 +328,47 @@ pub async fn connect_links(
 ///     not be used.
 ///
 /// The function returns when the connection is terminated.
-pub async fn connect_links_and_monitor(
-    control: Control<IoTx<OwnedWriteHalf>, IoRx<OwnedReadHalf>, TcpLinkTag>, target: TargetSet,
+pub async fn tcp_connect_links_and_monitor(
+    control: Control<IoTxBox, IoRxBox, TcpLinkTag>, target: TargetSet, tags_tx: watch::Sender<Vec<TcpLinkTag>>,
+    tag_err_tx: mpsc::Sender<TagError<TcpLinkTag>>, disabled_tags_rx: watch::Receiver<HashSet<TcpLinkTag>>,
+) -> Result<()> {
+    tcp_connect_links_and_monitor_wrapped(control, target, box_tcp_stream, tags_tx, tag_err_tx, disabled_tags_rx)
+        .await
+}
+
+/// Connects links of the aggregated connection to the target via all possible local interfaces
+/// and target's IP addresses using TCP and wrapping each outgoing stream through a function,
+/// and providing an additional interface for the interactive monitor.
+///
+/// This function monitors the locally available network interfaces and IP addresses that
+/// `target` resolves to and tries to establish a link from every local interface to every
+/// IP address of the target. If the link is successfully established, it is added to the
+/// connection specified via `control`.
+///
+/// Links that cannot be established or that fail are retried periodically.
+///
+/// Each outgoing connection is wrapped through `wrap_fn`, which can, for example,
+/// set up TLS encryption or perform some other form of authentication before
+/// the link is used.
+///
+/// Additionally the following arguments are useful when using the [interactive monitor](crate::monitor):
+///   * potential links are sent via the channel `tags_tx`,
+///   * errors that occur on individual links are sent via the channel `tag_error_tx`,
+///   * the channel `disabled_tags_rx` is used to receive a set of links that should
+///     not be used.
+///
+/// The function returns when the connection is terminated.
+pub async fn tcp_connect_links_and_monitor_wrapped<R, W, F, Fut>(
+    control: Control<IoTx<W>, IoRx<R>, TcpLinkTag>, target: TargetSet, wrap_fn: F,
     tags_tx: watch::Sender<Vec<TcpLinkTag>>, tag_err_tx: mpsc::Sender<TagError<TcpLinkTag>>,
     mut disabled_tags_rx: watch::Receiver<HashSet<TcpLinkTag>>,
-) -> Result<()> {
+) -> Result<()>
+where
+    F: FnOnce(TcpStream) -> Fut + Send + Sync + Clone + 'static,
+    Fut: Future<Output = Result<(R, W)>> + Send,
+    R: AsyncRead + Send + Sync + Unpin + 'static,
+    W: AsyncWrite + Send + Sync + Unpin + 'static,
+{
     async fn do_connect(iface: &[u8], ifaces: &[NetworkInterface], target: SocketAddr) -> Result<TcpStream> {
         let socket = match target.ip() {
             IpAddr::V4(_) => TcpSocket::new_v4(),
@@ -359,6 +442,7 @@ pub async fn connect_links_and_monitor(
                         let interfaces = interfaces.clone();
                         let disconnected_tx = disconnected_tx.clone();
                         let tag_err_tx = tag_err_tx.clone();
+                        let wrap_fn = wrap_fn.clone();
                         tokio::spawn(async move {
                             tracing::debug!("Trying TCP connection for {tag}");
 
@@ -368,21 +452,38 @@ pub async fn connect_links_and_monitor(
                                 Ok(Ok(strm)) => {
                                     tracing::debug!("TCP connection established for {tag}");
 
-                                    let (read, write) = strm.into_split();
-                                    match control.add_io(read, write, tag.clone(), iface.as_bytes()).await {
-                                        Ok(link) => {
-                                            tracing::info!("Link established for {tag}");
+                                    // Wrap socket.
+                                    match timeout(TCP_CONNECT_TIMEOUT, wrap_fn(strm)).await {
+                                        Ok(Ok((read, write))) => {
+                                            match control.add_io(read, write, tag.clone(), iface.as_bytes()).await
+                                            {
+                                                Ok(link) => {
+                                                    tracing::info!("Link established for {tag}");
 
-                                            let reason = link.disconnected().await;
-                                            tracing::warn!("Link for {tag} disconnected: {reason}");
+                                                    let reason = link.disconnected().await;
+                                                    tracing::warn!("Link for {tag} disconnected: {reason}");
 
-                                            let _ = tag_err_tx
-                                                .send(TagError::new(control.id(), link.tag(), reason))
-                                                .await;
+                                                    let _ = tag_err_tx
+                                                        .send(TagError::new(control.id(), link.tag(), reason))
+                                                        .await;
+                                                }
+                                                Err(err) => {
+                                                    tracing::warn!("Establishing link for {tag} failed: {err}");
+                                                    let _ = tag_err_tx
+                                                        .send(TagError::new(control.id(), &tag, err))
+                                                        .await;
+                                                }
+                                            }
                                         }
-                                        Err(err) => {
-                                            tracing::warn!("Establishing link for {tag} failed: {err}");
+                                        Ok(Err(err)) => {
+                                            tracing::warn!("Wrapping connection to {tag} failed: {err}");
                                             let _ = tag_err_tx.send(TagError::new(control.id(), &tag, err)).await;
+                                        }
+                                        Err(_) => {
+                                            tracing::warn!("Wrapping connection to {tag} timed out");
+                                            let _ = tag_err_tx
+                                                .send(TagError::new(control.id(), &tag, "wrapping timeout"))
+                                                .await;
                                         }
                                     }
                                 }
@@ -422,11 +523,13 @@ pub async fn connect_links_and_monitor(
 /// (between the same pair of local and remote interfaces) and calls `work_fn`
 /// on each established connection.
 #[allow(clippy::type_complexity)]
-pub async fn alc_listen<F>(
-    listener: Listener<IoTx<OwnedWriteHalf>, IoRx<OwnedReadHalf>, TcpLinkTag>, work_fn: impl Fn(Stream) -> F,
+pub async fn alc_listen<R, W, F>(
+    listener: Listener<IoTx<W>, IoRx<R>, TcpLinkTag>, work_fn: impl Fn(Stream) -> F,
 ) -> Result<()>
 where
     F: Future<Output = ()> + Send + 'static,
+    R: AsyncRead + Send + Sync + Unpin + 'static,
+    W: AsyncWrite + Send + Sync + Unpin + 'static,
 {
     alc_listen_and_monitor(listener, work_fn, mpsc::channel(1).0, None).await
 }
@@ -443,13 +546,14 @@ where
 ///   * a control handle of each incoming connections is sent over the channel `control_tx`,
 ///   * if `dump` is sent, analysis data is saved to the specified file.
 #[allow(clippy::type_complexity)]
-pub async fn alc_listen_and_monitor<F>(
-    mut listener: Listener<IoTx<OwnedWriteHalf>, IoRx<OwnedReadHalf>, TcpLinkTag>, work_fn: impl Fn(Stream) -> F,
-    control_tx: mpsc::Sender<(Control<IoTx<OwnedWriteHalf>, IoRx<OwnedReadHalf>, TcpLinkTag>, String)>,
-    dump: Option<PathBuf>,
+pub async fn alc_listen_and_monitor<R, W, F>(
+    mut listener: Listener<IoTx<W>, IoRx<R>, TcpLinkTag>, work_fn: impl Fn(Stream) -> F,
+    control_tx: mpsc::Sender<(Control<IoTx<W>, IoRx<R>, TcpLinkTag>, String)>, dump: Option<PathBuf>,
 ) -> Result<()>
 where
     F: Future<Output = ()> + Send + 'static,
+    R: AsyncRead + Send + Sync + Unpin + 'static,
+    W: AsyncWrite + Send + Sync + Unpin + 'static,
 {
     loop {
         let mut inc = listener.next().await.map_err(|err| Error::new(ErrorKind::Other, err.to_string()))?;
@@ -494,7 +598,11 @@ where
 /// Starts establishing an outgoing connection consisting of aggregated TCP links.
 ///
 /// Uses the specified configuration `cfg`.
-pub async fn alc_connect(cfg: Cfg) -> (Outgoing, Control<IoTx<OwnedWriteHalf>, IoRx<OwnedReadHalf>, TcpLinkTag>) {
+pub async fn alc_connect<R, W>(cfg: Cfg) -> (Outgoing, Control<IoTx<W>, IoRx<R>, TcpLinkTag>)
+where
+    R: AsyncRead + Send + Sync + Unpin + 'static,
+    W: AsyncWrite + Send + Sync + Unpin + 'static,
+{
     alc_connect_and_dump(cfg, None::<PathBuf>).await
 }
 
@@ -503,9 +611,13 @@ pub async fn alc_connect(cfg: Cfg) -> (Outgoing, Control<IoTx<OwnedWriteHalf>, I
 ///
 /// Uses the specified configuration `cfg`.
 /// If `dump` is sent, analysis data is saved to the specified file.
-pub async fn alc_connect_and_dump(
+pub async fn alc_connect_and_dump<R, W>(
     cfg: Cfg, dump: Option<impl AsRef<Path>>,
-) -> (Outgoing, Control<IoTx<OwnedWriteHalf>, IoRx<OwnedReadHalf>, TcpLinkTag>) {
+) -> (Outgoing, Control<IoTx<W>, IoRx<R>, TcpLinkTag>)
+where
+    R: AsyncRead + Send + Sync + Unpin + 'static,
+    W: AsyncWrite + Send + Sync + Unpin + 'static,
+{
     let (mut task, outgoing, control) = connect(cfg);
 
     if let Some(dump) = &dump {
@@ -553,9 +665,27 @@ pub async fn tcp_link_filter(new: Link<TcpLinkTag>, existing: Vec<Link<TcpLinkTa
 ///
 /// Listens on `addr` and accepts incoming TCP connections, which are then
 /// forwarded to the specified link aggregator server.
-pub async fn tcp_listen(
-    server: Server<IoTx<OwnedWriteHalf>, IoRx<OwnedReadHalf>, TcpLinkTag>, addr: SocketAddr,
-) -> Result<()> {
+pub async fn tcp_listen(server: Server<IoTxBox, IoRxBox, TcpLinkTag>, addr: SocketAddr) -> Result<()> {
+    tcp_listen_wrapped(server, addr, box_tcp_stream).await
+}
+
+/// TCP listener for link aggregator that wraps each incoming stream through a function.
+///
+/// Listens on `addr` and accepts incoming TCP connections, which are then
+/// forwarded to the specified link aggregator server.
+///
+/// Each incoming connection is wrapped through `wrap_fn`, which can, for example,
+/// set up TLS encryption or perform some other form of authentication before
+/// the link is used.
+pub async fn tcp_listen_wrapped<R, W, F, Fut>(
+    server: Server<IoTx<W>, IoRx<R>, TcpLinkTag>, addr: SocketAddr, wrap_fn: F,
+) -> Result<()>
+where
+    F: FnOnce(TcpStream) -> Fut + Send + Sync + Clone + 'static,
+    Fut: Future<Output = Result<(R, W)>> + Send,
+    R: AsyncRead + Send + Sync + Unpin + 'static,
+    W: AsyncWrite + Send + Sync + Unpin + 'static,
+{
     let tcp_listener = TcpListener::bind(addr).await?;
     tracing::info!("Listening on {}", addr);
 
@@ -592,19 +722,33 @@ pub async fn tcp_listen(
         };
         tracing::debug!("Accepted TCP connection from {src} on {interface}");
 
-        let (read, write) = socket.into_split();
         let tag = TcpLinkTag { interface: interface.clone(), remote: src, direction: Direction::Incoming };
-        match server.add_incoming_io(read, write, tag, interface.as_bytes()).await {
-            Ok(link) => {
-                tracing::info!("Added incoming link: {link:?}");
-                tokio::spawn(async move {
-                    let reason = link.disconnected().await;
-                    tracing::warn!("Incoming link {src} disconnected: {reason:?}");
-                });
+        let server = server.clone();
+        let wrap_fn = wrap_fn.clone();
+
+        tokio::spawn(async move {
+            // Wrap socket.
+            let (read, write) = match wrap_fn(socket).await {
+                Ok(s) => s,
+                Err(err) => {
+                    tracing::warn!("Wrapping connection from {src} failed: {err}");
+                    return;
+                }
+            };
+
+            // Hand to Aggligator server.
+            match server.add_incoming_io(read, write, tag, interface.as_bytes()).await {
+                Ok(link) => {
+                    tracing::info!("Added incoming link: {link:?}");
+                    tokio::spawn(async move {
+                        let reason = link.disconnected().await;
+                        tracing::warn!("Incoming link {src} disconnected: {reason:?}");
+                    });
+                }
+                Err(err) => {
+                    tracing::warn!("Adding incoming link failed: {err}");
+                }
             }
-            Err(err) => {
-                tracing::warn!("Adding incoming link failed: {err}");
-            }
-        }
+        });
     }
 }
