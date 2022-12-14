@@ -86,15 +86,15 @@ impl Default for Cfg {
     fn default() -> Self {
         Self {
             io_write_size: NonZeroUsize::new(8_192).unwrap(),
-            send_buffer: NonZeroU32::new(33_554_432).unwrap(),
+            send_buffer: NonZeroU32::new(67_108_864).unwrap(),
             send_queue: NonZeroUsize::new(1024).unwrap(),
-            recv_buffer: NonZeroU32::new(33_554_432).unwrap(),
+            recv_buffer: NonZeroU32::new(67_108_864).unwrap(),
             recv_queue: NonZeroUsize::new(1024).unwrap(),
             link_ack_timeout_min: Duration::from_secs(1),
             link_ack_timeout_roundtrip_factor: NonZeroU32::new(5).unwrap(),
             link_ack_timeout_max: Duration::from_secs(30),
             link_unacked_init: NonZeroUsize::new(8192).unwrap(),
-            link_unacked_limit: NonZeroUsize::new(8_388_608).unwrap(),
+            link_unacked_limit: NonZeroUsize::new(33_554_432).unwrap(),
             link_ping: LinkPing::WhenIdle(Duration::from_secs(15)),
             link_ping_timeout: Duration::from_secs(45),
             link_retest_interval: Duration::from_secs(15),
