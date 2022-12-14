@@ -21,7 +21,6 @@ use std::{
 use tokio::{
     sync::{mpsc, watch},
     task::block_in_place,
-    time::sleep,
 };
 
 use aggligator::{cfg::Cfg, connect::Server};
@@ -193,10 +192,11 @@ impl ClientCli {
 
         let links_target = target.clone();
         let tls = self.tls;
+        let connect_control = control.clone();
         tokio::spawn(async move {
             let res = if tls {
                 tls_connect_links_and_monitor(
-                    control,
+                    connect_control,
                     links_target,
                     ServerName::try_from(TLS_SERVER_NAME).unwrap(),
                     Arc::new(tls_client_config()),
@@ -206,7 +206,14 @@ impl ClientCli {
                 )
                 .await
             } else {
-                tcp_connect_links_and_monitor(control, links_target, tags_tx, tag_err_tx, disabled_tags_rx).await
+                tcp_connect_links_and_monitor(
+                    connect_control,
+                    links_target,
+                    tags_tx,
+                    tag_err_tx,
+                    disabled_tags_rx,
+                )
+                .await
             };
 
             if let Err(err) = res {
@@ -279,7 +286,8 @@ impl ClientCli {
             match task.await {
                 Ok(res) => res?,
                 Err(_) => {
-                    sleep(Duration::from_secs(1)).await;
+                    println!("Exiting...");
+                    control.terminated().await;
                     return Ok(());
                 }
             }
@@ -298,8 +306,7 @@ impl ClientCli {
             println!("Downstream: {}", format_speed(rx_speed));
         }
 
-        // To allow for graceful connection termination.
-        sleep(Duration::from_secs(3)).await;
+        control.terminated().await;
         Ok(())
     }
 }
