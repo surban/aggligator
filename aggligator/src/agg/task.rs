@@ -625,6 +625,7 @@ where
                                         }),
                                     )
                                     .await;
+                                    link.notify_disconnected(DisconnectReason::LinkFilter);
                                 }
                                 .boxed(),
                             );
