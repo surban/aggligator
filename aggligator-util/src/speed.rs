@@ -207,10 +207,10 @@ pub async fn speed_test(
     let (Ok(sender), Ok(receiver)) = join!(sender, receiver) else { unreachable!() };
 
     if let Err(err) = &sender {
-        tracing::error!("Sender error for {name}: {err}");
+        tracing::warn!("Sender error for {name}: {err}");
     }
     if let Err(err) = &receiver {
-        tracing::error!("Receiver error for {name}: {err}");
+        tracing::warn!("Receiver error for {name}: {err}");
     }
 
     let (tx_total, tx_dur) = sender?;

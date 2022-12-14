@@ -730,7 +730,7 @@ where
                         LinkIntEvent::Rx { msg, data } => {
                             // Link has received a message.
                             if let Err(err) = self.handle_received_msg(id, msg, data) {
-                                tracing::error!("link {id} caused protocol error: {err}");
+                                tracing::warn!("link {id} caused protocol error: {err}");
                                 read_term = Some(RecvError::AllLinksFailed);
                                 write_term = SendError::AllLinksFailed;
                                 link_term = DisconnectReason::IoError(Arc::new(err));
