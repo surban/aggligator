@@ -18,7 +18,7 @@ use std::{
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::{FramedRead, FramedWrite, LengthDelimitedCodec};
 
-/// Send wrapper for using an IO-stream-based link.
+/// Transmit wrapper for using an IO-stream-based link.
 #[derive(Debug)]
 pub struct IoTx<W>(pub FramedWrite<W, LengthDelimitedCodec>);
 
@@ -93,3 +93,13 @@ where
         Pin::into_inner(self).0.poll_next_unpin(cx).map_ok(|v| v.freeze())
     }
 }
+
+/// Type-neutral transmit wrapper for using an IO-stream-based link.
+///
+/// Useful if a connection consists of different types of links.
+pub type IoTxBox = IoTx<Pin<Box<dyn AsyncWrite + Send + Sync + 'static>>>;
+
+/// Type-neutral receive wrapper for using an IO-stream-based link.
+///
+/// Useful if a connection consists of different types of links.
+pub type IoRxBox = IoRx<Pin<Box<dyn AsyncRead + Send + Sync + 'static>>>;
