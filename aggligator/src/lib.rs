@@ -65,12 +65,31 @@
 //! [Stream]: futures::stream::Stream
 //! [TcpStream]: https://docs.rs/tokio/1/tokio/net/struct.TcpStream.html
 //!
+//! # Connection security
+//!
+//! Aggligator does *not* perform cryptographic authentication of the remote endpoint or encryption of data.
+//! If you are sending sensitive data over an untrusted connection you should encrypt it
+//! and authenticate the remote endpoint, for example using [TLS].
+//! The implementation provided in the [tokio-rustls] crate works nicely with Aggligator.
+//!
+//! However, the unique identifier of each connection is encrypted using a shared
+//! secret that is exchanged via [Diffie-Hellman key exchange].
+//! Thus, an eavesdropper cannot inject fake links to an existing connection by using
+//! the spoofed connection identifier.
+//! This provides the same security level against insertion of malicious data and connection
+//! termination by an adversary as you would have when using a single unencrypted
+//! TCP connection.
+//!
+//! [TLS]: https://en.wikipedia.org/wiki/Transport_Layer_Security
+//! [tokio-rustls]: https://docs.rs/tokio-rustls/
+//! [Diffie-Hellman key exchange]: https://en.wikipedia.org/wiki/Diffie%E2%80%93Hellman_key_exchange
+//!
 //! # Basic usage
 //!
 //! See the [connect module](connect) on how to accept incoming connections
 //! and establish outgoing connections.
 //!
-//! # Working with TCP links and examples
+//! #### Working with TCP links and examples
 //!
 //! Useful utils for working with TCP-based links, a visualizing link monitor
 //! and a completely worked out example are provided in the [aggligator-util] crate.
