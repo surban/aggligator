@@ -1,6 +1,5 @@
 //! TLS connection functions.
 
-use aggligator::control::Control;
 use rustls::{ClientConfig, ServerConfig, ServerName};
 use std::{collections::HashSet, io::Result, net::SocketAddr, pin::Pin, sync::Arc};
 use tokio::{
@@ -10,7 +9,7 @@ use tokio::{
 };
 use tokio_rustls::{TlsAcceptor, TlsConnector, TlsStream};
 
-use aggligator::connect::Server;
+use aggligator::{connect::Server, control::Control};
 
 use super::{
     tcp_connect_links_and_monitor_wrapped, tcp_connect_links_wrapped, tcp_listen_wrapped, IoRxBox, IoTxBox,

@@ -8,7 +8,6 @@
 #[cfg(feature = "tls")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
 mod tls;
-use aggligator::io::{IoRxBox, IoTxBox};
 #[cfg(feature = "tls")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
 pub use tls::*;
@@ -42,7 +41,7 @@ use tokio::{
 use aggligator::{
     connect::{Listener, Server},
     control::Control,
-    io::{IoRx, IoTx},
+    io::{IoRx, IoRxBox, IoTx, IoTxBox},
 };
 
 use crate::TagError;
