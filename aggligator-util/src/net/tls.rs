@@ -33,10 +33,10 @@ use super::adv::{alc_connect, alc_listen, tls_connect_links, tls_listen, IpVersi
 /// Returns the connection stream.
 ///
 /// # Example
-/// This example connects to the host `server` on port 5900.
+/// This example connects to the host `agl.server.rs` on port 5901.
 ///
 /// Multiple links will be used if the local machine has multiple interfaces
-/// that can all connect to `server`, or `server` has multiple interfaces
+/// that can all connect to `agl.server.rs`, or `agl.server.rs` has multiple interfaces
 /// that are registered with their IP addresses in DNS.
 /// ```no_run
 /// use std::sync::Arc;
@@ -46,7 +46,7 @@ use super::adv::{alc_connect, alc_listen, tls_connect_links, tls_listen, IpVersi
 ///
 /// #[tokio::main]
 /// async fn main() -> std::io::Result<()> {
-///     let server_name = "agl.server.net";
+///     let server_name = "agl.server.rs";
 ///     // TODO: set server_name
 ///
 ///     let mut root_store = RootCertStore::empty();
@@ -62,7 +62,7 @@ use super::adv::{alc_connect, alc_listen, tls_connect_links, tls_listen, IpVersi
 ///     let stream = tls_connect(
 ///         Cfg::default(),
 ///         vec![server_name.to_string()],
-///         5900,
+///         5901,
 ///         ServerName::try_from(server_name).unwrap(),
 ///         tls_cfg,
 ///     ).await?;
@@ -101,7 +101,7 @@ pub async fn tls_connect(
 /// in `tls_server_cfg`.
 ///
 /// # Example
-/// This example listens on all interfaces on port 5900.
+/// This example listens on all interfaces on port 5901.
 ///
 /// If the server has multiple interfaces, all IP addresses should be registered
 /// in DNS so that clients can discover them and establish multiple links.
@@ -110,7 +110,7 @@ pub async fn tls_connect(
 /// use std::sync::Arc;
 /// use aggligator::cfg::Cfg;
 /// use aggligator_util::net::tls_server;
-/// use rustls::{ServerConfig};
+/// use rustls::ServerConfig;
 ///
 /// #[tokio::main]
 /// async fn main() -> std::io::Result<()> {
@@ -127,7 +127,7 @@ pub async fn tls_connect(
 ///
 ///     tls_server(
 ///         Cfg::default(),
-///         SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 5900),
+///         SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 5901),
 ///         tls_cfg,
 ///         |stream| async move {
 ///             // use the incoming connection
