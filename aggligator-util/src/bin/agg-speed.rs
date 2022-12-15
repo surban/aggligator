@@ -1,11 +1,10 @@
 //! Aggligator speed test.
 
-use aggligator_util::net::adv::{tls_connect_links_and_monitor, tls_listen};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use crossterm::{style::Stylize, tty::IsTty};
 use rustls::{
-    client::{DangerousClientConfig, ServerCertVerified, ServerCertVerifier},
+    client::{ServerCertVerified, ServerCertVerifier},
     Certificate, ClientConfig, PrivateKey, RootCertStore, ServerConfig, ServerName,
 };
 use rustls_pemfile::{certs, pkcs8_private_keys};
@@ -28,8 +27,8 @@ use aggligator_util::{
     cli::{init_log, load_cfg, print_default_cfg},
     monitor::{format_speed, interactive_monitor},
     net::adv::{
-        alc_connect_and_dump, alc_listen_and_monitor, tcp_connect_links_and_monitor, tcp_listen, IpVersion,
-        TargetSet,
+        alc_connect_and_dump, alc_listen_and_monitor, tcp_connect_links_and_monitor, tcp_listen,
+        tls_connect_links_and_monitor, tls_listen, IpVersion, TargetSet,
     },
     speed::{speed_test, INTERVAL},
 };
@@ -69,7 +68,7 @@ fn tls_client_config() -> ClientConfig {
     root_store.add(&tls_cert()).unwrap();
     let mut cfg =
         ClientConfig::builder().with_safe_defaults().with_root_certificates(root_store).with_no_client_auth();
-    DangerousClientConfig { cfg: &mut cfg }.set_certificate_verifier(Arc::new(TlsNullVerifier));
+    cfg.dangerous().set_certificate_verifier(Arc::new(TlsNullVerifier));
     cfg
 }
 
