@@ -1008,7 +1008,7 @@ where
         let Some(remote_recv_buffer) = self.remote_recv_buffer() else { return };
 
         // Check for unconsumable data approaching its limits.
-        let unconsumable_limit = (self.cfg.send_buffer.get() as usize).min(remote_recv_buffer as usize);
+        let unconsumable_limit = (self.cfg.send_buffer.get() as usize).min(remote_recv_buffer);
         let low_level = self.txed_unconsumable < unconsumable_limit / 4;
         let soft_overrun = self.txed_unconsumable > unconsumable_limit / 3;
         let hard_overrun = self.txed_unconsumable > unconsumable_limit * 3 / 4;
