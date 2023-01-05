@@ -451,6 +451,9 @@ where
                                 Ok(Ok(strm)) => {
                                     tracing::debug!("TCP connection established for {tag}");
 
+                                    // Disable Nagle's algorithm.
+                                    let _ = strm.set_nodelay(true);
+
                                     // Wrap socket.
                                     match timeout(TCP_CONNECT_TIMEOUT, wrap_fn(strm)).await {
                                         Ok(Ok((read, write))) => {
@@ -726,6 +729,9 @@ where
         let wrap_fn = wrap_fn.clone();
 
         tokio::spawn(async move {
+            // Disable Nagle's algorithm.
+            let _ = socket.set_nodelay(true);
+
             // Wrap socket.
             let (read, write) = match wrap_fn(socket).await {
                 Ok(s) => s,
