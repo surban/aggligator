@@ -5,7 +5,7 @@
 //!
 
 use byteorder::{ByteOrder, LE};
-use rand::random;
+use rand::{random, rngs::OsRng, Rng};
 use std::{fmt, num::NonZeroU128, sync::Arc};
 use tokio::sync::mpsc;
 use x25519_dalek::SharedSecret;
@@ -29,7 +29,7 @@ impl fmt::Display for ConnId {
 impl ConnId {
     /// Generates a new connection id.
     pub(crate) fn generate() -> Self {
-        Self(random())
+        Self(OsRng.gen())
     }
 }
 
