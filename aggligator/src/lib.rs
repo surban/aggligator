@@ -86,7 +86,7 @@
 //!
 //! # Basic usage and utility functions
 //!
-//! See the [connect module](connect) on how to accept incoming connections
+//! See the [connect module](mod@connect) on how to accept incoming connections
 //! and establish outgoing connections. This is agnostic of the underlying protocol.
 //!
 //! Useful functions for working with TCP-based links, encryption and authentication using TLS,
@@ -121,3 +121,8 @@ macro_rules! protocol_err {
 }
 
 pub(crate) use protocol_err;
+
+pub use cfg::Cfg;
+pub use connect::{connect, Incoming, Listener, Outgoing, Server};
+pub use control::{Control, Link};
+pub use io::{IoRxBox, IoTxBox};

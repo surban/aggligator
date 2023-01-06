@@ -21,7 +21,7 @@ use crate::{
 
 /// A bi-directional channel backed by a connection of aggregated links.
 ///
-/// Use the [connect module](crate::connect) to establish a new connection.
+/// Use the [connect module](mod@crate::connect) to establish a new connection.
 ///
 /// This must either be converted into [sender and receiver for messages](Self::into_tx_rx)
 /// or into a [stream supporting async IO](Self::into_stream).
