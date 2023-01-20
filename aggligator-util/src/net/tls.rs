@@ -2,20 +2,17 @@
 
 use futures::Future;
 use rustls::{ClientConfig, ServerConfig, ServerName};
-use std::{
-    io::{Error, ErrorKind, Result},
-    net::SocketAddr,
-    sync::Arc,
+use std::{io::Result, net::SocketAddr, sync::Arc};
+
+use crate::transport::{
+    tcp::{TcpAcceptor, TcpConnector},
+    tls::{TlsClient, TlsServer},
+    Acceptor, Connector,
 };
-
-use aggligator::{alc::Stream, cfg::Cfg, connect::Server};
-
-use super::adv::{alc_connect, alc_listen, tls_connect_links, tls_listen, IpVersion, TargetSet};
+use aggligator::alc::Stream;
 
 /// Builds a connection consisting of aggregated TCP links to the target,
 /// which are encrypted and authenticated using TLS.
-///
-/// `cfg` is the configuration and in most cases `Cfg::default()` should be used.
 ///
 /// `target` specifies a set of IP addresses or hostnames of the target host.
 /// If a hostname resolves to multiple IP addresses this is taken into account
@@ -26,7 +23,7 @@ use super::adv::{alc_connect, alc_listen, tls_connect_links, tls_listen, IpVersi
 /// to all IP addresses of the target. If a link fails, it is reconnected
 /// automatically.
 ///
-/// The identity of the server is verified using TLS against `domain`.
+/// The identity of the server is verified using TLS against `server_name`.
 /// Each outgoing link is encrypted using TLS with the configuration specified
 /// in `tls_client_cfg`.
 ///
@@ -40,17 +37,15 @@ use super::adv::{alc_connect, alc_listen, tls_connect_links, tls_listen, IpVersi
 /// that are registered with their IP addresses in DNS.
 /// ```no_run
 /// use std::sync::Arc;
-/// use aggligator::cfg::Cfg;
 /// use aggligator_util::net::tls_connect;
 /// use rustls::{ClientConfig, RootCertStore, ServerName};
 ///
 /// #[tokio::main]
 /// async fn main() -> std::io::Result<()> {
 ///     let server_name = "agl.server.rs";
-///     // TODO: set server_name
 ///
 ///     let mut root_store = RootCertStore::empty();
-///     // TODO: add certificates to the root_store
+///     // add certificates to the root_store
 ///
 ///     let tls_cfg = Arc::new(
 ///         ClientConfig::builder()
@@ -60,11 +55,10 @@ use super::adv::{alc_connect, alc_listen, tls_connect_links, tls_listen, IpVersi
 ///     );
 ///
 ///     let stream = tls_connect(
-///         Cfg::default(),
-///         vec![server_name.to_string()],
+///         [server_name.to_string()],
 ///         5901,
-///         ServerName::try_from(server_name).unwrap(),
 ///         tls_cfg,
+///         ServerName::try_from(server_name).unwrap(),
 ///     ).await?;
 ///
 ///     // use the connection
@@ -73,25 +67,17 @@ use super::adv::{alc_connect, alc_listen, tls_connect_links, tls_listen, IpVersi
 /// }
 /// ```
 pub async fn tls_connect(
-    cfg: Cfg, target: Vec<String>, default_port: u16, domain: ServerName, tls_client_cfg: Arc<ClientConfig>,
+    target: impl IntoIterator<Item = String>, default_port: u16, tls_client_cfg: Arc<ClientConfig>,
+    server_name: ServerName,
 ) -> Result<Stream> {
-    let (outgoing, control) = alc_connect(cfg).await;
-
-    let target = TargetSet::new(target, default_port, IpVersion::Both).await?;
-    tokio::spawn(async move {
-        if let Err(err) = tls_connect_links(control, target, domain, tls_client_cfg).await {
-            tracing::error!("connecting links failed: {err}")
-        }
-    });
-
-    let ch = outgoing.connect().await.map_err(|err| Error::new(ErrorKind::TimedOut, err.to_string()))?;
+    let mut connector = Connector::wrapped(TlsClient::new(tls_client_cfg, server_name));
+    connector.add(TcpConnector::new(target, default_port).await?);
+    let ch = connector.channel().unwrap().await?;
     Ok(ch.into_stream())
 }
 
 /// Runs a TCP server accepting connections of aggregated links,
 /// which are encrypted and authenticated using TLS.
-///
-/// `cfg` is the configuration and in most cases `Cfg::default()` should be used.
 ///
 /// The TCP server listens on `addr` and accepts connections of aggregated TCP links.
 /// For each new connection the work function `work_fn` is spawned onto a new
@@ -108,7 +94,6 @@ pub async fn tls_connect(
 /// ```no_run
 /// use std::net::{Ipv6Addr, SocketAddr};
 /// use std::sync::Arc;
-/// use aggligator::cfg::Cfg;
 /// use aggligator_util::net::tls_server;
 /// use rustls::ServerConfig;
 ///
@@ -126,7 +111,6 @@ pub async fn tls_connect(
 ///     );
 ///
 ///     tls_server(
-///         Cfg::default(),
 ///         SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 5901),
 ///         tls_cfg,
 ///         |stream| async move {
@@ -138,13 +122,16 @@ pub async fn tls_connect(
 /// }
 /// ```
 pub async fn tls_server<F>(
-    cfg: Cfg, addr: SocketAddr, tls_server_cfg: Arc<ServerConfig>, work_fn: impl Fn(Stream) -> F + Send + 'static,
+    addr: SocketAddr, tls_server_cfg: Arc<ServerConfig>, work_fn: impl Fn(Stream) -> F + Send + 'static,
 ) -> Result<()>
 where
     F: Future<Output = ()> + Send + 'static,
 {
-    let server = Server::new(cfg);
-    let listener = server.listen().await.unwrap();
-    tokio::spawn(alc_listen(listener, work_fn));
-    tls_listen(server, addr, tls_server_cfg).await
+    let acceptor = Acceptor::wrapped(TlsServer::new(tls_server_cfg));
+    acceptor.add(TcpAcceptor::new([addr]).await?);
+
+    loop {
+        let (ch, _control) = acceptor.accept().await?;
+        tokio::spawn(work_fn(ch.into_stream()));
+    }
 }

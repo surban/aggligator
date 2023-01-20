@@ -10,15 +10,17 @@
 //!
 
 use bytes::Bytes;
-use futures::{future, Sink, Stream};
+use futures::{future, future::BoxFuture, FutureExt, Sink, Stream};
 use std::{
     collections::{hash_map::Entry, HashMap},
-    fmt, io,
-    sync::Arc,
+    fmt,
+    future::IntoFuture,
+    io,
+    sync::{Arc, Mutex},
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    sync::{mpsc, oneshot, Mutex},
+    sync::{mpsc, oneshot},
     time::{error::Elapsed, timeout, Instant},
 };
 use x25519_dalek::{EphemeralSecret, PublicKey};
@@ -92,6 +94,18 @@ impl From<Elapsed> for IncomingError {
 
 impl std::error::Error for IncomingError {}
 
+impl From<IncomingError> for io::Error {
+    fn from(err: IncomingError) -> Self {
+        match err {
+            IncomingError::Io(err) => err,
+            IncomingError::Refused => io::Error::new(io::ErrorKind::ConnectionRefused, err),
+            IncomingError::NotListening => io::Error::new(io::ErrorKind::ConnectionRefused, err),
+            IncomingError::Closed => io::Error::new(io::ErrorKind::ConnectionAborted, err),
+            IncomingError::ServerDropped => io::Error::new(io::ErrorKind::ConnectionRefused, err),
+        }
+    }
+}
+
 /// Outgoing connection error.
 #[derive(Debug)]
 pub enum ConnectError {
@@ -108,6 +122,12 @@ impl fmt::Display for ConnectError {
 }
 
 impl std::error::Error for ConnectError {}
+
+impl From<ConnectError> for io::Error {
+    fn from(err: ConnectError) -> Self {
+        io::Error::new(io::ErrorKind::TimedOut, err)
+    }
+}
 
 /// An incoming connection consisting of aggregated links.
 ///
@@ -196,7 +216,7 @@ where
     ///
     /// The [`Task`] manages the connection and must be executed
     /// (for example using [`tokio::spawn`]) for the connection to work.
-    pub async fn accept(mut self) -> (Task<TX, RX, TAG>, Channel, Control<TX, RX, TAG>) {
+    pub fn accept(mut self) -> (Task<TX, RX, TAG>, Channel, Control<TX, RX, TAG>) {
         self.update_links();
 
         let Self { cfg, conn_id, server_id, remote_server_id, link_tx, link_rx, links } = self;
@@ -299,8 +319,8 @@ where
     /// (for example using [`tokio::spawn`]) for the connection to work.
     /// Add links to the connection using [`Control::add`] or [`Control::add_io`]
     /// and then call [`Outgoing::connect`] to establish the connection.
-    pub async fn connect(&self) -> (Task<TX, RX, TAG>, Outgoing, Control<TX, RX, TAG>) {
-        let mut inner = self.inner.lock().await;
+    pub fn connect(&self) -> (Task<TX, RX, TAG>, Outgoing, Control<TX, RX, TAG>) {
+        let mut inner = self.inner.lock().unwrap();
 
         let conn_id = ConnId::generate();
         let (link_tx, link_rx) = mpsc::channel(inner.cfg.connect_queue.get());
@@ -326,8 +346,8 @@ where
     /// If one already exists, an error is returned.
     ///
     /// Incoming links can be added to *existing* connections without listening.
-    pub async fn listen(&self) -> Result<Listener<TX, RX, TAG>, ListenError> {
-        let mut inner = self.inner.lock().await;
+    pub fn listen(&self) -> Result<Listener<TX, RX, TAG>, ListenError> {
+        let mut inner = self.inner.lock().unwrap();
 
         if !inner.listen_tx.is_closed() {
             return Err(ListenError::AlreadyListening);
@@ -365,10 +385,13 @@ where
 
         let server_id;
         let cfg;
+        let closed_conns_tx;
         {
-            let inner = self.inner.lock().await;
+            let mut inner = self.inner.lock().unwrap();
+            inner.cleanup_links();
             server_id = inner.server_id;
             cfg = inner.cfg.clone();
+            closed_conns_tx = inner.closed_conns_tx.clone();
         }
 
         // Perform protocol handshake.
@@ -405,92 +428,129 @@ where
             })
             .await??;
 
-        // Access inner.
-        let mut inner = self.inner.lock().await;
-        let listen_tx = inner.listen_tx.clone();
+        tracing::debug!(%server_id, %conn_id, %existing, "handling incoming link");
 
-        // Check if link belongs to existing connection.
-        inner.cleanup_links();
-        match inner.conns.entry(conn_id) {
-            // Link joins existing connection.
-            Entry::Occupied(ocu) => {
-                let add_tx = ocu.get();
-                match add_tx.reserve().await {
-                    Ok(permit) => {
-                        let link_int = LinkInt::new(
-                            tag,
-                            conn_id,
-                            tx,
-                            rx,
-                            cfg,
-                            remote_cfg,
-                            Direction::Incoming,
-                            roundtrip,
-                            remote_user_data,
-                        );
-                        let link = Link::from(&link_int);
-                        permit.send(link_int);
+        enum Connection<TX, RX, TAG> {
+            Existing {
+                link_tx: mpsc::Sender<LinkInt<TX, RX, TAG>>,
+            },
+            New {
+                link_tx: mpsc::Sender<LinkInt<TX, RX, TAG>>,
+                link_rx: mpsc::Receiver<LinkInt<TX, RX, TAG>>,
+                listen_tx_permit: mpsc::OwnedPermit<Incoming<TX, RX, TAG>>,
+            },
+            Refuse {
+                reason: RefusedReason,
+                err: IncomingError,
+            },
+        }
 
-                        Ok(link)
+        let mut need_listen_tx_permit = false;
+        let connection = loop {
+            // Obtain listen queue permit if required.
+            let listen_tx_permit = if need_listen_tx_permit {
+                let listen_tx = self.inner.lock().unwrap().listen_tx.clone();
+                Some(listen_tx.reserve_owned().await)
+            } else {
+                None
+            };
+
+            // Check if link belongs to existing connection.
+            let mut inner = self.inner.lock().unwrap();
+            match inner.conns.entry(conn_id) {
+                // Link joins existing connection.
+                Entry::Occupied(ocu) => break Connection::Existing { link_tx: ocu.get().clone() },
+
+                // Link belongs to new, incoming connection.
+                Entry::Vacant(vac) if !existing => match listen_tx_permit {
+                    Some(Ok(listen_tx_permit)) => {
+                        let (link_tx, link_rx) = mpsc::channel(cfg.connect_queue.get());
+                        vac.insert(link_tx.clone());
+                        break Connection::New { link_tx, link_rx, listen_tx_permit };
                     }
-                    Err(_) => {
-                        timeout(
-                            cfg.link_ping_timeout,
-                            LinkMsg::Refused { reason: RefusedReason::Closed }.send(&mut tx),
-                        )
-                        .await??;
-                        Err(IncomingError::Closed)
+                    Some(Err(_)) => {
+                        break Connection::Refuse {
+                            reason: RefusedReason::NotListening,
+                            err: IncomingError::NotListening,
+                        }
                     }
+                    None => need_listen_tx_permit = true,
+                },
+
+                // Link belongs to unknown connection, but existing connection was expected.
+                Entry::Vacant(_) => {
+                    break Connection::Refuse { reason: RefusedReason::Closed, err: IncomingError::Closed }
                 }
             }
+        };
 
-            // Link belongs to new, incoming connection.
-            Entry::Vacant(vac) if !existing => match listen_tx.reserve().await {
-                Ok(permit) => {
-                    let (link_tx, link_rx) = mpsc::channel(cfg.connect_queue.get());
+        match connection {
+            // Link joins existing connection.
+            Connection::Existing { link_tx } => match link_tx.reserve_owned().await {
+                Ok(link_tx_permit) => {
                     let link_int = LinkInt::new(
                         tag,
                         conn_id,
                         tx,
                         rx,
-                        cfg.clone(),
+                        cfg,
                         remote_cfg,
                         Direction::Incoming,
                         roundtrip,
                         remote_user_data,
                     );
                     let link = Link::from(&link_int);
-                    let _ = link_tx.send(link_int).await;
+                    link_tx_permit.send(link_int);
 
-                    vac.insert(link_tx.clone());
-
-                    permit.send(Incoming {
-                        cfg,
-                        conn_id: OwnedConnId::new(conn_id, inner.closed_conns_tx.clone()),
-                        server_id: self.server_id,
-                        remote_server_id,
-                        link_tx,
-                        link_rx,
-                        links: Vec::new(),
-                    });
-
+                    tracing::debug!("link joins existing connection {conn_id}");
                     Ok(link)
                 }
                 Err(_) => {
+                    tracing::debug!("refusing link that belongs to closed connection");
                     timeout(
                         cfg.link_ping_timeout,
-                        LinkMsg::Refused { reason: RefusedReason::NotListening }.send(&mut tx),
+                        LinkMsg::Refused { reason: RefusedReason::Closed }.send(&mut tx),
                     )
                     .await??;
-                    Err(IncomingError::NotListening)
+                    Err(IncomingError::Closed)
                 }
             },
 
-            // Link belongs to unknown connection, but existing connection was expected.
-            Entry::Vacant(_) => {
-                timeout(cfg.link_ping_timeout, LinkMsg::Refused { reason: RefusedReason::Closed }.send(&mut tx))
-                    .await??;
-                Err(IncomingError::Closed)
+            // Link belongs to new, incoming connection.
+            Connection::New { link_tx, link_rx, listen_tx_permit } => {
+                let link_int = LinkInt::new(
+                    tag,
+                    conn_id,
+                    tx,
+                    rx,
+                    cfg.clone(),
+                    remote_cfg,
+                    Direction::Incoming,
+                    roundtrip,
+                    remote_user_data,
+                );
+                let link = Link::from(&link_int);
+                link_tx.try_send(link_int).unwrap();
+
+                listen_tx_permit.send(Incoming {
+                    cfg,
+                    conn_id: OwnedConnId::new(conn_id, closed_conns_tx),
+                    server_id: self.server_id,
+                    remote_server_id,
+                    link_tx,
+                    link_rx,
+                    links: Vec::new(),
+                });
+
+                tracing::debug!("link starts new connection {conn_id}");
+                Ok(link)
+            }
+
+            // Link cannot be accepted.
+            Connection::Refuse { reason, err } => {
+                tracing::debug!("refusing link with reason {reason:?}: {err}");
+                timeout(cfg.link_ping_timeout, LinkMsg::Refused { reason }.send(&mut tx)).await??;
+                Err(err)
             }
         }
     }
@@ -561,14 +621,18 @@ where
     ///
     /// The incoming connection can be inspected before making the
     /// decision to accept or refuse it.
+    ///
+    /// This function is cancel-safe.
     pub async fn next(&mut self) -> Result<Incoming<TX, RX, TAG>, IncomingError> {
         self.listen_rx.recv().await.ok_or(IncomingError::ServerDropped)
     }
 
     /// Accepts the next incoming connection.
+    ///
+    /// This function is cancel-safe.
     pub async fn accept(&mut self) -> Result<(Task<TX, RX, TAG>, Channel, Control<TX, RX, TAG>), IncomingError> {
         let ic = self.next().await?;
-        Ok(ic.accept().await)
+        Ok(ic.accept())
     }
 }
 
@@ -604,6 +668,15 @@ impl Outgoing {
         channel.set_remote_cfg(remote_cfg);
 
         Ok(channel)
+    }
+}
+
+impl IntoFuture for Outgoing {
+    type Output = Result<Channel, ConnectError>;
+    type IntoFuture = BoxFuture<'static, Result<Channel, ConnectError>>;
+
+    fn into_future(self) -> Self::IntoFuture {
+        self.connect().boxed()
     }
 }
 

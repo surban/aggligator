@@ -9,6 +9,7 @@ use crossterm::{
     terminal,
     terminal::{disable_raw_mode, enable_raw_mode, ClearType},
 };
+use futures::{future, stream::FuturesUnordered, FutureExt, StreamExt};
 use std::{
     collections::{HashMap, HashSet},
     fmt::{Display, Write},
@@ -16,11 +17,69 @@ use std::{
     io::{stdout, Error},
     time::Duration,
 };
-use tokio::sync::{mpsc, mpsc::error::TryRecvError, watch};
+use tokio::sync::{broadcast, broadcast::error::TryRecvError, watch};
 
+use crate::transport::{ConnectingTransport, LinkError, LinkTagBox};
 use aggligator::{control::Control, id::ConnId};
 
-use crate::TagError;
+/// Watches the available tags of the specified transports.
+///
+/// The output of this function can be passed as `tags_rx` to [`interactive_monitor`].
+pub fn watch_tags(
+    transports: impl IntoIterator<Item = Box<dyn ConnectingTransport>>,
+) -> watch::Receiver<HashSet<LinkTagBox>> {
+    let (tags_tx, tags_rx) = watch::channel(HashSet::new());
+
+    // Start tag getting task for each transport.
+    let mut transport_tasks = FuturesUnordered::new();
+    let mut transport_tags: Vec<watch::Receiver<HashSet<LinkTagBox>>> = Vec::new();
+    for transport in transports {
+        let (tx, rx) = watch::channel(HashSet::new());
+        transport_tags.push(rx);
+        transport_tasks.push(async move { transport.link_tags(tx).await });
+    }
+
+    tokio::spawn(async move {
+        loop {
+            // Remove channels from terminated transports.
+            transport_tags.retain(|tt| tt.has_changed().is_ok());
+
+            // Collect and publish tags from all transports.
+            let mut all_tags = HashSet::new();
+            for tt in &mut transport_tags {
+                let tags = tt.borrow_and_update();
+                for tag in &*tags {
+                    all_tags.insert(tag.clone());
+                }
+            }
+            tags_tx.send_if_modified(|tags| {
+                if *tags == all_tags {
+                    false
+                } else {
+                    *tags = all_tags;
+                    true
+                }
+            });
+
+            // Quit when no transports are left.
+            if transport_tags.is_empty() {
+                break;
+            }
+
+            // Monitor all transport tags for changes.
+            let tags_changed = future::select_all(transport_tags.iter_mut().map(|tt| tt.changed().boxed()));
+
+            // Wait for changes.
+            tokio::select! {
+                _ = tags_changed => (),
+                Some(_) = transport_tasks.next() => (),
+                () = tags_tx.closed() => break,
+            };
+        }
+    });
+
+    tags_rx
+}
 
 /// Runs the interactive connection and link monitor.
 ///
@@ -44,9 +103,9 @@ use crate::TagError;
 ///
 /// This function returns when the channel `control_rx` is closed or the user presses `q`.
 pub fn interactive_monitor<TX, RX, TAG>(
-    mut header_rx: watch::Receiver<String>, mut control_rx: mpsc::Receiver<(Control<TX, RX, TAG>, String)>,
-    time_stats_idx: usize, mut tags_rx: Option<watch::Receiver<Vec<TAG>>>,
-    mut tag_error_rx: Option<mpsc::Receiver<TagError<TAG>>>,
+    mut header_rx: watch::Receiver<String>, mut control_rx: broadcast::Receiver<(Control<TX, RX, TAG>, String)>,
+    time_stats_idx: usize, mut tags_rx: Option<watch::Receiver<HashSet<TAG>>>,
+    mut tag_error_rx: Option<broadcast::Receiver<LinkError<TAG>>>,
     disabled_tags_tx: Option<watch::Sender<HashSet<TAG>>>,
 ) -> Result<(), Error>
 where
@@ -71,19 +130,26 @@ where
                     }
                 }
                 Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) if controls.is_empty() => break 'main,
-                Err(TryRecvError::Disconnected) => break,
+                Err(TryRecvError::Closed) if controls.is_empty() => break 'main,
+                Err(TryRecvError::Closed) => break,
+                Err(TryRecvError::Lagged(_)) => tracing::warn!("monitor lost incoming connection"),
             }
         }
         if let Some(tag_error_rx) = tag_error_rx.as_mut() {
-            while let Ok(TagError { id, tag, msg }) = tag_error_rx.try_recv() {
-                errors.insert((id, tag), msg);
+            while let Ok(LinkError { id, tag, error }) = tag_error_rx.try_recv() {
+                if let Some(id) = id {
+                    errors.insert((id, tag), error.to_string());
+                }
             }
         }
         if let Some(disabled_tags) = disabled_tags_tx.as_ref() {
             disabled_tags.send_replace(disabled.clone());
         }
-        let tags = tags_rx.as_mut().map(|rx| rx.borrow_and_update().clone());
+        let mut tags: Option<Vec<_>> =
+            tags_rx.as_mut().map(|rx| rx.borrow_and_update().clone().into_iter().collect());
+        if let Some(tags) = &mut tags {
+            tags.sort_by_key(|tag| tag.to_string());
+        }
 
         // Clear display.
         execute!(stdout(), terminal::Clear(ClearType::All), cursor::MoveTo(0, 0)).unwrap();

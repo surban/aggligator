@@ -2,7 +2,7 @@
 
 use bytes::Bytes;
 use futures::{future, future::poll_fn, FutureExt, Sink, SinkExt, Stream, StreamExt};
-use std::{collections::VecDeque, io, mem, sync::Arc, task::Poll, time::Duration};
+use std::{collections::VecDeque, fmt, io, mem, sync::Arc, task::Poll, time::Duration};
 use tokio::{
     select,
     sync::{mpsc, watch},
@@ -140,6 +140,50 @@ pub(crate) struct LinkInt<TX, RX, TAG> {
     remote_user_data: Arc<Vec<u8>>,
     /// Link statistics calculator.
     stats: LinkStatistican,
+}
+
+impl<TX, RX, TAG> fmt::Debug for LinkInt<TX, RX, TAG> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("LinkInt")
+            .field("conn_id", &self.conn_id)
+            .field("link_id", &self.link_id)
+            .field("direction", &self.direction)
+            .field("cfg", &self.cfg)
+            .field("remote_cfg", &self.remote_cfg)
+            .field("needs_tx_accepted", &self.needs_tx_accepted)
+            .field("tx_data", &self.tx_data)
+            .field("tx_error", &self.tx_error)
+            .field("tx_polling", &self.tx_polling)
+            .field("tx_pending", &self.tx_pending)
+            .field("tx_last_msg", &self.tx_last_msg)
+            .field("tx_idle_since", &self.tx_idle_since)
+            .field("tx_flushing", &self.tx_flushing)
+            .field("tx_flushed", &self.tx_flushed)
+            .field("txed_unacked_data", &self.txed_unacked_data)
+            .field("txed_unacked_data_limit", &self.txed_unacked_data_limit)
+            .field("txed_unacked_data_limit_increased", &self.txed_unacked_data_limit_increased)
+            .field(
+                "txed_unacked_data_limit_increased_consecutively",
+                &self.txed_unacked_data_limit_increased_consecutively,
+            )
+            .field("tx_ack_queue", &self.tx_ack_queue)
+            .field("txed_acks_unflushed", &self.txed_acks_unflushed)
+            .field("rxed_data_msg", &self.rxed_data_msg)
+            .field("disconnected_tx", &self.disconnected_tx)
+            .field("disconnect_tx", &self.disconnect_tx)
+            .field("disconnect_rx", &self.disconnect_rx)
+            .field("unconfirmed", &self.unconfirmed)
+            .field("test", &self.test)
+            .field("roundtrip", &self.roundtrip)
+            .field("last_ping", &self.last_ping)
+            .field("current_ping_sent", &self.current_ping_sent)
+            .field("send_ping", &self.send_ping)
+            .field("send_pong", &self.send_pong)
+            .field("disconnecting", &self.disconnecting)
+            .field("goodbye_sent", &self.goodbye_sent)
+            .field("remote_user_data", &self.remote_user_data)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<TX, RX, TAG> LinkInt<TX, RX, TAG> {

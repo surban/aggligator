@@ -5,18 +5,6 @@
 //! accept incoming connections consisting of aggregated TCP links.
 //!
 
-use futures::Future;
-use std::{
-    io::{Error, ErrorKind, Result},
-    net::SocketAddr,
-};
-
-use aggligator::{alc::Stream, cfg::Cfg, connect::Server};
-
-use self::adv::{alc_connect, alc_listen, tcp_connect_links, tcp_listen, IpVersion, TargetSet};
-
-pub mod adv;
-
 #[cfg(feature = "tls")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
 mod tls;
@@ -24,9 +12,16 @@ mod tls;
 #[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
 pub use tls::*;
 
+use futures::Future;
+use std::{io::Result, net::SocketAddr};
+
+use crate::transport::{
+    tcp::{TcpAcceptor, TcpConnector},
+    Acceptor, Connector,
+};
+use aggligator::alc::Stream;
+
 /// Builds a connection consisting of aggregated TCP links to the target.
-///
-/// `cfg` is the configuration and in most cases `Cfg::default()` should be used.
 ///
 /// `target` specifies a set of IP addresses or hostnames of the target host.
 /// If a hostname resolves to multiple IP addresses this is taken into account
@@ -46,35 +41,25 @@ pub use tls::*;
 /// that can all connect to `server`, or `server` has multiple interfaces
 /// that are registered with their IP addresses in DNS.
 /// ```no_run
-/// use aggligator::cfg::Cfg;
 /// use aggligator_util::net::tcp_connect;
 ///
 /// #[tokio::main]
 /// async fn main() -> std::io::Result<()> {
-///     let stream = tcp_connect(Cfg::default(), vec!["server".to_string()], 5900).await?;
+///     let stream = tcp_connect(["server".to_string()], 5900).await?;
 ///
 ///     // use the connection
 ///
 ///     Ok(())
 /// }
 /// ```
-pub async fn tcp_connect(cfg: Cfg, target: Vec<String>, default_port: u16) -> Result<Stream> {
-    let (outgoing, control) = alc_connect(cfg).await;
-
-    let target = TargetSet::new(target, default_port, IpVersion::Both).await?;
-    tokio::spawn(async move {
-        if let Err(err) = tcp_connect_links(control, target).await {
-            tracing::error!("connecting links failed: {err}")
-        }
-    });
-
-    let ch = outgoing.connect().await.map_err(|err| Error::new(ErrorKind::TimedOut, err.to_string()))?;
+pub async fn tcp_connect(target: impl IntoIterator<Item = String>, default_port: u16) -> Result<Stream> {
+    let mut connector = Connector::new();
+    connector.add(TcpConnector::new(target, default_port).await?);
+    let ch = connector.channel().unwrap().await?;
     Ok(ch.into_stream())
 }
 
 /// Runs a TCP server accepting connections of aggregated links.
-///
-/// `cfg` is the configuration and in most cases `Cfg::default()` should be used.
 ///
 /// The TCP server listens on `addr` and accepts connections of aggregated TCP links.
 /// For each new connection the work function `work_fn` is spawned onto a new
@@ -87,13 +72,11 @@ pub async fn tcp_connect(cfg: Cfg, target: Vec<String>, default_port: u16) -> Re
 /// in DNS so that clients can discover them and establish multiple links.
 /// ```no_run
 /// use std::net::{Ipv6Addr, SocketAddr};
-/// use aggligator::cfg::Cfg;
 /// use aggligator_util::net::tcp_server;
 ///
 /// #[tokio::main]
 /// async fn main() -> std::io::Result<()> {
 ///     tcp_server(
-///         Cfg::default(),
 ///         SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 5900),
 ///         |stream| async move {
 ///             // use the incoming connection
@@ -103,14 +86,15 @@ pub async fn tcp_connect(cfg: Cfg, target: Vec<String>, default_port: u16) -> Re
 ///     Ok(())
 /// }
 /// ```
-pub async fn tcp_server<F>(
-    cfg: Cfg, addr: SocketAddr, work_fn: impl Fn(Stream) -> F + Send + 'static,
-) -> Result<()>
+pub async fn tcp_server<F>(addr: SocketAddr, work_fn: impl Fn(Stream) -> F + Send + 'static) -> Result<()>
 where
     F: Future<Output = ()> + Send + 'static,
 {
-    let server = Server::new(cfg);
-    let listener = server.listen().await.unwrap();
-    tokio::spawn(alc_listen(listener, work_fn));
-    tcp_listen(server, addr).await
+    let acceptor = Acceptor::new();
+    acceptor.add(TcpAcceptor::new([addr]).await?);
+
+    loop {
+        let (ch, _control) = acceptor.accept().await?;
+        tokio::spawn(work_fn(ch.into_stream()));
+    }
 }

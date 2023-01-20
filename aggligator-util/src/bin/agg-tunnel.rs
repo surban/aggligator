@@ -5,11 +5,10 @@ use clap::{Parser, Subcommand};
 use crossterm::{style::Stylize, tty::IsTty};
 use futures::future;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::stdout,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     path::PathBuf,
-    process::exit,
     sync::Arc,
     time::Duration,
 };
@@ -17,7 +16,7 @@ use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     select,
-    sync::{mpsc, watch},
+    sync::{broadcast, mpsc, watch},
     task::block_in_place,
     time::sleep,
 };
@@ -25,20 +24,20 @@ use tokio::{
 use aggligator::{
     alc::{ReceiverStream, SenderSink},
     cfg::Cfg,
-    connect::Server,
+    dump::dump_to_json_line_file,
 };
-
 use aggligator_util::{
     cli::{init_log, load_cfg, print_default_cfg},
-    monitor::interactive_monitor,
-    net::adv::{
-        alc_connect, alc_listen_and_monitor, monitor_potential_link_tags, tcp_connect_links_and_monitor,
-        tcp_listen, IpVersion, TargetSet,
+    monitor::{interactive_monitor, watch_tags},
+    transport::{
+        tcp::{IpVersion, TcpAcceptor, TcpConnector},
+        AcceptorBuilder, ConnectingTransport, ConnectorBuilder, LinkTagBox,
     },
 };
 
 const PORT: u16 = 5800;
 const FLUSH_DELAY: Option<Duration> = Some(Duration::from_millis(10));
+const DUMP_BUFFER: usize = 8192;
 
 /// Forward TCP ports through a connection of aggregated links.
 ///
@@ -50,6 +49,9 @@ pub struct TunnelCli {
     /// Configuration file.
     #[arg(long)]
     cfg: Option<PathBuf>,
+    /// Dump analysis data to file.
+    #[arg(long, short = 'd')]
+    dump: Option<PathBuf>,
     /// Client or server.
     #[command(subcommand)]
     command: Commands,
@@ -71,10 +73,11 @@ async fn main() -> Result<()> {
 
     let cli = TunnelCli::parse();
     let cfg = load_cfg(&cli.cfg)?;
+    let dump = cli.dump.clone();
 
-    match TunnelCli::parse().command {
-        Commands::Client(client) => client.run(cfg).await?,
-        Commands::Server(server) => server.run(cfg).await?,
+    match cli.command {
+        Commands::Client(client) => client.run(cfg, dump).await?,
+        Commands::Server(server) => server.run(cfg, dump).await?,
         Commands::ShowCfg => print_default_cfg(),
     }
 
@@ -113,7 +116,7 @@ pub struct ClientCli {
 }
 
 impl ClientCli {
-    async fn run(self, cfg: Cfg) -> Result<()> {
+    async fn run(self, cfg: Cfg, dump: Option<PathBuf>) -> Result<()> {
         let no_monitor = self.no_monitor || !stdout().is_tty();
 
         let listen_addr = IpAddr::from(if self.global { Ipv6Addr::UNSPECIFIED } else { Ipv6Addr::LOCALHOST });
@@ -121,21 +124,21 @@ impl ClientCli {
         let ports: Vec<_> =
             self.port.clone().into_iter().map(|(s, c)| if s == 0 { (c, c) } else { (s, c) }).collect();
 
-        let target = TargetSet::new(self.target.clone(), PORT, IpVersion::from_args(self.ipv4, self.ipv6)?)
-            .await
-            .context("cannot resolve target")?;
+        let mut tcp_connector =
+            TcpConnector::new(self.target.clone(), PORT).await.context("cannot resolve target")?;
+        tcp_connector.set_ip_version(IpVersion::from_only(self.ipv4, self.ipv6)?);
+
+        let target = tcp_connector.to_string();
         let title = format!(
             "Tunneling ports of {target} (remote->local): {}",
             ports.iter().map(|(s, l)| format!("{s}->{l}")).collect::<Vec<_>>().join(" ")
         );
 
-        let (tags_tx, tags_rx) = watch::channel(Default::default());
-        let links_target = target.clone();
-        tokio::spawn(monitor_potential_link_tags(links_target, tags_tx));
-
-        let (control_tx, control_rx) = mpsc::channel(16);
-        let (tag_err_tx, tag_err_rx) = mpsc::channel(8);
-        let (disabled_tags_tx, disabled_tags_rx) = watch::channel(Default::default());
+        let (tag_err_tx, tag_err_rx) = broadcast::channel(128);
+        let (disabled_tags_tx, disabled_tags_rx) = watch::channel(HashSet::new());
+        let (control_tx, control_rx) = broadcast::channel(8);
+        let all_tags_rx =
+            self.all_links.then(|| watch_tags([Box::new(tcp_connector.clone()) as Box<dyn ConnectingTransport>]));
 
         let mut port_tasks = Vec::new();
         for (server_port, client_port) in ports {
@@ -146,41 +149,52 @@ impl ClientCli {
             let control_tx = control_tx.clone();
             let tag_err_tx = tag_err_tx.clone();
             let disabled_tags_rx = disabled_tags_rx.clone();
-
-            let target = target.clone();
             let port_cfg = cfg.clone();
+            let tcp_connector = tcp_connector.clone();
+            let dump = dump.clone();
             port_tasks.push(async move {
                 loop {
                     let (socket, src) = listener.accept().await?;
-                    let (outgoing, control) = alc_connect(port_cfg.clone()).await;
 
-                    let _ =
-                        control_tx.send((control.clone(), format!("{src}: {server_port}->{client_port}"))).await;
+                    let mut builder = ConnectorBuilder::new(port_cfg.clone());
+                    if let Some(dump) = dump.clone() {
+                        let (tx, rx) = mpsc::channel(DUMP_BUFFER);
+                        builder.task().dump(tx);
+                        tokio::spawn(dump_to_json_line_file(dump, rx));
+                    }
 
-                    let connect_target = target.clone();
-                    let connect_tag_err_tx = tag_err_tx.clone();
-                    let connect_disabled_tag_rx = disabled_tags_rx.clone();
+                    let mut connector = builder.build();
+                    connector.add(tcp_connector.clone());
+                    let control = connector.control();
+                    let outgoing = connector.channel().unwrap();
+
+                    let mut conn_tag_err_rx = connector.link_errors();
+                    let tag_err_tx = tag_err_tx.clone();
                     tokio::spawn(async move {
-                        if let Err(err) = tcp_connect_links_and_monitor(
-                            control,
-                            connect_target,
-                            watch::channel(Default::default()).0,
-                            connect_tag_err_tx,
-                            connect_disabled_tag_rx,
-                        )
-                        .await
-                        {
-                            eprintln!("Connecting links failed: {err}");
-                            exit(10);
+                        while let Ok(err) = conn_tag_err_rx.recv().await {
+                            let _ = tag_err_tx.send(err);
                         }
                     });
+                    let mut disabled_tags_rx = disabled_tags_rx.clone();
+                    tokio::spawn(async move {
+                        loop {
+                            let disabled_tags: HashSet<LinkTagBox> =
+                                (*disabled_tags_rx.borrow_and_update()).clone();
+                            connector.set_disabled_tags(disabled_tags);
+                            if disabled_tags_rx.changed().await.is_err() {
+                                break;
+                            }
+                        }
+                    });
+
+                    let _ = control_tx.send((control.clone(), format!("{src}: {server_port}->{client_port}")));
 
                     tokio::spawn(async move {
                         if no_monitor {
                             eprintln!("Incoming connection from {src} requests port {client_port}");
                         }
 
-                        let ch = outgoing.connect().await?;
+                        let ch = outgoing.await?;
                         let (server_read, mut server_write) = ch.into_stream().into_split();
                         server_write.write_u16(server_port).await?;
 
@@ -214,7 +228,7 @@ impl ClientCli {
                     header_rx,
                     control_rx,
                     1,
-                    self.all_links.then_some(tags_rx),
+                    all_tags_rx,
                     Some(tag_err_rx),
                     self.all_links.then_some(disabled_tags_tx),
                 )
@@ -247,7 +261,7 @@ pub struct ServerCli {
 }
 
 impl ServerCli {
-    async fn run(self, cfg: Cfg) -> Result<()> {
+    async fn run(self, cfg: Cfg, dump: Option<PathBuf>) -> Result<()> {
         let no_monitor = self.no_monitor || !stdout().is_tty();
 
         let ports: Arc<HashMap<_, _>> = Arc::new(
@@ -265,31 +279,38 @@ impl ServerCli {
             ports.iter().map(|(port, target)| format!("{target}->{port}")).collect::<Vec<_>>().join(" ")
         );
 
-        let server = Server::new(cfg);
-        let listener = server.listen().await?;
+        let mut builder = AcceptorBuilder::new(cfg);
+        if let Some(dump) = dump {
+            builder.set_task_cfg(move |task| {
+                let (tx, rx) = mpsc::channel(DUMP_BUFFER);
+                task.dump(tx);
+                tokio::spawn(dump_to_json_line_file(dump.clone(), rx));
+            });
+        }
 
-        let task = tcp_listen(server, SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), self.server_port));
+        let acceptor = builder.build();
+        acceptor.add(TcpAcceptor::new([SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), self.server_port)]).await?);
 
-        let (control_tx, control_rx) = mpsc::channel(16);
-        tokio::spawn(alc_listen_and_monitor(
-            listener,
-            move |ch| {
-                let ports = ports.clone();
-                async move {
-                    let id = ch.id();
-                    let (client_read, client_write) = ch.into_split();
-                    if let Err(err) =
-                        Self::handle_client(ports.clone(), client_write, client_read, !no_monitor).await
-                    {
-                        if no_monitor {
-                            eprintln!("Connection {id} failed: {err}");
-                        }
+        let (control_tx, control_rx) = broadcast::channel(16);
+
+        let task = async move {
+            loop {
+                let (ch, control) = acceptor.accept().await?;
+                let id = ch.id();
+                let _ = control_tx.send((control, id.to_string()));
+
+                let (client_read, client_write) = ch.into_stream().into_split();
+                if let Err(err) = Self::handle_client(ports.clone(), client_write, client_read, !no_monitor).await
+                {
+                    if no_monitor {
+                        eprintln!("Connection {id} failed: {err}");
                     }
                 }
-            },
-            control_tx,
-            None,
-        ));
+            }
+
+            #[allow(unreachable_code)]
+            anyhow::Ok(())
+        };
 
         if no_monitor {
             drop(control_rx);

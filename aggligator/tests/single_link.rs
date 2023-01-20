@@ -31,7 +31,7 @@ async fn single_link_test(
         let server = Server::new(server_cfg);
 
         println!("server: obtaining listener");
-        let mut listener = server.listen().await.unwrap();
+        let mut listener = server.listen().unwrap();
 
         println!("server: adding incoming link");
         let link = server.add_incoming(link_b_tx, link_a_rx, "incoming", &[]).await.unwrap();
@@ -44,7 +44,7 @@ async fn single_link_test(
         assert_eq!(*link_names[0], "incoming");
 
         println!("server: accepting incoming connection");
-        let (task, ch, control) = incoming.accept().await;
+        let (task, ch, control) = incoming.accept();
         let task = tokio::spawn(task.into_future());
         assert!(!control.is_terminated());
 

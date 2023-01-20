@@ -3,6 +3,7 @@
 use bytes::Bytes;
 use futures::{Sink, Stream};
 use std::{
+    error::Error,
     fmt,
     hash::Hash,
     io,
@@ -54,6 +55,15 @@ pub enum AddLinkError {
 impl From<io::Error> for AddLinkError {
     fn from(err: io::Error) -> Self {
         Self::Io(err)
+    }
+}
+
+impl From<AddLinkError> for io::Error {
+    fn from(err: AddLinkError) -> Self {
+        match err {
+            AddLinkError::Io(err) => err,
+            err => io::Error::new(io::ErrorKind::ConnectionRefused, err),
+        }
     }
 }
 
@@ -634,6 +644,14 @@ impl fmt::Display for DisconnectReason {
             Self::LinkFilter => write!(f, "link filter"),
             Self::TaskTerminated => write!(f, "task terminated"),
         }
+    }
+}
+
+impl Error for DisconnectReason {}
+
+impl From<DisconnectReason> for std::io::Error {
+    fn from(value: DisconnectReason) -> Self {
+        io::Error::new(io::ErrorKind::ConnectionReset, value)
     }
 }
 

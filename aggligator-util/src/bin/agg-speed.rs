@@ -10,6 +10,7 @@ use rustls::{
 use rustls_pemfile::{certs, pkcs8_private_keys};
 use serde::Serialize;
 use std::{
+    collections::HashSet,
     io::{stdout, BufReader},
     net::{Ipv6Addr, SocketAddr},
     path::PathBuf,
@@ -18,22 +19,24 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    sync::{mpsc, watch},
+    sync::{broadcast, mpsc, watch},
     task::block_in_place,
 };
 
-use aggligator::{cfg::Cfg, connect::Server};
+use aggligator::{cfg::Cfg, dump::dump_to_json_line_file};
 use aggligator_util::{
     cli::{init_log, load_cfg, print_default_cfg},
     monitor::{format_speed, interactive_monitor},
-    net::adv::{
-        alc_connect_and_dump, alc_listen_and_monitor, tcp_connect_links_and_monitor, tcp_listen,
-        tls_connect_links_and_monitor, tls_listen, IpVersion, TargetSet,
-    },
     speed::{speed_test, INTERVAL},
+    transport::{
+        tcp::{IpVersion, TcpAcceptor, TcpConnector},
+        tls::{TlsClient, TlsServer},
+        AcceptorBuilder, ConnectorBuilder, LinkTagBox,
+    },
 };
 
 const PORT: u16 = 5700;
+const DUMP_BUFFER: usize = 8192;
 
 static TLS_CERT_PEM: &[u8] = include_bytes!("agg-speed-cert.pem");
 static TLS_KEY_PEM: &[u8] = include_bytes!("agg-speed-key.pem");
@@ -90,6 +93,9 @@ pub struct SpeedCli {
     /// Configuration file.
     #[arg(long)]
     cfg: Option<PathBuf>,
+    /// Dump analysis data to file.
+    #[arg(long, short = 'd')]
+    dump: Option<PathBuf>,
     /// Client or server.
     #[command(subcommand)]
     command: Commands,
@@ -111,13 +117,15 @@ async fn main() -> Result<()> {
 
     let cli = SpeedCli::parse();
     let cfg = load_cfg(&cli.cfg)?;
+    let dump = cli.dump.clone();
 
-    match SpeedCli::parse().command {
-        Commands::Client(client) => client.run(cfg).await?,
-        Commands::Server(server) => server.run(cfg).await?,
+    match cli.command {
+        Commands::Client(client) => client.run(cfg, dump).await?,
+        Commands::Server(server) => server.run(cfg, dump).await?,
         Commands::ShowCfg => print_default_cfg(),
     }
 
+    tracing::debug!("exiting main");
     Ok(())
 }
 
@@ -144,9 +152,6 @@ pub struct ClientCli {
     /// Block the receiver
     #[arg(long, short = 'b')]
     recv_block: bool,
-    /// Dump analysis data to file.
-    #[arg(long, short = 'd')]
-    dump: Option<PathBuf>,
     /// Do not display the link monitor.
     #[arg(long, short = 'n')]
     no_monitor: bool,
@@ -167,59 +172,56 @@ pub struct ClientCli {
 }
 
 impl ClientCli {
-    pub async fn run(mut self, cfg: Cfg) -> Result<()> {
+    pub async fn run(mut self, cfg: Cfg, dump: Option<PathBuf>) -> Result<()> {
         if !stdout().is_tty() {
             self.no_monitor = true;
         }
 
-        let target = TargetSet::new(self.target.clone(), PORT, IpVersion::from_args(self.ipv4, self.ipv6)?)
-            .await
-            .context("cannot resolve target")?;
+        let mut tcp_connector =
+            TcpConnector::new(self.target.clone(), PORT).await.context("cannot resolve target")?;
+        tcp_connector.set_ip_version(IpVersion::from_only(self.ipv4, self.ipv6)?);
+
+        let target = tcp_connector.to_string();
         let title = format!("Speed test against {target} {}", if self.tls { "with TLS" } else { "" });
 
-        let (outgoing, control) = alc_connect_and_dump(cfg, self.dump).await;
+        let mut builder = ConnectorBuilder::new(cfg);
+        if let Some(dump) = dump.clone() {
+            let (tx, rx) = mpsc::channel(DUMP_BUFFER);
+            builder.task().dump(tx);
+            tokio::spawn(dump_to_json_line_file(dump, rx));
+        }
+        if self.tls {
+            builder.wrap(TlsClient::new(
+                Arc::new(tls_client_config()),
+                ServerName::try_from(TLS_SERVER_NAME).unwrap(),
+            ));
+        }
 
-        let (control_tx, control_rx) = mpsc::channel(1);
-        let (tags_tx, tags_rx) = watch::channel(Default::default());
-        let (tag_err_tx, tag_err_rx) = mpsc::channel(8);
-        let (disabled_ifs_tx, disabled_tags_rx) = watch::channel(Default::default());
+        let mut connector = builder.build();
+        connector.add(tcp_connector);
+        let outgoing = connector.channel().unwrap();
+        let control = connector.control();
+
+        let tags_rx = connector.available_tags_watch();
+        let tag_err_rx = connector.link_errors();
+        let (disabled_tags_tx, mut disabled_tags_rx) = watch::channel(HashSet::new());
+        tokio::spawn(async move {
+            loop {
+                let disabled_tags: HashSet<LinkTagBox> = (*disabled_tags_rx.borrow_and_update()).clone();
+                connector.set_disabled_tags(disabled_tags);
+
+                if disabled_tags_rx.changed().await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        let (control_tx, control_rx) = broadcast::channel(8);
         let (header_tx, header_rx) = watch::channel(Default::default());
         let (speed_tx, mut speed_rx) = watch::channel(Default::default());
 
-        let _ = control_tx.send((control.clone(), String::new())).await;
+        let _ = control_tx.send((control.clone(), String::new()));
         drop(control_tx);
-
-        let links_target = target.clone();
-        let tls = self.tls;
-        let connect_control = control.clone();
-        tokio::spawn(async move {
-            let res = if tls {
-                tls_connect_links_and_monitor(
-                    connect_control,
-                    links_target,
-                    ServerName::try_from(TLS_SERVER_NAME).unwrap(),
-                    Arc::new(tls_client_config()),
-                    tags_tx,
-                    tag_err_tx,
-                    disabled_tags_rx,
-                )
-                .await
-            } else {
-                tcp_connect_links_and_monitor(
-                    connect_control,
-                    links_target,
-                    tags_tx,
-                    tag_err_tx,
-                    disabled_tags_rx,
-                )
-                .await
-            };
-
-            if let Err(err) = res {
-                eprintln!("Connecting links failed: {err}");
-                exit(10);
-            }
-        });
 
         if !self.no_monitor {
             tokio::spawn(async move {
@@ -246,11 +248,11 @@ impl ClientCli {
         }
 
         let speed_test = async move {
-            let ch = outgoing.connect().await.context("cannot establish aggligator connection")?;
+            let ch = outgoing.await.context("cannot establish aggligator connection")?;
             let (r, w) = ch.into_stream().into_split();
             anyhow::Ok(
                 speed_test(
-                    &target.to_string(),
+                    &target,
                     r,
                     w,
                     self.limit.map(|mb| mb * 1_048_576),
@@ -278,9 +280,10 @@ impl ClientCli {
                     1,
                     self.all_links.then_some(tags_rx),
                     Some(tag_err_rx),
-                    self.all_links.then_some(disabled_ifs_tx),
+                    self.all_links.then_some(disabled_tags_tx),
                 )
             })?;
+
             task.abort();
             match task.await {
                 Ok(res) => res?,
@@ -305,6 +308,7 @@ impl ClientCli {
             println!("Downstream: {}", format_speed(rx_speed));
         }
 
+        println!("Exiting...");
         control.terminated().await;
         Ok(())
     }
@@ -320,9 +324,6 @@ pub struct SpeedReport {
 
 #[derive(Parser)]
 pub struct ServerCli {
-    /// Dump analysis data to file.
-    #[arg(long, short = 'd')]
-    dump: Option<PathBuf>,
     /// Do not display the link monitor.
     #[arg(long, short = 'n')]
     no_monitor: bool,
@@ -338,7 +339,7 @@ pub struct ServerCli {
 }
 
 impl ServerCli {
-    pub async fn run(mut self, cfg: Cfg) -> Result<()> {
+    pub async fn run(mut self, cfg: Cfg, dump: Option<PathBuf>) -> Result<()> {
         if !stdout().is_tty() {
             self.no_monitor = true;
         }
@@ -349,62 +350,55 @@ impl ServerCli {
             if self.tls { "with TLS" } else { "" }
         );
 
-        let server = Server::new(cfg);
-        let listener = server.listen().await?;
+        let mut builder = AcceptorBuilder::new(cfg);
+        if let Some(dump) = dump {
+            builder.set_task_cfg(move |task| {
+                let (tx, rx) = mpsc::channel(DUMP_BUFFER);
+                task.dump(tx);
+                tokio::spawn(dump_to_json_line_file(dump.clone(), rx));
+            });
+        }
+        if self.tls {
+            builder.wrap(TlsServer::new(Arc::new(tls_server_config())));
+        }
 
-        let tls = self.tls;
-        let task = async move {
-            if tls {
-                tls_listen(
-                    server,
-                    SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), self.port),
-                    Arc::new(tls_server_config()),
-                )
-                .await
-            } else {
-                tcp_listen(server, SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), self.port)).await
-            }
-        };
+        let acceptor = builder.build();
+        acceptor.add(TcpAcceptor::new([SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), self.port)]).await?);
 
+        let tag_error_rx = acceptor.link_errors();
+        let (control_tx, control_rx) = broadcast::channel(8);
+        let no_monitor = self.no_monitor;
         let oneshot = self.oneshot;
-        if self.no_monitor {
-            tokio::spawn(alc_listen_and_monitor(
-                listener,
-                move |ch| async move {
+        let task = async move {
+            loop {
+                let (ch, control) = acceptor.accept().await?;
+                let _ = control_tx.send((control, String::new()));
+
+                tokio::spawn(async move {
                     let id = ch.id();
-                    let (r, w) = ch.into_split();
+                    let (r, w) = ch.into_stream().into_split();
+                    let (speed_tx, _speed_rx) = watch::channel(Default::default());
+                    let speed_tx_opt = if no_monitor { None } else { Some(speed_tx) };
                     let res =
-                        speed_test(&id.to_string(), r, w, None, None, true, true, false, INTERVAL, None).await;
-                    if oneshot {
-                        exit(res.is_err() as _);
-                    }
-                },
-                mpsc::channel(1).0,
-                self.dump.clone(),
-            ));
-            task.await?
-        } else {
-            let (control_tx, control_rx) = mpsc::channel(8);
-            tokio::spawn(alc_listen_and_monitor(
-                listener,
-                move |ch| async move {
-                    let id = ch.id();
-                    let (r, w) = ch.into_split();
-                    let (tx, _rx) = watch::channel(Default::default());
-                    let res =
-                        speed_test(&id.to_string(), r, w, None, None, true, true, false, INTERVAL, Some(tx))
+                        speed_test(&id.to_string(), r, w, None, None, true, true, false, INTERVAL, speed_tx_opt)
                             .await;
                     if oneshot {
                         exit(res.is_err() as _);
                     }
-                },
-                control_tx,
-                self.dump.clone(),
-            ));
+                });
+            }
+
+            #[allow(unreachable_code)]
+            anyhow::Ok(())
+        };
+
+        if self.no_monitor {
+            task.await?;
+        } else {
             let task = tokio::spawn(task);
 
             let header_rx = watch::channel(format!("{title}\r\n").white().bold().to_string()).1;
-            block_in_place(|| interactive_monitor(header_rx, control_rx, 1, None, None, None))?;
+            block_in_place(|| interactive_monitor(header_rx, control_rx, 1, None, Some(tag_error_rx), None))?;
 
             task.abort();
             if let Ok(res) = task.await {

@@ -51,7 +51,7 @@ async fn multi_link_test(
         let server = Server::new(server_cfg);
 
         println!("server: obtaining listener");
-        let mut listener = server.listen().await.unwrap();
+        let mut listener = server.listen().unwrap();
 
         let mut added_links = Vec::new();
         for (n, (rx, tx)) in server_links.into_iter().enumerate() {
@@ -70,7 +70,7 @@ async fn multi_link_test(
         }
 
         println!("server: accepting incoming connection");
-        let (task, ch, control) = incoming.accept().await;
+        let (task, ch, control) = incoming.accept();
         let task = tokio::spawn(task.into_future());
         assert!(!control.is_terminated());
 

@@ -60,25 +60,4 @@ pub mod net;
 #[cfg_attr(docsrs, doc(cfg(feature = "speed-test")))]
 pub mod speed;
 
-use aggligator::id::ConnId;
-
-/// Link tag error information.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TagError<TAG> {
-    /// Connection id.
-    pub id: ConnId,
-    /// Link tag.
-    pub tag: TAG,
-    /// Error message.
-    pub msg: String,
-}
-
-impl<TAG> TagError<TAG>
-where
-    TAG: Clone,
-{
-    /// Creates new link tag error information.
-    pub fn new(id: ConnId, tag: &TAG, msg: impl ToString) -> Self {
-        Self { id, tag: tag.clone(), msg: msg.to_string() }
-    }
-}
+pub mod transport;
