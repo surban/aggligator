@@ -19,7 +19,7 @@ use tokio::{
     time::sleep,
 };
 
-use super::{AccepetedIoBox, AcceptingTransport, ConnectingTransport, IoBox, LinkTag, LinkTagBox};
+use super::{AcceptedIoBox, AcceptingTransport, ConnectingTransport, IoBox, LinkTag, LinkTagBox};
 use aggligator::{control::Direction, Link};
 
 static NAME: &str = "tcp";
@@ -387,7 +387,7 @@ impl AcceptingTransport for TcpAcceptor {
         NAME
     }
 
-    async fn listen(&self, tx: mpsc::Sender<AccepetedIoBox>) -> Result<()> {
+    async fn listen(&self, tx: mpsc::Sender<AcceptedIoBox>) -> Result<()> {
         loop {
             // Accept incoming connection.
             let (res, _, _) =
@@ -431,7 +431,7 @@ impl AcceptingTransport for TcpAcceptor {
             let _ = socket.set_nodelay(true);
             let (rh, wh) = socket.into_split();
 
-            let _ = tx.send(AccepetedIoBox::new(rh, wh, tag)).await;
+            let _ = tx.send(AcceptedIoBox::new(rh, wh, tag)).await;
         }
     }
 }

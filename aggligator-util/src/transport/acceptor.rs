@@ -21,14 +21,14 @@ use super::{
 use aggligator::{alc::Channel, Cfg, Server};
 
 /// An accepted incoming IO stream.
-pub struct AccepetedIoBox {
+pub struct AcceptedIoBox {
     /// IO stream.
     pub io: IoBox,
     /// Link tag.
     pub tag: LinkTagBox,
 }
 
-impl AccepetedIoBox {
+impl AcceptedIoBox {
     /// Creates a new instance.
     pub fn new(
         read: impl AsyncRead + Send + Sync + 'static, write: impl AsyncWrite + Send + Sync + 'static,
@@ -48,7 +48,7 @@ pub trait AcceptingTransport: Send + Sync + 'static {
     ///
     /// This functions listens for incoming connections, accepts them and
     /// sends the read stream, write stream and link tag over the provided channel.
-    async fn listen(&self, tx: mpsc::Sender<AccepetedIoBox>) -> Result<()>;
+    async fn listen(&self, tx: mpsc::Sender<AcceptedIoBox>) -> Result<()>;
 
     /// Checks whether a new link can be added given existing links.
     async fn link_filter(&self, _new: &BoxLink, _existing: &[BoxLink]) -> bool {
@@ -337,7 +337,7 @@ impl Acceptor {
 
         let res = loop {
             // Accept incoming transport connection.
-            let AccepetedIoBox { io: mut io_box, tag } = tokio::select! {
+            let AcceptedIoBox { io: mut io_box, tag } = tokio::select! {
                 Some(accepted) = rx.recv() => accepted,
                 Some(()) = accepting_tasks.next() => continue,
                 res = &mut listener => break res,
