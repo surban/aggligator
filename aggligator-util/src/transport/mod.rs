@@ -193,6 +193,6 @@ pub mod tls;
 #[cfg_attr(docsrs, doc(cfg(feature = "tcp")))]
 pub mod tcp;
 
-#[cfg(feature = "bluer")]
-#[cfg_attr(docsrs, doc(cfg(feature = "bluer")))]
+#[cfg(feature = "rfcomm")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rfcomm")))]
 pub mod rfcomm;

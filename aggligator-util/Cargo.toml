@@ -14,7 +14,8 @@ repository = "https://github.com/surban/aggligator"
 [features]
 default = ["cli", "tls", "tcp"]
 tcp = ["tokio/net"]
-tls = ["rustls", "tokio-rustls", "tcp"]
+tls = ["rustls", "tokio-rustls"]
+rfcomm = ["bluer"]
 cli = [
     "tcp",
     "tls",
@@ -44,7 +45,7 @@ tracing = "0.1"
 network-interface = "0.1.4"
 async-trait = "0.1"
 
-bluer = { version = "0.15", features = ["bluetoothd", "rfcomm"], optional = true }
+bluer = { version = "0.15.6", features = ["rfcomm"], optional = true }
 rustls = { version = "0.20", optional = true }
 rustls-pemfile = { version = "1.0", optional = true }
 tokio-rustls = { version = "0.23", optional = true }
@@ -52,7 +53,7 @@ rand = { version = "0.8", optional = true }
 rand_xoshiro = { version = "0.6", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
 anyhow = { version = "1", optional = true }
-crossterm = { version = "0.25", optional = true }
+crossterm = { version = "0.26", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 tracing-subscriber = { version = "0.3", default-features = false, features = [

@@ -1,6 +1,6 @@
 //! Aggligator speed test.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use crossterm::{style::Stylize, tty::IsTty};
 use rustls::{
@@ -24,6 +24,8 @@ use tokio::{
 };
 
 use aggligator::{cfg::Cfg, dump::dump_to_json_line_file};
+#[cfg(feature = "rfcomm")]
+use aggligator_util::transport::rfcomm::{RfcommAcceptor, RfcommConnector};
 use aggligator_util::{
     cli::{init_log, load_cfg, print_default_cfg},
     monitor::{format_speed, interactive_monitor},
@@ -35,7 +37,9 @@ use aggligator_util::{
     },
 };
 
-const PORT: u16 = 5700;
+const TCP_PORT: u16 = 5700;
+#[cfg(feature = "rfcomm")]
+const RFCOMM_CHANNEL: u8 = 20;
 const DUMP_BUFFER: usize = 8192;
 
 static TLS_CERT_PEM: &[u8] = include_bytes!("agg-speed-cert.pem");
@@ -166,9 +170,24 @@ pub struct ClientCli {
     /// Warning: no server authentication is performed!
     #[arg(long)]
     tls: bool,
-    /// Server name or IP addresses and port number.
-    #[arg(required = true)]
-    target: Vec<String>,
+    /// TCP server name or IP addresses and port number.
+    #[arg(long)]
+    tcp: Vec<String>,
+    /// Bluetooth RFCOMM server address.
+    #[cfg(feature = "rfcomm")]
+    #[arg(long, value_parser=parse_rfcomm)]
+    rfcomm: Option<bluer::rfcomm::SocketAddr>,
+}
+
+#[cfg(feature = "rfcomm")]
+fn parse_rfcomm(arg: &str) -> Result<bluer::rfcomm::SocketAddr> {
+    match arg.parse::<bluer::rfcomm::SocketAddr>() {
+        Ok(addr) => Ok(addr),
+        Err(err) => match arg.parse::<bluer::Address>() {
+            Ok(addr) => Ok(bluer::rfcomm::SocketAddr::new(addr, RFCOMM_CHANNEL)),
+            Err(_) => Err(err.into()),
+        },
+    }
 }
 
 impl ClientCli {
@@ -176,13 +195,6 @@ impl ClientCli {
         if !stdout().is_tty() {
             self.no_monitor = true;
         }
-
-        let mut tcp_connector =
-            TcpConnector::new(self.target.clone(), PORT).await.context("cannot resolve target")?;
-        tcp_connector.set_ip_version(IpVersion::from_only(self.ipv4, self.ipv6)?);
-
-        let target = tcp_connector.to_string();
-        let title = format!("Speed test against {target} {}", if self.tls { "with TLS" } else { "" });
 
         let mut builder = ConnectorBuilder::new(cfg);
         if let Some(dump) = dump.clone() {
@@ -198,7 +210,30 @@ impl ClientCli {
         }
 
         let mut connector = builder.build();
-        connector.add(tcp_connector);
+        let mut targets = Vec::new();
+
+        if !self.tcp.is_empty() {
+            let mut tcp_connector =
+                TcpConnector::new(self.tcp.clone(), TCP_PORT).await.context("cannot resolve TCP target")?;
+            tcp_connector.set_ip_version(IpVersion::from_only(self.ipv4, self.ipv6)?);
+            targets.push(tcp_connector.to_string());
+            connector.add(tcp_connector);
+        }
+
+        #[cfg(feature = "rfcomm")]
+        if let Some(addr) = self.rfcomm {
+            let rfcomm_connector = RfcommConnector::new(addr);
+            targets.push(addr.to_string());
+            connector.add(rfcomm_connector);
+        }
+
+        if targets.is_empty() {
+            bail!("No connection transports.");
+        }
+
+        let target = targets.join(", ");
+        let title = format!("Speed test against {target} {}", if self.tls { "with TLS" } else { "" });
+
         let outgoing = connector.channel().unwrap();
         let control = connector.control();
 
@@ -333,9 +368,13 @@ pub struct ServerCli {
     /// Encrypt all links using TLS.
     #[arg(long)]
     tls: bool,
-    /// TCP port.
-    #[arg(default_value_t = PORT)]
-    port: u16,
+    /// TCP port to listen on.
+    #[arg(long, default_value_t = TCP_PORT)]
+    tcp: u16,
+    /// RFCOMM channel number to listen on.
+    #[cfg(feature = "rfcomm")]
+    #[arg(long, default_value_t = RFCOMM_CHANNEL)]
+    rfcomm: u8,
 }
 
 impl ServerCli {
@@ -343,12 +382,6 @@ impl ServerCli {
         if !stdout().is_tty() {
             self.no_monitor = true;
         }
-
-        let title = format!(
-            "Speed test server listening on port {} {}",
-            self.port,
-            if self.tls { "with TLS" } else { "" }
-        );
 
         let mut builder = AcceptorBuilder::new(cfg);
         if let Some(dump) = dump {
@@ -363,7 +396,31 @@ impl ServerCli {
         }
 
         let acceptor = builder.build();
-        acceptor.add(TcpAcceptor::new([SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), self.port)]).await?);
+        let mut ports = Vec::new();
+
+        match TcpAcceptor::new([SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), self.tcp)]).await {
+            Ok(tcp) => {
+                acceptor.add(tcp);
+                ports.push(format!("TCP port {}", self.tcp));
+            }
+            Err(err) => eprintln!("Cannot listen on TCP port {}: {err}", self.tcp),
+        }
+
+        #[cfg(feature = "rfcomm")]
+        match RfcommAcceptor::new(bluer::rfcomm::SocketAddr::new(bluer::Address::any(), self.rfcomm)).await {
+            Ok(rfcomm) => {
+                acceptor.add(rfcomm);
+                ports.push(format!("RFCOMM channel {}", self.rfcomm));
+            }
+            Err(err) => eprintln!("Cannot listen on RFCOMM channel {}: {err}", self.rfcomm),
+        }
+
+        if ports.is_empty() {
+            bail!("No listening transports.");
+        }
+
+        let ports = ports.join(", ");
+        let title = format!("Speed test server listening on {ports} {}", if self.tls { "with TLS" } else { "" });
 
         let tag_error_rx = acceptor.link_errors();
         let (control_tx, control_rx) = broadcast::channel(8);
