@@ -137,6 +137,7 @@ pub async fn speed_test(
             }
         }
 
+        tracing::info!("Sender exited");
         Ok::<_, Error>((sent_total, start.elapsed()))
     });
 
@@ -201,6 +202,7 @@ pub async fn speed_test(
             }
         }
 
+        tracing::info!("Receiver exited");
         Ok((recved_total, start.elapsed()))
     });
 
