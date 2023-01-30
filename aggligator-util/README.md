@@ -7,9 +7,10 @@
 This crate provides utility functions and command line tools for working with the
 [Aggligator link aggregator].
 
-It provides the following modules:
-  * functions for establishing a connection consisting of aggregated TCP links
-    with optional TLS encryption,
+It provides the following functionality:
+  * functions for establishing a connection consisting of aggregated TCP
+    and Bluetooth RFCOMM links,
+  * optional TLS link authentication and encryption,
   * a text-based, interactive connection and link montor,
   * a speed test.
 
@@ -25,6 +26,8 @@ Both tools display a text-based, interactive connection and link monitor.
 
 The following crate features are available:
 
+  * `tcp` - TCP transport,
+  * `rfcomm` - Bluetooth RFCOMM transport (Linux-only),
   * `monitor` — enables the text-based, interactive connection and link monitor,
   * `speed-test` — enables speed test functions,
   * `dump` — enables saving of analysis data to disk.
