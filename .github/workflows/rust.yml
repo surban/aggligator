@@ -36,4 +36,4 @@ jobs:
           cargo build --quiet --release --bin agg-speed
           RUST_LOG=info cargo run --quiet --release --bin agg-speed -- server --tls --no-monitor --oneshot &
           sleep 1
-          RUST_LOG=info cargo run --quiet --release --bin agg-speed -- client --tls --no-monitor --time 15 localhost
+          RUST_LOG=info cargo run --quiet --release --bin agg-speed -- client --tls --no-monitor --time 15 --tcp localhost
