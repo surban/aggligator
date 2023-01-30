@@ -167,7 +167,7 @@ impl TcpConnector {
 
         for host in &mut hosts {
             if !host.contains(':') {
-                host.push_str(&format!(":{}", default_port));
+                host.push_str(&format!(":{default_port}"));
             }
         }
 

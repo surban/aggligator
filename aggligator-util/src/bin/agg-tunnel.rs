@@ -217,7 +217,7 @@ impl ClientCli {
 
         if self.no_monitor {
             drop(control_rx);
-            eprintln!("{}", title);
+            eprintln!("{title}");
             task.await?;
         } else {
             let task = tokio::spawn(task);
@@ -314,7 +314,7 @@ impl ServerCli {
 
         if no_monitor {
             drop(control_rx);
-            eprintln!("{}", title);
+            eprintln!("{title}");
             task.await?
         } else {
             let task = tokio::spawn(task);

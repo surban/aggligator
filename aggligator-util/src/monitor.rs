@@ -264,7 +264,7 @@ where
                 queue!(
                     stdout(),
                     Print("  "),
-                    Print(format!("{}{}", format!("{:1}", n).white(), ". ".grey())),
+                    Print(format!("{}{}", format!("{n:1}").white(), ". ".grey())),
                     Print(format!("{:<66}", tag.to_string()).cyan()),
                     Print(
                         format!(
@@ -291,7 +291,7 @@ where
                         queue!(stdout(), Print("unconfirmed".yellow())).unwrap();
                     }
                 } else if let Some(err) = errors.get(&(conn_id, (*tag).clone())) {
-                    queue!(stdout(), Print(format!("{:40}", err).red())).unwrap();
+                    queue!(stdout(), Print(format!("{err:40}").red())).unwrap();
                 }
                 queue!(stdout(), MoveToNextLine(1)).unwrap();
 
@@ -421,18 +421,18 @@ pub fn format_duration(dur: Duration) -> String {
     let mut output = String::new();
 
     if hours > 0 {
-        write!(output, "{}{}", format!("{:2}", hours).white(), "h".dark_grey()).unwrap();
+        write!(output, "{}{}", format!("{hours:2}").white(), "h".dark_grey()).unwrap();
     } else {
         write!(output, "   ").unwrap();
     }
 
     if hours > 0 || minutes > 0 {
-        write!(output, "{}{}", format!("{:2}", minutes).white(), "m".dark_grey()).unwrap();
+        write!(output, "{}{}", format!("{minutes:2}").white(), "m".dark_grey()).unwrap();
     } else {
         write!(output, "   ").unwrap();
     }
 
-    write!(output, "{}{}", format!("{:2}", seconds).white(), "s".dark_grey()).unwrap();
+    write!(output, "{}{}", format!("{seconds:2}").white(), "s".dark_grey()).unwrap();
 
     output
 }
