@@ -29,8 +29,9 @@
 //! Aggligator link aggregator.
 //!
 //! It provides the following modules:
-//!   * functions for establishing a connection consisting of [aggregated TCP links](net)
-//!     with optional TLS encryption,
+//!   * functions for establishing a connection consisting of [aggregated TCP links](net),
+//!   * [transport implementations](transport) for TCP and Bluetooth RFCOMM sockets,
+//!   * optional TLS link authentication and encryption,
 //!   * a text-based, interactive [connection and link montor](monitor),
 //!   * a [speed test](speed).
 //!
@@ -42,10 +43,6 @@
 //!
 //! #### Simple aggregation of TCP links
 //! Use the [tcp_connect](net::tcp_connect) and [tcp_server](net::tcp_server) functions
-//! from the [net module](net).
-//!
-//! #### Encryption and authentication using TLS
-//! Use the [tls_connect](net::tls_connect) and [tls_server](net::tls_server) functions
 //! from the [net module](net).
 //!
 
@@ -61,5 +58,4 @@ pub mod net;
 #[cfg(feature = "speed-test")]
 #[cfg_attr(docsrs, doc(cfg(feature = "speed-test")))]
 pub mod speed;
-
 pub mod transport;

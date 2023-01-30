@@ -11,6 +11,9 @@ use super::{AcceptingWrapper, ConnectingWrapper, IoBox};
 static NAME: &str = "tls";
 
 /// TLS outgoing connection wrapper.
+///
+/// Pass this to [`Connector::wrapped`](super::Connector::wrapped) to apply TLS
+/// encryption to each outgoing link.
 #[derive(Debug)]
 #[must_use = "you must pass this wrapper to the connector"]
 pub struct TlsClient {

@@ -1,4 +1,56 @@
 //! Connection and link management for various transports.
+//!
+//! This module provides automatic link management for an Aggligator connection.
+//!
+//! # Establishing outgoing connections
+//!
+//! The following example shows how to use a [`Connector`] to establish outgoing connections
+//! using the TCP transport to connect to `server` on port 5900.
+//!
+//! ```no_run
+//! use aggligator_util::transport::Connector;
+//! use aggligator_util::transport::tcp::TcpConnector;
+//!
+//! #[tokio::main]
+//! async fn main() -> std::io::Result<()> {
+//!     let mut connector = Connector::new();
+//!     connector.add(TcpConnector::new(["server".to_string()], 5900).await?);
+//!     let ch = connector.channel().unwrap().await?;
+//!     let stream = ch.into_stream();
+//!
+//!     // use the connection
+//!
+//!     Ok(())
+//! }
+//! ```
+//!
+//! # Accepting incoming connections
+//!
+//! The following example shows how to use an [`Acceptor`] to listen for incoming connections
+//! using the TCP transport on port 5900.
+//!
+//! ```no_run
+//! use std::net::{Ipv6Addr, SocketAddr};
+//! use aggligator_util::transport::Acceptor;
+//! use aggligator_util::transport::tcp::TcpAcceptor;
+//!
+//! #[tokio::main]
+//! async fn main() -> std::io::Result<()> {
+//!     let acceptor = Acceptor::new();
+//!     acceptor.add(
+//!         TcpAcceptor::new([SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 5900)]).await?
+//!     );
+//!
+//!     loop {
+//!         let (ch, _control) = acceptor.accept().await?;
+//!         let stream = ch.into_stream();
+//!
+//!         // use the connection
+//!     }
+//!
+//!     Ok(())
+//! }
+//!
 
 use std::{
     any::Any,
