@@ -53,6 +53,12 @@ impl fmt::Display for ListenError {
 
 impl std::error::Error for ListenError {}
 
+impl From<ListenError> for io::Error {
+    fn from(err: ListenError) -> Self {
+        io::Error::new(io::ErrorKind::AddrInUse, err)
+    }
+}
+
 /// Incoming link error.
 #[derive(Debug)]
 pub enum IncomingError {
