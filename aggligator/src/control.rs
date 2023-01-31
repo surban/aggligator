@@ -230,6 +230,13 @@ impl<TX, RX, TAG> Control<TX, RX, TAG> {
         self.links_rx.borrow().clone()
     }
 
+    /// Gets handles to all links of the connection and marks them as seen.
+    ///
+    /// This will cause [`links_changed`](Self::links_changed) to wait until a change occurs.
+    pub fn links_update(&mut self) -> Vec<Link<TAG>> {
+        self.links_rx.borrow_and_update().clone()
+    }
+
     /// Waits until the links of the connection have changed.
     pub async fn links_changed(&mut self) {
         let _ = self.links_rx.changed().await;
@@ -238,6 +245,13 @@ impl<TX, RX, TAG> Control<TX, RX, TAG> {
     /// The current connection statistics.
     pub fn stats(&self) -> Stats {
         self.stats_rx.borrow().clone()
+    }
+
+    /// Mark the current connection statistics as seen.
+    ///
+    /// This will cause [`stats_updated`](Self::stats_updated) to wait until a change occurs.
+    pub fn stats_update(&mut self) -> Stats {
+        self.stats_rx.borrow_and_update().clone()
     }
 
     /// Waits until the connection statistics have been updated.
