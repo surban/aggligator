@@ -43,6 +43,11 @@ pub trait ConnectingTransport: Send + Sync + 'static {
     async fn link_filter(&self, _new: &Link<LinkTagBox>, _existing: &[Link<LinkTagBox>]) -> bool {
         true
     }
+
+    /// Notifies the transport of all currently connected links of the connection.
+    ///
+    /// This includes links by other transports as well.
+    async fn connected_links(&self, _links: &[Link<LinkTagBox>]) {}
 }
 
 type ArcConnectingTransport = Arc<dyn ConnectingTransport>;
@@ -341,10 +346,12 @@ impl Connector {
 
         let res = 'outer: loop {
             {
+                // Notify transport of connected links.
                 let links = control.links();
-                let disabled_tags = disabled_tags_rx.borrow_and_update();
+                transport.connected_links(&links).await;
 
                 // Get disabled tags and disconnect them.
+                let disabled_tags = disabled_tags_rx.borrow_and_update();
                 for link in &links {
                     if disabled_tags.contains(link.tag()) {
                         link.start_disconnect();

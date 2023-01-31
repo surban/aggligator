@@ -24,8 +24,6 @@ use tokio::{
 };
 
 use aggligator::{cfg::Cfg, dump::dump_to_json_line_file};
-#[cfg(feature = "rfcomm")]
-use aggligator_util::transport::rfcomm::{RfcommAcceptor, RfcommConnector};
 use aggligator_util::{
     cli::{init_log, load_cfg, print_default_cfg},
     monitor::{format_speed, interactive_monitor},
@@ -37,10 +35,18 @@ use aggligator_util::{
     },
 };
 
+#[cfg(feature = "rfcomm")]
+use aggligator_util::transport::rfcomm::{RfcommAcceptor, RfcommConnector};
+#[cfg(feature = "rfcomm_profile")]
+use aggligator_util::transport::rfcomm_profile::{RfcommProfileAcceptor, RfcommProfileConnector};
+
 const TCP_PORT: u16 = 5700;
+const DUMP_BUFFER: usize = 8192;
+
 #[cfg(feature = "rfcomm")]
 const RFCOMM_CHANNEL: u8 = 20;
-const DUMP_BUFFER: usize = 8192;
+#[cfg(feature = "rfcomm_profile")]
+const RFCOMM_UUID: bluer::Uuid = bluer::Uuid::from_u128(0x7f95058c_c00e_44a9_9003_2ce90d60e2e7);
 
 static TLS_CERT_PEM: &[u8] = include_bytes!("agg-speed-cert.pem");
 static TLS_KEY_PEM: &[u8] = include_bytes!("agg-speed-key.pem");
@@ -177,6 +183,10 @@ pub struct ClientCli {
     #[cfg(feature = "rfcomm")]
     #[arg(long, value_parser=parse_rfcomm)]
     rfcomm: Option<bluer::rfcomm::SocketAddr>,
+    /// Bluetooth RFCOMM profile server address.
+    #[cfg(feature = "rfcomm_profile")]
+    #[arg(long)]
+    rfcomm_profile: Option<bluer::Address>,
 }
 
 #[cfg(feature = "rfcomm")]
@@ -225,6 +235,15 @@ impl ClientCli {
             let rfcomm_connector = RfcommConnector::new(addr);
             targets.push(addr.to_string());
             connector.add(rfcomm_connector);
+        }
+
+        #[cfg(feature = "rfcomm_profile")]
+        if let Some(addr) = self.rfcomm_profile {
+            let rfcomm_profile_connector = RfcommProfileConnector::new(addr, RFCOMM_UUID)
+                .await
+                .context("RFCOMM profile connector failed")?;
+            targets.push(addr.to_string());
+            connector.add(rfcomm_profile_connector);
         }
 
         if targets.is_empty() {
@@ -413,6 +432,15 @@ impl ServerCli {
                 ports.push(format!("RFCOMM channel {}", self.rfcomm));
             }
             Err(err) => eprintln!("Cannot listen on RFCOMM channel {}: {err}", self.rfcomm),
+        }
+
+        #[cfg(feature = "rfcomm_profile")]
+        match RfcommProfileAcceptor::new(RFCOMM_UUID).await {
+            Ok(rfcomm_profile) => {
+                acceptor.add(rfcomm_profile);
+                ports.push("RFCOMM profile".to_string());
+            }
+            Err(err) => eprintln!("Cannot listen on RFCOMM profile {RFCOMM_UUID}: {err}"),
         }
 
         if ports.is_empty() {
