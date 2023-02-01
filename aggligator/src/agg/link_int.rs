@@ -261,7 +261,7 @@ where
     }
 
     /// Returns the next event for this link.
-    pub(crate) async fn event(&mut self) -> LinkIntEvent {
+    pub(crate) async fn event(&mut self, id: usize) -> LinkIntEvent {
         if let Some(err) = self.tx_error.take() {
             return LinkIntEvent::TxError(err);
         }
@@ -274,7 +274,7 @@ where
                     assert!(self.tx_data.is_none());
                     future::pending().await
                 } else if self.tx_flushing && self.tx_data.is_none() {
-                    match poll_fn(|cx| self.tx.poll_flush_unpin(cx)).await {
+                    match self.tx.flush().await {
                         Ok(()) => {
                             self.tx_flushing = false;
                             self.tx_flushed = true;
@@ -306,7 +306,7 @@ where
                             }
                         },
                         Err(err) => {
-                            tracing::debug!("link poll ready failure: {}", err);
+                            tracing::debug!("link {id} poll ready failure: {}", err);
                             break LinkIntEvent::TxError(err);
                         }
                     }
@@ -340,11 +340,11 @@ where
                         }
                     }
                     Some(Err(err)) => {
-                        tracing::debug!("link receive failure: {}", err);
+                        tracing::debug!("link {id} receive failure: {}", err);
                         break LinkIntEvent::RxError(err);
                     }
                     None => {
-                        tracing::debug!("link receive end");
+                        tracing::debug!("link {id} receive end");
                         break LinkIntEvent::RxError(io::ErrorKind::BrokenPipe.into());
                     }
                 }

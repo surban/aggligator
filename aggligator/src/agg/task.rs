@@ -530,7 +530,7 @@ where
                         .iter_mut()
                         .enumerate()
                         .filter_map(|(id, link_opt)| {
-                            link_opt.as_mut().map(|link| async move { (id, link.event().await) }.boxed())
+                            link_opt.as_mut().map(|link| async move { (id, link.event(id).await) }.boxed())
                         })
                         .collect();
                     tasks.shuffle(&mut thread_rng());
@@ -1373,8 +1373,8 @@ where
                 tracing::trace!("link {id} acked reception up to {received}");
                 self.handle_ack(id, received.into());
             }
-            LinkMsg::TestData { .. } => {
-                tracing::debug!("received test data");
+            LinkMsg::TestData { size } => {
+                tracing::trace!("link {id} received {size} bytes of test data");
             }
             LinkMsg::Goodbye => {
                 match link.disconnecting {
