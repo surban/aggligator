@@ -805,9 +805,13 @@ where
                         .iter_mut()
                         .enumerate()
                         .filter_map(|(id, link_opt)| {
-                            link_opt.as_mut().map(|link| {
-                                link.start_flush();
-                                id
+                            link_opt.as_mut().and_then(|link| {
+                                if link.unconfirmed.is_none() {
+                                    link.start_flush();
+                                    Some(id)
+                                } else {
+                                    None
+                                }
                             })
                         })
                         .collect();
