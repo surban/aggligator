@@ -63,6 +63,10 @@ pub struct Cfg {
     pub link_ping: LinkPing,
     /// Timeout for waiting for ping response, which when exceeded leads to removal of the link.
     pub link_ping_timeout: Duration,
+    /// Maximum ping for a link to be usable.
+    ///
+    /// A link is used anyways if all links have a ping higher than the specified value.
+    pub link_max_ping: Option<Duration>,
     /// Time to wait before link is tested again after a test has failed.
     pub link_retest_interval: Duration,
     /// Timeout after which a non-working link is disconnected.
@@ -97,8 +101,9 @@ impl Default for Cfg {
             link_unacked_limit: NonZeroUsize::new(33_554_432).unwrap(),
             link_ping: LinkPing::WhenIdle(Duration::from_secs(15)),
             link_ping_timeout: Duration::from_secs(40),
+            link_max_ping: None,
             link_retest_interval: Duration::from_secs(15),
-            link_non_working_timeout: Duration::from_secs(60),
+            link_non_working_timeout: Duration::from_secs(600),
             link_flush_delay: Duration::from_millis(500),
             no_link_timeout: Duration::from_secs(90),
             termination_timeout: Duration::from_secs(300),

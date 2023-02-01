@@ -904,6 +904,38 @@ where
                 }
                 TaskEvent::RefusedLinkTask => (),
             }
+
+            // Check for link ping exceeding configured limit.
+            if let Some(max_ping) = self.cfg.link_max_ping {
+                let all_links_slow = self.links.iter().all(|link_opt| {
+                    link_opt
+                        .as_ref()
+                        .map(|link| link.unconfirmed.is_some() || link.roundtrip > max_ping)
+                        .unwrap_or(true)
+                });
+
+                if !all_links_slow {
+                    let slow: Vec<_> = self
+                        .links
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(id, link_opt)| match link_opt {
+                            Some(link) if link.unconfirmed.is_none() && link.roundtrip > max_ping => {
+                                tracing::debug!(
+                                    "unconfirming link {id} due to slow ping of {} ms",
+                                    link.roundtrip.as_millis()
+                                );
+                                Some(id)
+                            }
+                            _ => None,
+                        })
+                        .collect();
+
+                    for id in slow {
+                        self.handle_link_confirm_timeout(id);
+                    }
+                }
+            }
         }
 
         // Publish termination reasons.
@@ -1266,12 +1298,31 @@ where
                 _ => continue,
             };
         }
+
+        // Re-test other links that have failed testing.
+        for link_opt in &mut self.links {
+            if let Some(link) = link_opt {
+                if let LinkTest::Failed(_) = link.test {
+                    link.test = LinkTest::Inactive;
+                }
+            }
+        }
     }
 
     /// Considers activating a link that has been disabled due to confirmation timeout.
     ///
     /// Returns time when next testing step is due.
     fn link_testing_step(&mut self, id: usize) -> Option<Instant> {
+        let others_slow = match self.cfg.link_max_ping {
+            Some(max_ping) => self.links.iter().enumerate().all(|(link_id, link_opt)| {
+                link_opt
+                    .as_ref()
+                    .map(|link| link_id == id || link.unconfirmed.is_some() || link.roundtrip > max_ping)
+                    .unwrap_or(true)
+            }),
+            None => false,
+        };
+
         if let Some(link) = self.links[id].as_mut() {
             match link.test {
                 LinkTest::Failed(when) if when.elapsed() >= self.cfg.link_retest_interval => {
@@ -1298,7 +1349,14 @@ where
                 LinkTest::InProgress => {
                     if link.current_ping_sent.is_none() {
                         // Ping has completed.
-                        if link.roundtrip <= self.cfg.link_ack_timeout_max / 2 {
+
+                        if link.roundtrip <= self.cfg.link_ack_timeout_max / 2
+                            && self
+                                .cfg
+                                .link_max_ping
+                                .map(|max_ping| link.roundtrip <= max_ping || others_slow)
+                                .unwrap_or(true)
+                        {
                             // Ping response arrived quickly enough, thus mark link as confirmed.
                             tracing::debug!(
                                 "link {id} successfully completed test with ping {} ms",
