@@ -3,7 +3,6 @@
 use byteorder::{ReadBytesExt, WriteBytesExt, LE};
 use bytes::Bytes;
 use futures::{Sink, SinkExt, Stream, StreamExt};
-use rand::{prelude::*, thread_rng};
 use std::{fmt, io, num::NonZeroU128};
 use x25519_dalek::PublicKey;
 
@@ -257,9 +256,8 @@ impl LinkMsg {
             }
             LinkMsg::TestData { size } => {
                 writer.write_u8(Self::MSG_TEST_DATA)?;
-                let mut rng = thread_rng();
-                for _ in 0..*size {
-                    writer.write_u8(rng.gen())?;
+                for n in 0..*size {
+                    writer.write_u8(n as u8)?;
                 }
             }
             LinkMsg::Goodbye => {
@@ -356,7 +354,10 @@ impl LinkMsg {
     }
 
     pub(crate) fn encode(&self) -> Bytes {
-        let mut buf = Vec::with_capacity(16);
+        let mut buf = Vec::with_capacity(match self {
+            Self::TestData { size } => size + 16,
+            _ => 16,
+        });
         self.write(&mut buf).unwrap();
         buf.into()
     }
