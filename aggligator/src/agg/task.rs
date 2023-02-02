@@ -1363,11 +1363,9 @@ where
         }
 
         // Re-test other links that have failed testing.
-        for link_opt in &mut self.links {
-            if let Some(link) = link_opt {
-                if let LinkTest::Failed(_) = link.test {
-                    link.test = LinkTest::Inactive;
-                }
+        for link in self.links.iter_mut().flatten() {
+            if let LinkTest::Failed(_) = link.test {
+                link.test = LinkTest::Inactive;
             }
         }
     }
