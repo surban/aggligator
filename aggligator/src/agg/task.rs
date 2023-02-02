@@ -1093,6 +1093,47 @@ where
             self.tx_overrun = SendOverrun::Armed;
         }
 
+        // Decrease data limits of links that approach maximum ping.
+        let all_links_slow;
+        match self.cfg.link_max_ping {
+            Some(max_ping) => {
+                all_links_slow = self.links.iter().all(|link_opt| {
+                    link_opt
+                        .as_ref()
+                        .map(|link| link.unconfirmed.is_some() || link.roundtrip > max_ping / 2)
+                        .unwrap_or(true)
+                });
+
+                if !all_links_slow {
+                    for (id, link_opt) in self.links.iter_mut().enumerate() {
+                        match link_opt {
+                            Some(link)
+                                if link.unconfirmed.is_none()
+                                    && link.txed_unacked_data_limit_increased.is_none()
+                                    && link.roundtrip > max_ping * 3 / 4 =>
+                            {
+                                // Decrease limit.
+                                let current = link.txed_unacked_data.min(link.txed_unacked_data_limit);
+                                link.txed_unacked_data_limit = current * 95 / 100;
+                                tracing::debug!(
+                                    "decreasing unacked limit of link {id} to {} bytes due to ping",
+                                    link.txed_unacked_data_limit
+                                );
+
+                                // Block link from increasing its send data limit.
+                                link.txed_unacked_data_limit_increased = Some(self.tx_seq);
+                                link.txed_unacked_data_limit_increased_consecutively = 0;
+                            }
+                            _ => (),
+                        }
+                    }
+                }
+            }
+            None => {
+                all_links_slow = true;
+            }
+        };
+
         // Check if data is available for sending but no link is available.
         let send_data_avail = self.write_rx.as_mut().map(|rx| rx.try_peek().is_ok()).unwrap_or_default();
         let sendable_link_avail = self.links.iter().any(|link_opt| {
@@ -1115,7 +1156,12 @@ where
                             && link.unconfirmed.is_none()
                             && link.txed_unacked_data >= link.txed_unacked_data_limit
                             && link.txed_unacked_data_limit_increased.is_none()
-                            && link.txed_unacked_data_limit < self.cfg.link_unacked_limit.get() =>
+                            && link.txed_unacked_data_limit < self.cfg.link_unacked_limit.get()
+                            && self
+                                .cfg
+                                .link_max_ping
+                                .map(|max_ping| link.roundtrip <= max_ping / 2 || all_links_slow)
+                                .unwrap_or(true) =>
                     {
                         // Increase limit, faster if done many times consecutively.
                         link.txed_unacked_data_limit =
@@ -1295,6 +1341,9 @@ where
         self.idle_links.retain(|&idle_id| idle_id != id);
         self.unflushed_links.remove(&id);
 
+        // Flush link.
+        link.start_flush();
+
         // Mark packets as being resent and put them into resend queue.
         for p in &mut self.txed_packets {
             let mut status = p.status.borrow_mut();
@@ -1352,7 +1401,11 @@ where
                     {
                         let sent = link.send_test_data(
                             self.cfg.io_write_size.get(),
-                            self.cfg.link_unacked_limit.get().min(self.cfg.send_buffer.get() as usize),
+                            if self.cfg.link_max_ping.is_some() {
+                                self.cfg.link_unacked_init.get()
+                            } else {
+                                self.cfg.link_unacked_limit.get().min(self.cfg.send_buffer.get() as usize)
+                            },
                         );
                         link.send_ping = true;
                         link.test = LinkTest::InProgress;
@@ -1378,6 +1431,13 @@ where
                             );
                             link.unconfirmed = None;
                             link.test = LinkTest::Inactive;
+
+                            // Reset unacked data limit.
+                            link.txed_unacked_data_limit =
+                                link.txed_unacked_data_limit.clamp(100, self.cfg.link_unacked_init.get());
+                            link.txed_unacked_data_limit_increased = None;
+                            link.txed_unacked_data_limit_increased_consecutively = 0;
+
                             link.report_ready();
                             None
                         } else {
