@@ -173,7 +173,7 @@ impl TcpConnector {
 
         let this = Self { hosts, ip_version: IpVersion::Both, resolve_interval: Duration::from_secs(10) };
 
-        let addrs = this.resolve().await?;
+        let addrs = this.resolve().await;
         if addrs.is_empty() {
             return Err(Error::new(ErrorKind::NotFound, "cannot resolve IP address of host"));
         }
@@ -193,11 +193,12 @@ impl TcpConnector {
     }
 
     /// Resolve target to socket addresses.
-    async fn resolve(&self) -> Result<Vec<SocketAddr>> {
+    async fn resolve(&self) -> Vec<SocketAddr> {
         let mut all_addrs = HashSet::new();
 
         for host in &self.hosts {
-            all_addrs.extend(lookup_host(host).await?.filter(|addr| {
+            let Ok(addrs) = lookup_host(host).await else { continue };
+            all_addrs.extend(addrs.filter(|addr| {
                 !((addr.is_ipv4() && self.ip_version.is_only_ipv6())
                     || (addr.is_ipv6() && self.ip_version.is_only_ipv4()))
             }));
@@ -205,8 +206,7 @@ impl TcpConnector {
 
         let mut all_addrs: Vec<_> = all_addrs.into_iter().collect();
         all_addrs.sort();
-
-        Ok(all_addrs)
+        all_addrs
     }
 
     /// Returns the interface usable for connecting to target.
@@ -272,7 +272,7 @@ impl ConnectingTransport for TcpConnector {
             let interfaces = local_interfaces()?;
 
             let mut tags: HashSet<LinkTagBox> = HashSet::new();
-            for addr in self.resolve().await? {
+            for addr in self.resolve().await {
                 for iface in Self::interface_names_for_target(&interfaces, addr) {
                     let tag = TcpLinkTag::new(&iface, addr, Direction::Outgoing);
                     tags.insert(Box::new(tag.clone()));
