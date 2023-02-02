@@ -86,6 +86,8 @@ enum SentReliableStatus {
         link_id: usize,
         /// Sent message.
         msg: ReliableMsg,
+        /// Whether packet has been resent.
+        resent: bool,
     },
     /// Message was received by remote endpoint.
     Received {
@@ -344,6 +346,8 @@ where
         let mut stat_timers =
             stream::select_all(self.cfg.stats_intervals.iter().map(|t| IntervalStream::new(interval(*t))));
 
+        let mut fast_rng = SplitMix64::seed_from_u64(1);
+
         // Termination reasons when exiting main loop.
         let read_term;
         let write_term;
@@ -552,7 +556,7 @@ where
 
             // Task for resending unacknowledged messages.
             let resend_task = async {
-                if resending && links_idling {
+                if resending && sendable_idle_link_id.is_some() {
                     self.resend_queue.pop_front().unwrap()
                 } else {
                     future::pending().await
@@ -680,7 +684,8 @@ where
                                     self.send_reliable_over_link(id, ReliableMsg::Consumed(consumed));
                                     self.rxed_reliable_consumed_since_last_ack = 0;
                                     self.rxed_reliable_consumed_force_ack = false;
-                                } else if let Some(packet) = self.resend_queue.pop_front() {
+                                } else if resending && link.is_sendable() {
+                                    let packet = self.resend_queue.pop_front().unwrap();
                                     tracing::trace!("resending packet {} over non-idle link {id}", packet.seq);
                                     self.resend_reliable_over_link(id, packet);
                                 } else if self.read_closed_rx.is_none() && !self.receive_close_sent {
@@ -824,7 +829,8 @@ where
                     self.handle_link_confirm_timeout(id);
                 }
                 TaskEvent::Resend(packet) => {
-                    let id = self.idle_links.pop().unwrap();
+                    let id = sendable_idle_link_id.unwrap();
+                    self.idle_links.retain(|&idle_id| idle_id != id);
                     tracing::trace!("resending message {} over idle link {id}", packet.seq);
                     self.resend_reliable_over_link(id, packet);
                 }
@@ -1179,9 +1185,10 @@ where
     /// Returns link id and instant of timeout.
     fn earliest_confirm_timeout(&self) -> Option<(usize, Instant)> {
         for p in &self.txed_packets {
-            if let SentReliableStatus::Sent { link_id, sent, .. } = &*p.status.borrow() {
+            if let SentReliableStatus::Sent { link_id, sent, resent, .. } = &*p.status.borrow() {
                 let link = self.links[*link_id].as_ref().unwrap();
-                let dur = (link.roundtrip * self.cfg.link_ack_timeout_roundtrip_factor.get())
+                let dur_factor = if *resent { 3 } else { 1 };
+                let dur = (link.roundtrip * self.cfg.link_ack_timeout_roundtrip_factor.get() * dur_factor)
                     .clamp(self.cfg.link_ack_timeout_min, self.cfg.link_ack_timeout_max);
                 return Some((*link_id, *sent + dur));
             }
@@ -1242,6 +1249,7 @@ where
                 sent: Instant::now(),
                 link_id: id,
                 msg: reliable_msg,
+                resent: false,
             }),
         };
         self.txed_packets.push_back(Arc::new(packet));
@@ -1271,7 +1279,12 @@ where
         }
 
         // Update packet.
-        *status = SentReliableStatus::Sent { sent: Instant::now(), link_id: id, msg: reliable_msg.clone() };
+        *status = SentReliableStatus::Sent {
+            sent: Instant::now(),
+            link_id: id,
+            msg: reliable_msg.clone(),
+            resent: true,
+        };
     }
 
     /// Handles link confirmation timeout.
@@ -1569,7 +1582,7 @@ where
             assert_eq!(packet.seq, rxed_seq);
 
             let mut status = packet.status.borrow_mut();
-            if let SentReliableStatus::Sent { sent, link_id, msg } = &*status {
+            if let SentReliableStatus::Sent { sent, link_id, msg, .. } = &*status {
                 if *link_id == id {
                     let size = if let ReliableMsg::Data(data) = &msg { data.len() } else { 0 };
 
