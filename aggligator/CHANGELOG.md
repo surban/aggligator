@@ -5,6 +5,17 @@ All notable changes to Aggligator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.3.2 - 2023-02-02
+### Added
+- `link_max_ping` configuration option to only use links
+  that satisfy the ping requirement
+- control methods to mark links and stats as seen
+### Fixed
+- optimize resending
+- race condition when testing link
+- do not wait for flush of unconfirmed links
+- do not use crypto random number generator when unnecessary
+
 ## 0.3.1
 ### Added
 - `control::links_update` and `control::stats_update` methods
