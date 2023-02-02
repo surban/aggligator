@@ -1361,7 +1361,7 @@ where
                     None
                 }
                 LinkTest::InProgress => {
-                    if link.current_ping_sent.is_none() {
+                    if link.current_ping_sent.is_none() && !link.send_ping {
                         // Ping has completed.
 
                         if link.roundtrip <= self.cfg.link_ack_timeout_max / 2
