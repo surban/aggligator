@@ -28,7 +28,7 @@ use tokio_stream::wrappers::IntervalStream;
 use crate::{
     agg::link_int::{DisconnectInitiator, LinkInt, LinkIntEvent, LinkTest},
     alc::{RecvError, SendError},
-    cfg::{Cfg, ExchangedCfg, LinkPing},
+    cfg::{Cfg, ExchangedCfg, LinkPing, LinkSteering, MinRoundtrip, UnackedLimit},
     control::{Direction, DisconnectReason, Link, Stats},
     id::{ConnId, OwnedConnId},
     msg::{LinkMsg, RefusedReason, ReliableMsg},
@@ -150,6 +150,8 @@ enum TaskEvent<TX, RX, TAG> {
     LinkSendTimeout(usize),
     /// Timeout waiting for ping reply over link.
     LinkPingTimeout(usize),
+    /// Flush a link.
+    FlushLink(usize),
     /// A link requires testing.
     LinkTesting,
     /// No working links within timeout.
@@ -362,7 +364,7 @@ where
             let links_idling = !self.idle_links.is_empty();
             let links_available = self.links.iter().any(Option::is_some);
 
-            // Send statistics.
+            // Send statistics and dump.
             self.send_stats();
             #[cfg(feature = "dump")]
             self.send_dump();
@@ -416,8 +418,11 @@ where
                 }
             }
 
-            // Adjust link transmit buffer limits.
-            self.adjust_link_tx_limits();
+            // Steer traffic over links.
+            match &self.cfg.link_steering {
+                LinkSteering::MinRoundtrip(opts) => self.update_fastest_link(*opts),
+                LinkSteering::UnackedLimit(opts) => self.adjust_link_tx_limits(*opts),
+            }
 
             // Timeout for no working links.
             let no_link_since = self.links_not_working_since();
@@ -442,8 +447,9 @@ where
             };
 
             // Timeout for expecting ping reply.
-            let next_pong_timeout =
-                self.earliest_link_specific_timeout(self.cfg.link_ping_timeout, |link| link.current_ping_sent);
+            let next_pong_timeout = self.earliest_link_specific_timeout(self.cfg.link_ping_timeout, |link| {
+                link.current_ping_sent.map(|(sent, _data)| sent)
+            });
 
             // Timeout for removing an unconfirmed link.
             let next_unconfirmed_timeout =
@@ -451,7 +457,11 @@ where
 
             // Timeout for removing a link that takes too long to send data.
             let next_send_timeout =
-                self.earliest_link_specific_timeout(self.cfg.link_ping_timeout, |link| link.tx_polling);
+                self.earliest_link_specific_timeout(self.cfg.link_ping_timeout, |link| link.tx_polling());
+
+            // Timeout for flushing a link.
+            let next_flush_timeout =
+                self.earliest_link_specific_timeout(Duration::from_millis(10), |link| link.tx_unflushed());
 
             // Timeout for next link testing step.
             let next_link_testing = (0..self.links.len()).filter_map(|id| self.link_testing_step(id)).min();
@@ -594,6 +604,8 @@ where
                 link_id = next_pong_timeout => TaskEvent::LinkPingTimeout(link_id),
                 link_id = next_unconfirmed_timeout => TaskEvent::LinkUnconfirmedTimeout(link_id),
                 link_id = next_send_timeout => TaskEvent::LinkSendTimeout(link_id),
+                link_id = next_flush_timeout, if self.cfg.link_steering.is_min_roundtrip()
+                    => TaskEvent::FlushLink(link_id),
                 packet = resend_task => TaskEvent::Resend (packet),
                 consume_event = consume_task => consume_event,
                 event = read_closed_task => event,
@@ -667,11 +679,11 @@ where
                                     tracing::info!("removing link {id} by remote request");
                                     self.remove_link(id, DisconnectReason::RemotelyRequested);
                                 }
-                            } else if link.send_ping {
+                            } else if let Some(test_data) = link.send_ping {
                                 tracing::debug!("sending Ping over link {id}");
                                 link.start_send_msg(LinkMsg::Ping, None);
-                                link.current_ping_sent = Some(Instant::now());
-                                link.send_ping = false;
+                                link.current_ping_sent = Some((Instant::now(), test_data));
+                                link.send_ping = None;
                             } else if link.unconfirmed.is_none() {
                                 // This is a link that is believed to be working, so we can submit
                                 // reliable messages over it. Do so by priority.
@@ -716,10 +728,13 @@ where
                                         data.len()
                                     );
                                     self.send_reliable_over_link(id, ReliableMsg::Data(data));
-                                } else if link.need_ack_flush() {
+                                } else if link.need_ack_flush() && self.cfg.link_steering.is_unacked_limit() {
                                     tracing::trace!("flushing link {id} due to sent acks");
                                     link.start_flush();
-                                } else if link.needs_flush() && !link.is_sendable() {
+                                } else if link.needs_flush()
+                                    && !link.is_sendable()
+                                    && self.cfg.link_steering.is_unacked_limit()
+                                {
                                     tracing::trace!("flushing link {id} because it is not sendable");
                                     link.start_flush();
                                 } else if !self.idle_links.contains(&id) {
@@ -879,7 +894,7 @@ where
                 TaskEvent::PingLink(id) => {
                     tracing::debug!("requesting ping of link {id}");
                     let link = self.links[id].as_mut().unwrap();
-                    link.send_ping = true;
+                    link.send_ping = Some(0);
                     self.flush_link(id);
                 }
                 TaskEvent::LinkPingTimeout(id) => {
@@ -893,6 +908,12 @@ where
                 TaskEvent::LinkSendTimeout(id) => {
                     tracing::warn!("removing link {id} due to send timeout");
                     self.remove_link(id, DisconnectReason::SendTimeout);
+                }
+                TaskEvent::FlushLink(id) => {
+                    tracing::trace!("flushing link {id} due to flush timeout");
+                    self.idle_links.retain(|&idle_id| idle_id != id);
+                    let link = self.links[id].as_mut().unwrap();
+                    link.start_flush();
                 }
                 TaskEvent::LinkTesting => (),
                 TaskEvent::NoLinksTimeout => {
@@ -917,7 +938,7 @@ where
                 let all_links_slow = self.links.iter().all(|link_opt| {
                     link_opt
                         .as_ref()
-                        .map(|link| link.unconfirmed.is_some() || link.roundtrip > max_ping)
+                        .map(|link| link.unconfirmed.is_some() || link.avg_roundtrip > max_ping)
                         .unwrap_or(true)
                 });
 
@@ -927,10 +948,10 @@ where
                         .iter()
                         .enumerate()
                         .filter_map(|(id, link_opt)| match link_opt {
-                            Some(link) if link.unconfirmed.is_none() && link.roundtrip > max_ping => {
+                            Some(link) if link.unconfirmed.is_none() && link.avg_roundtrip > max_ping => {
                                 tracing::debug!(
                                     "unconfirming link {id} due to slow ping of {} ms",
-                                    link.roundtrip.as_millis()
+                                    link.avg_roundtrip.as_millis()
                                 );
                                 Some(id)
                             }
@@ -963,7 +984,7 @@ where
 
     /// Adds a newly established link and returns its id.
     fn add_link(&mut self, mut link: LinkInt<TX, RX, TAG>) -> usize {
-        link.tx_polling = Some(Instant::now());
+        link.report_ready();
         link.unconfirmed = Some(Instant::now());
 
         for (id, link_opt) in self.links.iter_mut().enumerate() {
@@ -1046,8 +1067,37 @@ where
         self.txed_packets.front().map(|p| self.tx_seq - p.seq <= Seq::USABLE_INTERVAL).unwrap_or(true)
     }
 
+    /// Finds the fastest link and sets the `tx_fastest` property accordingly.
+    fn update_fastest_link(&mut self, _opts: MinRoundtrip) {
+        let data_size =
+            if let Some(SendReq::Send(data)) = self.write_rx.as_mut().and_then(|rx| rx.try_peek().ok()) {
+                data.len()
+            } else {
+                0
+            };
+
+        let roundtrips: Vec<_> = self
+            .links
+            .iter()
+            .map(|link_opt| match link_opt {
+                Some(link) if link.unconfirmed.is_none() => Some(link.expected_roundtrip(data_size)),
+                _ => None,
+            })
+            .collect();
+
+        if let Some((fastest_id, Some(_fastest_rt))) =
+            roundtrips.iter().enumerate().min_by_key(|(_id, rt)| rt.unwrap_or(Duration::MAX))
+        {
+            for (id, link_opt) in self.links.iter_mut().enumerate() {
+                if let Some(link) = link_opt {
+                    link.tx_fastest = id == fastest_id;
+                }
+            }
+        }
+    }
+
     /// Adjusts the link transmission buffer limits to ensure that no link stalls the channel.
-    fn adjust_link_tx_limits(&mut self) {
+    fn adjust_link_tx_limits(&mut self, opts: UnackedLimit) {
         let Some(remote_recv_buffer) = self.remote_recv_buffer() else { return };
 
         // Check for unconsumable data approaching its limits.
@@ -1100,7 +1150,7 @@ where
                 all_links_slow = self.links.iter().all(|link_opt| {
                     link_opt
                         .as_ref()
-                        .map(|link| link.unconfirmed.is_some() || link.roundtrip > max_ping / 2)
+                        .map(|link| link.unconfirmed.is_some() || link.avg_roundtrip > max_ping / 2)
                         .unwrap_or(true)
                 });
 
@@ -1110,7 +1160,7 @@ where
                             Some(link)
                                 if link.unconfirmed.is_none()
                                     && link.txed_unacked_data_limit_increased.is_none()
-                                    && link.roundtrip > max_ping * 3 / 4 =>
+                                    && link.avg_roundtrip > max_ping * 3 / 4 =>
                             {
                                 // Decrease limit.
                                 let current = link.txed_unacked_data.min(link.txed_unacked_data_limit);
@@ -1156,11 +1206,11 @@ where
                             && link.unconfirmed.is_none()
                             && link.txed_unacked_data >= link.txed_unacked_data_limit
                             && link.txed_unacked_data_limit_increased.is_none()
-                            && link.txed_unacked_data_limit < self.cfg.link_unacked_limit.get()
+                            && link.txed_unacked_data_limit < opts.limit.get()
                             && self
                                 .cfg
                                 .link_max_ping
-                                .map(|max_ping| link.roundtrip <= max_ping / 2 || all_links_slow)
+                                .map(|max_ping| link.avg_roundtrip <= max_ping / 2 || all_links_slow)
                                 .unwrap_or(true) =>
                     {
                         // Increase limit, faster if done many times consecutively.
@@ -1234,7 +1284,7 @@ where
             if let SentReliableStatus::Sent { link_id, sent, resent, .. } = &*p.status.borrow() {
                 let link = self.links[*link_id].as_ref().unwrap();
                 let dur_factor = if *resent { 3 } else { 1 };
-                let dur = (link.roundtrip * self.cfg.link_ack_timeout_roundtrip_factor.get() * dur_factor)
+                let dur = (link.avg_roundtrip * self.cfg.link_ack_timeout_roundtrip_factor.get() * dur_factor)
                     .clamp(self.cfg.link_ack_timeout_min, self.cfg.link_ack_timeout_max);
                 return Some((*link_id, *sent + dur));
             }
@@ -1250,7 +1300,9 @@ where
             .enumerate()
             .filter_map(|(id, link_opt)| match &link_opt {
                 Some(link)
-                    if link.current_ping_sent.is_none() && !link.send_ping && link.unconfirmed.is_none() =>
+                    if link.current_ping_sent.is_none()
+                        && link.send_ping.is_none()
+                        && link.unconfirmed.is_none() =>
                 {
                     match self.cfg.link_ping {
                         LinkPing::Periodic(interval) => {
@@ -1275,11 +1327,13 @@ where
     fn send_reliable_over_link(&mut self, id: usize, reliable_msg: ReliableMsg) -> Seq {
         let seq = self.next_tx_seq();
         let link = self.links[id].as_mut().unwrap();
+        let sent = Instant::now();
 
         // Send message.
         tracing::trace!("sending reliable message {seq} over link {id}: {reliable_msg:?}");
         let (msg, data) = reliable_msg.to_link_msg(seq.into());
         link.start_send_msg(msg, data);
+        link.reliable_message_sent(seq, sent);
 
         // Update statistics.
         if let ReliableMsg::Data(data) = &reliable_msg {
@@ -1292,7 +1346,7 @@ where
         let packet = SentReliable {
             seq,
             status: AtomicRefCell::new(SentReliableStatus::Sent {
-                sent: Instant::now(),
+                sent,
                 link_id: id,
                 msg: reliable_msg,
                 resent: false,
@@ -1306,6 +1360,7 @@ where
     /// Resends a packet over the specified link.
     fn resend_reliable_over_link(&mut self, id: usize, packet: Arc<SentReliable>) {
         let link = self.links[id].as_mut().unwrap();
+        let sent = Instant::now();
 
         // Extract message and link used for sending.
         let mut status = packet.status.borrow_mut();
@@ -1317,6 +1372,7 @@ where
         tracing::trace!("resending reliable message {} over link {id}: {:?}", packet.seq, reliable_msg);
         let (msg, data) = reliable_msg.to_link_msg(packet.seq.into());
         link.start_send_msg(msg, data);
+        link.reliable_message_sent(packet.seq, sent);
 
         // Update link statistics.
         if let ReliableMsg::Data(data) = reliable_msg {
@@ -1325,12 +1381,7 @@ where
         }
 
         // Update packet.
-        *status = SentReliableStatus::Sent {
-            sent: Instant::now(),
-            link_id: id,
-            msg: reliable_msg.clone(),
-            resent: true,
-        };
+        *status = SentReliableStatus::Sent { sent, link_id: id, msg: reliable_msg.clone(), resent: true };
     }
 
     /// Handles link confirmation timeout.
@@ -1378,7 +1429,7 @@ where
             Some(max_ping) => self.links.iter().enumerate().all(|(link_id, link_opt)| {
                 link_opt
                     .as_ref()
-                    .map(|link| link_id == id || link.unconfirmed.is_some() || link.roundtrip > max_ping)
+                    .map(|link| link_id == id || link.unconfirmed.is_some() || link.avg_roundtrip > max_ping)
                     .unwrap_or(true)
             }),
             None => false,
@@ -1395,54 +1446,52 @@ where
 
             match link.test {
                 LinkTest::Inactive => {
-                    if link.unconfirmed.is_some() && link.tx_polling.is_none() && link.current_ping_sent.is_none()
+                    if link.unconfirmed.is_some()
+                        && link.tx_polling().is_none()
+                        && link.current_ping_sent.is_none()
                     {
-                        let sent = link.send_test_data(
-                            self.cfg.io_write_size.get(),
-                            if self.cfg.link_max_ping.is_some() {
-                                self.cfg.link_unacked_init.get()
-                            } else {
-                                self.cfg.link_unacked_limit.get().min(self.cfg.send_buffer.get() as usize)
-                            },
-                        );
-                        link.send_ping = true;
+                        let test_data_limit = match (&self.cfg.link_steering, self.cfg.link_max_ping) {
+                            (LinkSteering::MinRoundtrip(_), _) => self.cfg.io_write_size.get(),
+                            (LinkSteering::UnackedLimit(UnackedLimit { init, .. }), Some(_)) => init.get(),
+                            (LinkSteering::UnackedLimit(UnackedLimit { limit, .. }), None) => {
+                                limit.get().min(self.cfg.send_buffer.get() as usize)
+                            }
+                        };
+                        let test_data = link.send_test_data(self.cfg.io_write_size.get(), test_data_limit);
+                        link.send_ping = Some(test_data);
                         link.test = LinkTest::InProgress;
-                        tracing::debug!("started test of link {id} using test data of size {sent}");
+                        tracing::debug!("started test of link {id} using {test_data} bytes of test data");
                     }
                     None
                 }
                 LinkTest::InProgress => {
-                    if link.current_ping_sent.is_none() && !link.send_ping {
+                    if link.current_ping_sent.is_none() && link.send_ping.is_none() {
                         // Ping has completed.
 
-                        if link.roundtrip <= self.cfg.link_ack_timeout_max / 2
+                        if link.avg_roundtrip <= self.cfg.link_ack_timeout_max / 2
                             && self
                                 .cfg
                                 .link_max_ping
-                                .map(|max_ping| link.roundtrip <= max_ping || others_slow)
+                                .map(|max_ping| link.avg_roundtrip <= max_ping || others_slow)
                                 .unwrap_or(true)
                         {
                             // Ping response arrived quickly enough, thus mark link as confirmed.
                             tracing::debug!(
                                 "link {id} successfully completed test with ping {} ms",
-                                link.roundtrip.as_millis()
+                                link.avg_roundtrip.as_millis()
                             );
                             link.unconfirmed = None;
                             link.test = LinkTest::Inactive;
 
-                            // Reset unacked data limit.
-                            link.txed_unacked_data_limit =
-                                link.txed_unacked_data_limit.clamp(100, self.cfg.link_unacked_init.get());
-                            link.txed_unacked_data_limit_increased = None;
-                            link.txed_unacked_data_limit_increased_consecutively = 0;
-
+                            link.reset();
                             link.report_ready();
+
                             None
                         } else {
                             // Link is too slow, schedule retest.
                             tracing::debug!(
                                 "link {id} failed test with ping {} ms, retrying in {} s",
-                                link.roundtrip.as_millis(),
+                                link.avg_roundtrip.as_millis(),
                                 self.cfg.link_retest_interval.as_secs()
                             );
                             let when = Instant::now();
@@ -1486,10 +1535,13 @@ where
                 self.flush_link(id);
             }
             LinkMsg::Pong => {
-                if let Some(current_ping_sent) = link.current_ping_sent.take() {
-                    let elapsed = current_ping_sent.elapsed();
+                if let Some((sent, test_data)) = link.current_ping_sent.take() {
+                    let elapsed = sent.elapsed();
                     tracing::debug!("ping response received, round-trip time is {} ms", elapsed.as_millis());
-                    link.roundtrip = elapsed;
+                    link.avg_roundtrip = elapsed;
+                    if test_data > 0 {
+                        link.last_roundtrip = (elapsed, test_data);
+                    }
                     link.last_ping = Some(Instant::now());
                     self.link_testing_step(id);
                 }
@@ -1632,6 +1684,9 @@ where
             _ => (),
         }
 
+        // Update link ping statistics.
+        link.reliable_message_acked(rxed_seq);
+
         // Remove packet that has been received by remote endpoint.
         let back_idx = self.tx_seq - rxed_seq;
         if 0 < back_idx && (back_idx as usize) <= self.txed_packets.len() {
@@ -1640,15 +1695,13 @@ where
             assert_eq!(packet.seq, rxed_seq);
 
             let mut status = packet.status.borrow_mut();
-            if let SentReliableStatus::Sent { sent, link_id, msg, .. } = &*status {
+            if let SentReliableStatus::Sent { link_id, msg, .. } = &*status {
                 if *link_id == id {
                     let size = if let ReliableMsg::Data(data) = &msg { data.len() } else { 0 };
 
                     link.txed_unacked_data -= size;
                     self.txed_unacked -= size;
                     self.txed_unconsumable += size;
-
-                    link.provide_roundtrip(sent.elapsed());
 
                     *status = SentReliableStatus::Received { link_id: Some(*link_id), size };
                 }

@@ -1,5 +1,6 @@
 //! Interactive connection and link monitor.
 
+use aggligator::cfg::LinkSteering;
 use crossterm::{
     cursor,
     cursor::{MoveTo, MoveToColumn, MoveToNextLine},
@@ -305,18 +306,48 @@ where
                         rx_speed = ts.recv_speed();
                     }
 
+                    match link.cfg().link_steering {
+                        LinkSteering::MinRoundtrip(_) => {
+                            queue!(
+                                stdout(),
+                                Print("    "),
+                                Print(format!(
+                                    "{} {}",
+                                    format!("{:4}", stats.roundtrip.as_millis()).white(),
+                                    "ms".dark_grey()
+                                )),
+                                Print(" "),
+                                Print(format!(
+                                    "{} {}",
+                                    format!("{:4}", stats.expected_empty.as_millis()).white(),
+                                    "ms".dark_grey()
+                                )),
+                                Print(" "),
+                                Print(format_bytes(stats.sent_unacked)),
+                            )
+                            .unwrap();
+                        }
+                        LinkSteering::UnackedLimit(_) => {
+                            queue!(
+                                stdout(),
+                                Print("    "),
+                                Print(format!(
+                                    "{} {}",
+                                    format!("{:4}", stats.roundtrip.as_millis()).white(),
+                                    "ms".dark_grey()
+                                )),
+                                Print(" "),
+                                Print(format_bytes(stats.sent_unacked)),
+                                Print(" /".grey()),
+                                Print(format_bytes(stats.unacked_limit)),
+                            )
+                            .unwrap();
+                        }
+                        _ => (),
+                    }
+
                     queue!(
                         stdout(),
-                        Print("    "),
-                        Print(format!(
-                            "{} {}",
-                            format!("{:4}", stats.roundtrip.as_millis()).white(),
-                            "ms".dark_grey()
-                        )),
-                        Print(" "),
-                        Print(format_bytes(stats.sent_unacked)),
-                        Print(" /".grey()),
-                        Print(format_bytes(stats.unacked_limit)),
                         MoveToColumn(STATS_COL),
                         Print(format_speed(tx_speed)),
                         Print(" "),

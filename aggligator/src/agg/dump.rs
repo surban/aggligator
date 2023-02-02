@@ -45,8 +45,12 @@ pub struct LinkDump {
     pub total_sent: u64,
     /// Total bytes received.
     pub total_recved: u64,
-    /// Roundtrip time in milliseconds.
-    pub roundtrip: f32,
+    /// Average roundtrip time in milliseconds.
+    pub avg_roundtrip: f32,
+    /// Expected roundtrip time in milliseconds.
+    pub expected_roundtrip: f32,
+    /// Amount of sent, unacknowledged data for `expected_roundtrip`.
+    pub expected_roundtrip_unacked_data: usize,
 }
 
 /// Connection dump data for analysis.

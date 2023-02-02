@@ -1,6 +1,9 @@
 //! Multi-link tests.
 
-use aggligator::control::DisconnectReason;
+use aggligator::{
+    cfg::{LinkSteering, UnackedLimit},
+    control::DisconnectReason,
+};
 use futures::{future, join};
 use std::{
     future::IntoFuture,
@@ -311,7 +314,7 @@ async fn five_x_unlimited_current_thread() {
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
-async fn five_x_very_high_latency() {
+async fn five_x_very_high_latency_unacked_limit() {
     let link_desc = LinkDesc {
         cfg: test_channel::Cfg {
             speed: 10_000_000,
@@ -331,7 +334,38 @@ async fn five_x_very_high_latency() {
         recv_queue: NonZeroUsize::new(50).unwrap(),
         link_ack_timeout_max: Duration::from_secs(15),
         link_non_working_timeout: Duration::from_secs(30),
-        link_unacked_init: NonZeroUsize::new(10_000_000).unwrap(),
+        link_steering: LinkSteering::UnackedLimit(UnackedLimit {
+            init: NonZeroUsize::new(10_000_000).unwrap(),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+
+    multi_link_test(&link_descs, alc_cfg, 16384, 30000, 4_000_000, false).await;
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn five_x_very_high_latency_min_roundtrip() {
+    let link_desc = LinkDesc {
+        cfg: test_channel::Cfg {
+            speed: 10_000_000,
+            latency: Some(Duration::from_millis(1000)),
+            buffer_size: 10_000_000,
+            buffer_items: 50_000,
+        },
+        pause: None,
+        fail: None,
+    };
+    let link_descs: Vec<_> = iter::repeat(link_desc).take(5).collect();
+
+    let alc_cfg = Cfg {
+        send_buffer: NonZeroU32::new(20_000_000).unwrap(),
+        recv_buffer: NonZeroU32::new(20_000_000).unwrap(),
+        send_queue: NonZeroUsize::new(50).unwrap(),
+        recv_queue: NonZeroUsize::new(50).unwrap(),
+        link_ack_timeout_max: Duration::from_secs(15),
+        link_non_working_timeout: Duration::from_secs(30),
+        link_steering: LinkSteering::MinRoundtrip(Default::default()),
         ..Default::default()
     };
 

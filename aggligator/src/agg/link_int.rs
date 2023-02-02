@@ -10,7 +10,7 @@ use tokio::{
 };
 
 use crate::{
-    cfg::{Cfg, ExchangedCfg},
+    cfg::{Cfg, ExchangedCfg, LinkSteering, UnackedLimit},
     control::{Direction, DisconnectReason, Link, LinkIntervalStats, LinkStats},
     id::{ConnId, LinkId},
     msg::LinkMsg,
@@ -61,6 +61,17 @@ pub(crate) enum DisconnectInitiator {
     Remote,
 }
 
+/// Metadata of a sent reliable packet.
+#[derive(Debug, Clone)]
+struct LinkSentReliable {
+    /// Sequence number.
+    seq: Seq,
+    /// Time packet was sent.
+    sent: Instant,
+    /// Size of data sent and not yet acknowledged when packet was sent.
+    unacked_data: usize,
+}
+
 /// Internal link data.
 pub(crate) struct LinkInt<TX, RX, TAG> {
     /// User-supplied link name.
@@ -84,17 +95,19 @@ pub(crate) struct LinkInt<TX, RX, TAG> {
     /// Last transmit error.
     tx_error: Option<io::Error>,
     /// Since when sink `tx` is being polled for readyness.
-    pub(crate) tx_polling: Option<Instant>,
+    tx_polling: Option<Instant>,
     /// Whether sink `tx` returned pending status when polled for readyness.
     pub(crate) tx_pending: bool,
     /// When last message has been sent.
     pub(crate) tx_last_msg: Option<Instant>,
+    /// Sent reliable packets that are not yet acknowledged.
+    txed_packets: VecDeque<LinkSentReliable>,
     /// Since when the transmit part of the link is idle.
     tx_idle_since: Option<Instant>,
     /// Performing flushing of sink `tx`.
     tx_flushing: bool,
-    /// Whether no message has been sent since last flush.
-    tx_flushed: bool,
+    /// Time of sending last message that has not yet been flushed.
+    tx_unflushed: Option<Instant>,
     /// Number of bytes sent for which no acknowledgement has been received yet.
     pub(crate) txed_unacked_data: usize,
     /// Limit of sent unacknowledged bytes.
@@ -107,6 +120,8 @@ pub(crate) struct LinkInt<TX, RX, TAG> {
     pub(crate) tx_ack_queue: VecDeque<Seq>,
     /// Number of acks sent since last flush.
     txed_acks_unflushed: usize,
+    /// Whether this is the fastest link for sending.
+    pub(crate) tx_fastest: bool,
     /// Receive sink.
     rx: RX,
     /// Received data message, when waiting for the corresponding data packet.
@@ -122,14 +137,17 @@ pub(crate) struct LinkInt<TX, RX, TAG> {
     pub(crate) unconfirmed: Option<Instant>,
     /// Link test status.
     pub(crate) test: LinkTest,
-    /// Last measured roundtrip duration.
-    pub(crate) roundtrip: Duration,
+    /// Average measured roundtrip duration.
+    pub(crate) avg_roundtrip: Duration,
+    /// Last measured roundtrip duration and unacked data.
+    pub(crate) last_roundtrip: (Duration, usize),
     /// When last ping has been performed.
     pub(crate) last_ping: Option<Instant>,
-    /// When current (not yet answered) ping has been sent.
-    pub(crate) current_ping_sent: Option<Instant>,
-    /// Send ping when link becomes ready for sending.
-    pub(crate) send_ping: bool,
+    /// When current (not yet answered) ping has been sent and the amount of test data sent before it.
+    pub(crate) current_ping_sent: Option<(Instant, usize)>,
+    /// If Some(_), send ping when link becomes ready for sending.
+    /// Specifies the amount of test data sent.
+    pub(crate) send_ping: Option<usize>,
     /// Send ping reply when link becomes ready for sending.
     pub(crate) send_pong: bool,
     /// Initiator of disconnection.
@@ -148,40 +166,6 @@ impl<TX, RX, TAG> fmt::Debug for LinkInt<TX, RX, TAG> {
             .field("conn_id", &self.conn_id)
             .field("link_id", &self.link_id)
             .field("direction", &self.direction)
-            .field("cfg", &self.cfg)
-            .field("remote_cfg", &self.remote_cfg)
-            .field("needs_tx_accepted", &self.needs_tx_accepted)
-            .field("tx_data", &self.tx_data)
-            .field("tx_error", &self.tx_error)
-            .field("tx_polling", &self.tx_polling)
-            .field("tx_pending", &self.tx_pending)
-            .field("tx_last_msg", &self.tx_last_msg)
-            .field("tx_idle_since", &self.tx_idle_since)
-            .field("tx_flushing", &self.tx_flushing)
-            .field("tx_flushed", &self.tx_flushed)
-            .field("txed_unacked_data", &self.txed_unacked_data)
-            .field("txed_unacked_data_limit", &self.txed_unacked_data_limit)
-            .field("txed_unacked_data_limit_increased", &self.txed_unacked_data_limit_increased)
-            .field(
-                "txed_unacked_data_limit_increased_consecutively",
-                &self.txed_unacked_data_limit_increased_consecutively,
-            )
-            .field("tx_ack_queue", &self.tx_ack_queue)
-            .field("txed_acks_unflushed", &self.txed_acks_unflushed)
-            .field("rxed_data_msg", &self.rxed_data_msg)
-            .field("disconnected_tx", &self.disconnected_tx)
-            .field("disconnect_tx", &self.disconnect_tx)
-            .field("disconnect_rx", &self.disconnect_rx)
-            .field("unconfirmed", &self.unconfirmed)
-            .field("test", &self.test)
-            .field("roundtrip", &self.roundtrip)
-            .field("last_ping", &self.last_ping)
-            .field("current_ping_sent", &self.current_ping_sent)
-            .field("send_ping", &self.send_ping)
-            .field("send_pong", &self.send_pong)
-            .field("disconnecting", &self.disconnecting)
-            .field("goodbye_sent", &self.goodbye_sent)
-            .field("remote_user_data", &self.remote_user_data)
             .finish_non_exhaustive()
     }
 }
@@ -217,6 +201,12 @@ where
         let (disconnected_tx, _) = watch::channel(DisconnectReason::TaskTerminated);
         let (disconnect_tx, disconnect_rx) = mpsc::channel(1);
         let stats = LinkStatistican::new(&cfg.stats_intervals, roundtrip);
+        let txed_unacked_data_limit =
+            if let LinkSteering::UnackedLimit(UnackedLimit { init, .. }) = cfg.link_steering {
+                init.get()
+            } else {
+                0
+            };
 
         Self {
             tag: Arc::new(tag),
@@ -238,17 +228,20 @@ where
             unconfirmed: None,
             test: LinkTest::Inactive,
             tx_flushing: false,
-            tx_flushed: true,
+            tx_unflushed: None,
             rxed_data_msg: None,
             tx_last_msg: None,
+            txed_packets: VecDeque::new(),
+            tx_fastest: false,
             last_ping: None,
             current_ping_sent: None,
-            send_ping: false,
+            send_ping: None,
             send_pong: false,
-            roundtrip,
+            avg_roundtrip: roundtrip,
+            last_roundtrip: (roundtrip, 0),
             disconnecting: None,
             txed_unacked_data: 0,
-            txed_unacked_data_limit: cfg.link_unacked_init.get(),
+            txed_unacked_data_limit,
             txed_unacked_data_limit_increased: None,
             txed_unacked_data_limit_increased_consecutively: 45,
             txed_acks_unflushed: 0,
@@ -266,7 +259,7 @@ where
             return LinkIntEvent::TxError(err);
         }
 
-        let flushable = !(self.tx_flushing || self.tx_flushed);
+        let flushable = !(self.tx_flushing || self.tx_unflushed.is_none());
 
         let tx_task = async {
             loop {
@@ -277,7 +270,7 @@ where
                     match self.tx.flush().await {
                         Ok(()) => {
                             self.tx_flushing = false;
-                            self.tx_flushed = true;
+                            self.tx_unflushed = None;
                             break LinkIntEvent::TxFlushed;
                         }
                         Err(err) => break LinkIntEvent::TxError(err),
@@ -295,7 +288,7 @@ where
                     {
                         Ok(()) => match self.tx_data.take() {
                             Some(data) => {
-                                self.tx_flushed = false;
+                                self.tx_unflushed = Some(Instant::now());
                                 if let Err(err) = self.tx.start_send_unpin(data) {
                                     break LinkIntEvent::TxError(err);
                                 }
@@ -370,7 +363,7 @@ where
     pub(crate) async fn send_msg_and_flush(&mut self, msg: LinkMsg) -> Result<(), io::Error> {
         self.tx_polling = Some(Instant::now());
         self.tx.send(msg.encode()).await?;
-        self.tx_flushed = true;
+        self.tx_unflushed = None;
         Ok(())
     }
 
@@ -382,7 +375,7 @@ where
         assert!(self.tx_data.is_none());
 
         self.tx_polling = Some(Instant::now());
-        self.tx_flushed = false;
+        self.tx_unflushed = Some(Instant::now());
         self.tx_idle_since = None;
 
         let encoded = msg.encode();
@@ -418,6 +411,7 @@ where
         self.txed_acks_unflushed = 0;
         self.tx_flushing = true;
         self.tx_polling = Some(Instant::now());
+        self.tx_unflushed = None;
     }
 
     /// Whether flushing is required because of sent acks.
@@ -427,7 +421,7 @@ where
 
     /// Whether flushing is required.
     pub(crate) fn needs_flush(&self) -> bool {
-        !self.tx_flushed && !self.tx_flushing
+        self.tx_unflushed.is_some() && !self.tx_flushing
     }
 
     /// Report (again) when link becomes ready.
@@ -441,7 +435,7 @@ where
         assert!(self.tx_data.is_none());
 
         self.tx_polling = Some(Instant::now());
-        self.tx_flushed = false;
+        self.tx_unflushed = Some(Instant::now());
         self.tx_idle_since = None;
 
         let mut sent = 0;
@@ -478,14 +472,78 @@ where
         self.stats.mark_idle();
     }
 
-    /// Returns whether unacknowledged sent data is under the limit.
+    /// Returns whether the link can be used for sending data.
     pub(crate) fn is_sendable(&self) -> bool {
-        self.txed_unacked_data < self.txed_unacked_data_limit
+        match &self.cfg.link_steering {
+            LinkSteering::MinRoundtrip(_) => self.tx_fastest,
+            LinkSteering::UnackedLimit(_) => self.txed_unacked_data < self.txed_unacked_data_limit,
+        }
     }
 
-    /// Provide a roundtrip time estimate to the link.
-    pub(crate) fn provide_roundtrip(&mut self, roundtrip: Duration) {
-        self.roundtrip = (99 * self.roundtrip + roundtrip) / 100;
+    /// Time of sending last message that has not yet been flushed.
+    pub(crate) fn tx_unflushed(&self) -> Option<Instant> {
+        self.tx_unflushed
+    }
+
+    /// Since when transmitter is being polled for readyness.
+    pub(crate) fn tx_polling(&self) -> Option<Instant> {
+        self.tx_polling
+    }
+
+    /// Notify link for statistics that a reliable message has been sent.
+    pub(crate) fn reliable_message_sent(&mut self, seq: Seq, sent: Instant) {
+        self.txed_packets.push_back(LinkSentReliable { seq, sent, unacked_data: self.txed_unacked_data });
+    }
+
+    /// Notify link for statistics that a reliable message has been acknowledged.
+    pub(crate) fn reliable_message_acked(&mut self, acked_seq: Seq) {
+        loop {
+            match self.txed_packets.front() {
+                Some(LinkSentReliable { seq, sent, unacked_data }) if *seq <= acked_seq => {
+                    if *seq == acked_seq {
+                        let rt = sent.elapsed();
+                        self.avg_roundtrip = (99 * self.avg_roundtrip + rt) / 100;
+                        self.last_roundtrip = (rt, *unacked_data);
+                    }
+
+                    self.txed_packets.pop_front();
+                }
+                _ => break,
+            }
+        }
+    }
+
+    /// The expected duration for the acknowledgement to arrive if data of the
+    /// specified size was sent over the link.
+    pub(crate) fn expected_roundtrip(&self, data_size: usize) -> Duration {
+        let now_ql: u32 = (self.txed_unacked_data + data_size).try_into().unwrap_or(u32::MAX);
+
+        let (last_rt, last_ql) = self.last_roundtrip;
+        let last_ql: u32 = last_ql.try_into().unwrap_or(u32::MAX).max(1);
+
+        let adjusted_rt = last_rt * now_ql / last_ql;
+        let mut rt = last_rt.max(adjusted_rt);
+
+        if let Some(LinkSentReliable { sent, unacked_data: ql, .. }) = self.txed_packets.front() {
+            let ql: u32 = (*ql).try_into().unwrap_or(u32::MAX).max(1);
+            let elapsed_rt = sent.elapsed() * now_ql / ql;
+            rt = rt.max(elapsed_rt);
+        }
+
+        rt
+    }
+
+    /// Reset statistics and limits after the link was reconfirmed.
+    pub(crate) fn reset(&mut self) {
+        // Reset unacked data limit.
+        if let LinkSteering::UnackedLimit(UnackedLimit { init, .. }) = &self.cfg.link_steering {
+            self.txed_unacked_data_limit = self.txed_unacked_data_limit.clamp(100, init.get());
+            self.txed_unacked_data_limit_increased = None;
+            self.txed_unacked_data_limit_increased_consecutively = 0;
+        }
+
+        // Reset sent packets.
+        self.txed_packets.clear();
     }
 
     /// Publishes link statistics.
@@ -493,7 +551,8 @@ where
         self.stats.current.working = self.unconfirmed.is_none();
         self.stats.current.sent_unacked = self.txed_unacked_data as _;
         self.stats.current.unacked_limit = self.txed_unacked_data_limit as _;
-        self.stats.current.roundtrip = self.roundtrip;
+        self.stats.current.roundtrip = self.avg_roundtrip;
+        self.stats.current.expected_empty = self.expected_roundtrip(0);
 
         self.stats.publish();
     }
@@ -538,6 +597,7 @@ impl LinkStatistican {
             sent_unacked: 0,
             unacked_limit: 0,
             roundtrip,
+            expected_empty: roundtrip,
             time_stats: running_stats.clone(),
         };
 
@@ -590,13 +650,17 @@ impl LinkStatistican {
 #[cfg(feature = "dump")]
 impl<TX, RX, TAG> From<&LinkInt<TX, RX, TAG>> for super::dump::LinkDump {
     fn from(link: &LinkInt<TX, RX, TAG>) -> Self {
+        let (last_roundtrip, last_roundtrip_unacked_data) = link.last_roundtrip;
+
         Self {
             present: true,
             link_id: link.link_id.0,
             unconfirmed: link.unconfirmed.is_some(),
             tx_flushing: link.tx_flushing,
-            tx_flushed: link.tx_flushed,
-            roundtrip: link.roundtrip.as_secs_f32(),
+            tx_flushed: link.tx_unflushed.is_none(),
+            avg_roundtrip: link.avg_roundtrip.as_secs_f32(),
+            expected_roundtrip: last_roundtrip.as_secs_f32(),
+            expected_roundtrip_unacked_data: last_roundtrip_unacked_data,
             tx_ack_queue: link.tx_ack_queue.len(),
             txed_unacked_data: link.txed_unacked_data,
             txed_unacked_data_limit: link.txed_unacked_data_limit,

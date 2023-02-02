@@ -1,5 +1,6 @@
 //! Single-link tests.
 
+use aggligator::cfg::{LinkSteering, UnackedLimit};
 use futures::join;
 use std::{
     future::IntoFuture,
@@ -244,7 +245,7 @@ async fn unlimited_current_thread() {
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
-async fn very_high_latency() {
+async fn five_x_very_high_latency_unacked_limit() {
     let ch_cfg = test_channel::Cfg {
         speed: 10_000_000,
         latency: Some(Duration::from_millis(1000)),
@@ -256,7 +257,31 @@ async fn very_high_latency() {
         recv_buffer: NonZeroU32::new(20_000_000).unwrap(),
         send_queue: NonZeroUsize::new(50).unwrap(),
         recv_queue: NonZeroUsize::new(50).unwrap(),
-        link_unacked_init: NonZeroUsize::new(10_000_000).unwrap(),
+        link_steering: LinkSteering::UnackedLimit(UnackedLimit {
+            init: NonZeroUsize::new(10_000_000).unwrap(),
+            ..Default::default()
+        }),
+        link_ack_timeout_max: Duration::from_secs(10),
+        ..Default::default()
+    };
+
+    single_link_test(ch_cfg, alc_cfg, 16384, 1000, 1_000_000, None, None).await;
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn five_x_very_high_latency_min_roundtrip() {
+    let ch_cfg = test_channel::Cfg {
+        speed: 10_000_000,
+        latency: Some(Duration::from_millis(1000)),
+        buffer_size: 10_000_000,
+        buffer_items: 5000,
+    };
+    let alc_cfg = Cfg {
+        send_buffer: NonZeroU32::new(20_000_000).unwrap(),
+        recv_buffer: NonZeroU32::new(20_000_000).unwrap(),
+        send_queue: NonZeroUsize::new(50).unwrap(),
+        recv_queue: NonZeroUsize::new(50).unwrap(),
+        link_steering: LinkSteering::MinRoundtrip(Default::default()),
         link_ack_timeout_max: Duration::from_secs(10),
         ..Default::default()
     };

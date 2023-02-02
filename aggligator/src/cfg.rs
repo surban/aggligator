@@ -22,6 +22,85 @@ pub enum LinkPing {
     WhenTimedOut,
 }
 
+/// Method for distributing traffic over the links of a connection.
+///
+/// If your links are unpredictable and you want safe defaults,
+/// use [`MinRoundtrip`](Self::MinRoundtrip).
+/// If you have a set of homogenous, stable, high-bandwidth links, you can obtain
+/// 10% - 20% more performance by using [`UnackedLimit`](Self::UnackedLimit).
+#[cfg_attr(feature = "dump", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum LinkSteering {
+    /// Data is sent over the link with the shortest acknowledgement time.
+    ///
+    /// This gives good results in most cases, even if the speed varies greatly
+    /// from link to link. It may become unstable if the pings of the links
+    /// fluctuate a lot.
+    ///
+    /// This is the default.
+    MinRoundtrip(MinRoundtrip),
+    /// A link is used for sending data until the amount of sent yet unacknowledged
+    /// data reaches a link-specific limit. The limit is adjusted dynamically.
+    ///
+    /// This gives higher performance than [`MinRoundtrip`](Self::MinRoundtrip),
+    /// especially when high-bandwidth links (> 20 MB/s) are used.
+    /// However, it takes some time before that bandwidths of the links are discovered
+    /// and fully utilized. It may become unstable if the bandwidths of the links
+    /// fluctuate a lot or the bandwidth difference between the slowest and fastest link
+    /// is very large.
+    UnackedLimit(UnackedLimit),
+}
+
+impl Default for LinkSteering {
+    fn default() -> Self {
+        Self::MinRoundtrip(Default::default())
+    }
+}
+
+impl LinkSteering {
+    pub(crate) fn is_min_roundtrip(&self) -> bool {
+        matches!(self, Self::MinRoundtrip(_))
+    }
+
+    pub(crate) fn is_unacked_limit(&self) -> bool {
+        matches!(self, Self::UnackedLimit(_))
+    }
+}
+
+/// Configuration for minimum roundtrip link steering.
+///
+/// There are currently no configuration options here, but some may
+/// be added in the future.
+#[cfg_attr(feature = "dump", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MinRoundtrip {
+    #[doc(hidden)]
+    pub _non_exhaustive: (),
+}
+
+/// Configuration for unacked limit link steering.
+#[cfg_attr(feature = "dump", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct UnackedLimit {
+    /// Start value for discovering the optimal limit of sent unacknowledged data.
+    pub init: NonZeroUsize,
+    /// Upper limit for the limit of sent unacknowledged data.
+    pub limit: NonZeroUsize,
+    #[doc(hidden)]
+    pub _non_exhaustive: (),
+}
+
+impl Default for UnackedLimit {
+    fn default() -> Self {
+        Self {
+            init: NonZeroUsize::new(8192).unwrap(),
+            limit: NonZeroUsize::new(33_554_432).unwrap(),
+            _non_exhaustive: Default::default(),
+        }
+    }
+}
+
 /// Configuration of a connection consisting of aggregated links.
 ///
 /// For most use cases the default configuration, i.e. [`Cfg::default()`](Self::default),
@@ -29,8 +108,7 @@ pub enum LinkPing {
 /// up to 100 MB/s.
 ///
 /// The parameters critical to performance are the buffer sizes, in particular
-/// [`send_buffer`](Self::send_buffer), [`recv_buffer`](Self::recv_buffer)
-/// and [`link_unacked_limit`](Self::link_unacked_limit).
+/// [`send_buffer`](Self::send_buffer) and [`recv_buffer`](Self::recv_buffer).
 /// Thus, if the connection is under-performing, try increasing these limits.
 #[cfg_attr(feature = "dump", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "dump", serde(default))]
@@ -55,10 +133,8 @@ pub struct Cfg {
     pub link_ack_timeout_roundtrip_factor: NonZeroU32,
     /// Maximum timeout waiting for a packet to be acknowledged.
     pub link_ack_timeout_max: Duration,
-    /// Start value for discovering the amount of sent unacknowledged data.
-    pub link_unacked_init: NonZeroUsize,
-    /// Maximum amount of sent unacknowledged data per link.
-    pub link_unacked_limit: NonZeroUsize,
+    /// How traffic is distributed over the links of a connection.
+    pub link_steering: LinkSteering,
     /// Link pinging mode.
     pub link_ping: LinkPing,
     /// Timeout for waiting for ping response, which when exceeded leads to removal of the link.
@@ -97,8 +173,7 @@ impl Default for Cfg {
             link_ack_timeout_min: Duration::from_secs(1),
             link_ack_timeout_roundtrip_factor: NonZeroU32::new(5).unwrap(),
             link_ack_timeout_max: Duration::from_secs(30),
-            link_unacked_init: NonZeroUsize::new(8192).unwrap(),
-            link_unacked_limit: NonZeroUsize::new(33_554_432).unwrap(),
+            link_steering: LinkSteering::default(),
             link_ping: LinkPing::WhenIdle(Duration::from_secs(15)),
             link_ping_timeout: Duration::from_secs(40),
             link_max_ping: None,

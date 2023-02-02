@@ -215,6 +215,11 @@ impl<TX, RX, TAG> Control<TX, RX, TAG> {
         self.direction
     }
 
+    /// The configuration of the connection.
+    pub fn cfg(&self) -> &Cfg {
+        &self.cfg
+    }
+
     /// Returns whether the connection has been terminated.
     pub fn is_terminated(&self) -> bool {
         self.link_tx.is_closed()
@@ -505,6 +510,11 @@ impl<TAG> Link<TAG> {
         self.direction
     }
 
+    /// The configuration of the connection.
+    pub fn cfg(&self) -> &Cfg {
+        &self.cfg
+    }
+
     /// The user-defined tag of this link.
     ///
     /// This returns the tag that was supplied by the user when establishing this link.
@@ -613,8 +623,10 @@ pub struct LinkStats {
     pub sent_unacked: u64,
     /// Current limit of [`sent_unacked`](Self::sent_unacked).
     pub unacked_limit: u64,
-    /// Round trip duration, i.e. ping.
+    /// Average measured round trip duration, i.e. ping.
     pub roundtrip: Duration,
+    /// Expected time to clear current send queue.
+    pub expected_empty: Duration,
     /// Statistics over time intervals specified in the [configuration](crate::cfg::Cfg::stats_intervals).
     pub time_stats: Vec<LinkIntervalStats>,
 }
