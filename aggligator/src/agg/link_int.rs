@@ -425,6 +425,7 @@ where
         self.txed_acks_unflushed != 0
     }
 
+    /// Whether flushing is required.
     pub(crate) fn needs_flush(&self) -> bool {
         !self.tx_flushed && !self.tx_flushing
     }
