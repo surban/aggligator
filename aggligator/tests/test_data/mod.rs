@@ -6,6 +6,7 @@ use bytes::{Buf, Bytes};
 use crc::{Crc, CRC_32_CKSUM};
 use futures::join;
 use rand::prelude::*;
+use rand_xoshiro::SplitMix64;
 use std::{
     io::{self, BufRead},
     num::Wrapping,
@@ -33,7 +34,7 @@ impl Generator {
 
     /// Generates the next test packet.
     pub fn packet(&mut self) -> Bytes {
-        let mut rng = thread_rng();
+        let mut rng = SplitMix64::from_entropy();
 
         let size = if self.seq.0 % 20 == 0 {
             self.min_size

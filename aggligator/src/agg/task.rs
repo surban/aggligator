@@ -5,7 +5,8 @@ use bytes::Bytes;
 use futures::{
     future, future::BoxFuture, stream, stream::FuturesUnordered, Future, FutureExt, Sink, Stream, StreamExt,
 };
-use rand::{seq::SliceRandom, thread_rng};
+use rand::prelude::*;
+use rand_xoshiro::SplitMix64;
 use std::{
     collections::{HashSet, VecDeque},
     fmt,
@@ -533,7 +534,7 @@ where
                             link_opt.as_mut().map(|link| async move { (id, link.event(id).await) }.boxed())
                         })
                         .collect();
-                    tasks.shuffle(&mut thread_rng());
+                    tasks.shuffle(&mut fast_rng);
                     future::select_all(tasks).await
                 }
             };
