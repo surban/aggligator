@@ -171,7 +171,7 @@ impl Default for Cfg {
             recv_buffer: NonZeroU32::new(67_108_864).unwrap(),
             recv_queue: NonZeroUsize::new(1024).unwrap(),
             link_ack_timeout_min: Duration::from_secs(1),
-            link_ack_timeout_roundtrip_factor: NonZeroU32::new(5).unwrap(),
+            link_ack_timeout_roundtrip_factor: NonZeroU32::new(20).unwrap(),
             link_ack_timeout_max: Duration::from_secs(30),
             link_steering: LinkSteering::default(),
             link_ping: LinkPing::WhenIdle(Duration::from_secs(15)),
@@ -179,11 +179,12 @@ impl Default for Cfg {
             link_max_ping: None,
             link_retest_interval: Duration::from_secs(15),
             link_non_working_timeout: Duration::from_secs(600),
-            link_flush_delay: Duration::from_millis(500),
+            //link_flush_delay: Duration::from_millis(500),
+            link_flush_delay: Duration::from_millis(20),
             no_link_timeout: Duration::from_secs(90),
             termination_timeout: Duration::from_secs(300),
             connect_queue: NonZeroUsize::new(32).unwrap(),
-            stats_intervals: vec![Duration::from_secs(1), Duration::from_secs(5), Duration::from_secs(10)],
+            stats_intervals: vec![Duration::from_millis(100), Duration::from_secs(5), Duration::from_secs(10)],
             _non_exhaustive: (),
         }
     }

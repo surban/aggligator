@@ -604,8 +604,8 @@ where
                 link_id = next_pong_timeout => TaskEvent::LinkPingTimeout(link_id),
                 link_id = next_unconfirmed_timeout => TaskEvent::LinkUnconfirmedTimeout(link_id),
                 link_id = next_send_timeout => TaskEvent::LinkSendTimeout(link_id),
-                link_id = next_flush_timeout, if self.cfg.link_steering.is_min_roundtrip()
-                    => TaskEvent::FlushLink(link_id),
+                // link_id = next_flush_timeout, if self.cfg.link_steering.is_min_roundtrip()
+                //     => TaskEvent::FlushLink(link_id),
                 packet = resend_task => TaskEvent::Resend (packet),
                 consume_event = consume_task => consume_event,
                 event = read_closed_task => event,
@@ -689,7 +689,13 @@ where
                                 // reliable messages over it. Do so by priority.
                                 if let Some(recved_seq) = link.tx_ack_queue.pop_front() {
                                     tracing::trace!("acking sequence {recved_seq} over non-idle link {id}");
-                                    link.start_send_msg(LinkMsg::Ack { received: recved_seq.into() }, None);
+                                    link.start_send_msg(
+                                        LinkMsg::Ack {
+                                            received: recved_seq.into(),
+                                            timestamp: self.established.unwrap().elapsed(),
+                                        },
+                                        None,
+                                    );
                                 } else if is_consume_ack_required {
                                     let consumed = self.rxed_reliable_consumed_since_last_ack as u32;
                                     tracing::trace!("acking {consumed} consumed bytes over non-idle link {id}");
@@ -729,6 +735,7 @@ where
                                     );
                                     self.send_reliable_over_link(id, ReliableMsg::Data(data));
                                 } else if link.need_ack_flush() && self.cfg.link_steering.is_unacked_limit() {
+                                    //} else if link.need_ack_flush() {
                                     tracing::trace!("flushing link {id} due to sent acks");
                                     link.start_flush();
                                 } else if link.needs_flush()
@@ -806,7 +813,13 @@ where
                     let recved_seq = link.tx_ack_queue.pop_front().unwrap();
                     tracing::trace!("acking sequence {recved_seq} over idle link {id}");
                     self.idle_links.retain(|&idle_id| idle_id != id);
-                    link.start_send_msg(LinkMsg::Ack { received: recved_seq.into() }, None);
+                    link.start_send_msg(
+                        LinkMsg::Ack {
+                            received: recved_seq.into(),
+                            timestamp: self.established.unwrap().elapsed(),
+                        },
+                        None,
+                    );
                 }
                 TaskEvent::WriteEnd => {
                     tracing::debug!("sender was dropped");
@@ -1080,14 +1093,18 @@ where
             .links
             .iter()
             .map(|link_opt| match link_opt {
-                Some(link) if link.unconfirmed.is_none() => Some(link.expected_roundtrip(data_size)),
+                Some(link) if link.unconfirmed.is_none() => Some(link.expected_trip(data_size)),
                 _ => None,
             })
             .collect();
 
-        if let Some((fastest_id, Some(_fastest_rt))) =
-            roundtrips.iter().enumerate().min_by_key(|(_id, rt)| rt.unwrap_or(Duration::MAX))
+        tracing::debug!("expected roundtrips for data size {data_size}: {roundtrips:?}");
+
+        if let Some((fastest_id, Some(fastest_rt))) =
+            roundtrips.iter().enumerate().min_by_key(|(_id, rt)| rt.unwrap_or(i32::MAX))
         {
+            tracing::debug!("using link {fastest_id} with trip time {fastest_rt} ms");
+            //eprint!("{fastest_id}");
             for (id, link_opt) in self.links.iter_mut().enumerate() {
                 if let Some(link) = link_opt {
                     link.tx_fastest = id == fastest_id;
@@ -1332,8 +1349,12 @@ where
         // Send message.
         tracing::trace!("sending reliable message {seq} over link {id}: {reliable_msg:?}");
         let (msg, data) = reliable_msg.to_link_msg(seq.into());
+        link.reliable_message_sent(
+            seq,
+            data.as_ref().map(|data| data.len()).unwrap_or_default(),
+            self.established.unwrap().elapsed(),
+        );
         link.start_send_msg(msg, data);
-        link.reliable_message_sent(seq, sent);
 
         // Update statistics.
         if let ReliableMsg::Data(data) = &reliable_msg {
@@ -1371,8 +1392,12 @@ where
         // Send data.
         tracing::trace!("resending reliable message {} over link {id}: {:?}", packet.seq, reliable_msg);
         let (msg, data) = reliable_msg.to_link_msg(packet.seq.into());
+        link.reliable_message_sent(
+            packet.seq,
+            data.as_ref().map(|data| data.len()).unwrap_or_default(),
+            self.established.unwrap().elapsed(),
+        );
         link.start_send_msg(msg, data);
-        link.reliable_message_sent(packet.seq, sent);
 
         // Update link statistics.
         if let ReliableMsg::Data(data) = reliable_msg {
@@ -1539,9 +1564,9 @@ where
                     let elapsed = sent.elapsed();
                     tracing::debug!("ping response received, round-trip time is {} ms", elapsed.as_millis());
                     link.avg_roundtrip = elapsed;
-                    if test_data > 0 {
-                        link.last_roundtrip = (elapsed, test_data);
-                    }
+                    // if test_data > 0 {
+                    //     link.last_trip = (elapsed, test_data, Duration::ZERO);
+                    // }
                     link.last_ping = Some(Instant::now());
                     self.link_testing_step(id);
                 }
@@ -1555,9 +1580,9 @@ where
                 tracing::trace!("received reliable message {seq}: {reliable_msg:?}");
                 self.handle_received_reliable_msg(id, seq.into(), reliable_msg)?;
             }
-            LinkMsg::Ack { received } => {
+            LinkMsg::Ack { received, timestamp } => {
                 tracing::trace!("link {id} acked reception up to {received}");
-                self.handle_ack(id, received.into());
+                self.handle_ack(id, received.into(), timestamp);
             }
             LinkMsg::TestData { size } => {
                 tracing::trace!("link {id} received {size} bytes of test data");
@@ -1671,7 +1696,7 @@ where
     }
 
     /// Handles a received acknowledgement.
-    fn handle_ack(&mut self, id: usize, rxed_seq: Seq) {
+    fn handle_ack(&mut self, id: usize, rxed_seq: Seq, timestamp: Duration) {
         let link = self.links[id].as_mut().unwrap();
         tracing::trace!("processing received ack for {rxed_seq} on link {id}");
 
@@ -1685,7 +1710,7 @@ where
         }
 
         // Update link ping statistics.
-        link.reliable_message_acked(rxed_seq);
+        link.reliable_message_acked(rxed_seq, self.established.unwrap().elapsed(), timestamp);
 
         // Remove packet that has been received by remote endpoint.
         let back_idx = self.tx_seq - rxed_seq;

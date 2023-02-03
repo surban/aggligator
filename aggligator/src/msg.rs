@@ -3,7 +3,7 @@
 use byteorder::{ReadBytesExt, WriteBytesExt, LE};
 use bytes::Bytes;
 use futures::{Sink, SinkExt, Stream, StreamExt};
-use std::{fmt, io, num::NonZeroU128};
+use std::{fmt, io, num::NonZeroU128, time::Duration};
 use x25519_dalek::PublicKey;
 
 use crate::{
@@ -116,6 +116,8 @@ pub(crate) enum LinkMsg {
     Ack {
         /// Sequence that has been received on this link.
         received: u32,
+        /// Timestamp in ms resolution.
+        timestamp: Duration,
     },
     /// Notifies that received data has been consumed.
     Consumed {
@@ -233,9 +235,10 @@ impl LinkMsg {
                 writer.write_u8(Self::MSG_DATA)?;
                 writer.write_u32::<LE>(*seq)?;
             }
-            LinkMsg::Ack { received } => {
+            LinkMsg::Ack { received, timestamp } => {
                 writer.write_u8(Self::MSG_ACK)?;
                 writer.write_u32::<LE>(*received)?;
+                writer.write_u32::<LE>(timestamp.as_millis() as _)?;
             }
             LinkMsg::Consumed { seq, consumed } => {
                 writer.write_u8(Self::MSG_CONSUMED)?;
@@ -339,7 +342,10 @@ impl LinkMsg {
             Self::MSG_PING => Self::Ping,
             Self::MSG_PONG => Self::Pong,
             Self::MSG_DATA => Self::Data { seq: reader.read_u32::<LE>()? },
-            Self::MSG_ACK => Self::Ack { received: reader.read_u32::<LE>()? },
+            Self::MSG_ACK => Self::Ack {
+                received: reader.read_u32::<LE>()?,
+                timestamp: Duration::from_millis(reader.read_u32::<LE>()?.into()),
+            },
             Self::MSG_CONSUMED => {
                 Self::Consumed { seq: reader.read_u32::<LE>()?, consumed: reader.read_u32::<LE>()? }
             }

@@ -608,7 +608,7 @@ impl LinkIntervalStats {
 }
 
 /// Link statistics.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct LinkStats {
     /// Time when link was established.
@@ -626,7 +626,10 @@ pub struct LinkStats {
     /// Average measured round trip duration, i.e. ping.
     pub roundtrip: Duration,
     /// Expected time to clear current send queue.
-    pub expected_empty: Duration,
+    pub expected_empty: i32,
+    //pub last_trip: (Duration, usize, Duration),
+    pub flight_stats_params: (f64, f64),
+    pub flight_stats_size: usize,
     /// Statistics over time intervals specified in the [configuration](crate::cfg::Cfg::stats_intervals).
     pub time_stats: Vec<LinkIntervalStats>,
 }

@@ -319,11 +319,32 @@ where
                                 Print(" "),
                                 Print(format!(
                                     "{} {}",
-                                    format!("{:4}", stats.expected_empty.as_millis()).white(),
+                                    format!("{:4}", stats.expected_empty).white(),
                                     "ms".dark_grey()
                                 )),
                                 Print(" "),
+                                Print(format!("b={:5.2}", stats.flight_stats_params.0)),
+                                Print(" "),
+                                Print(format!("m={:10.3e}", stats.flight_stats_params.1)),
+                                Print(" "),
+                                Print(format!("({:6})", stats.flight_stats_size)),
+                                // Print(" "),
+                                // Print(format!(
+                                //     "{} {}",
+                                //     format!("{:4}", stats.last_trip.0.as_millis()).white(),
+                                //     "ms".dark_grey()
+                                // )),
+                                // Print(" "),
+                                // Print(format_bytes(stats.last_trip.1 as _)),
+                                // Print(" "),
+                                // Print(format!(
+                                //     "{} {}",
+                                //     format!("{:4}", stats.last_trip.2.as_millis()).white(),
+                                //     "ms".dark_grey()
+                                // )),
+                                Print(" "),
                                 Print(format_bytes(stats.sent_unacked)),
+                                Print("   "),
                             )
                             .unwrap();
                         }
@@ -348,7 +369,7 @@ where
 
                     queue!(
                         stdout(),
-                        MoveToColumn(STATS_COL),
+                        //MoveToColumn(STATS_COL),
                         Print(format_speed(tx_speed)),
                         Print(" "),
                         Print(format_speed(rx_speed)),
@@ -379,7 +400,7 @@ where
         .unwrap();
 
         // Handle user events.
-        if poll(Duration::from_secs(1))? {
+        if poll(Duration::from_millis(100))? {
             match read()? {
                 Event::Key(KeyEvent { code: KeyCode::Char(c), .. })
                     if ('0'..='9').contains(&c) && disabled_tags_tx.is_some() =>

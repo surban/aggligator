@@ -373,7 +373,7 @@ async fn five_x_very_high_latency_min_roundtrip() {
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
-async fn ten_x_hundert_kb_per_s() {
+async fn ten_x_hundert_kb_per_s_min_roundtrip() {
     let link_desc = LinkDesc {
         cfg: test_channel::Cfg {
             speed: 100_000,
@@ -387,6 +387,25 @@ async fn ten_x_hundert_kb_per_s() {
     let link_descs: Vec<_> = iter::repeat(link_desc).take(10).collect();
 
     let alc_cfg = Cfg { ..Default::default() };
+
+    multi_link_test(&link_descs, alc_cfg, 16384, 1000, 500_000, false).await;
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn ten_x_hundert_kb_per_s_unacked_limit() {
+    let link_desc = LinkDesc {
+        cfg: test_channel::Cfg {
+            speed: 100_000,
+            latency: Some(Duration::from_millis(10)),
+            buffer_size: 4096,
+            ..Default::default()
+        },
+        pause: None,
+        fail: None,
+    };
+    let link_descs: Vec<_> = iter::repeat(link_desc).take(10).collect();
+
+    let alc_cfg = Cfg { link_steering: LinkSteering::UnackedLimit(Default::default()), ..Default::default() };
 
     multi_link_test(&link_descs, alc_cfg, 16384, 100, 500_000, false).await;
 }
