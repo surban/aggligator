@@ -381,6 +381,9 @@ pub struct SpeedReport {
 
 #[derive(Parser)]
 pub struct ServerCli {
+    /// Listen on each network interface individually.
+    #[arg(long, short = 'i')]
+    individual_interfaces: bool,
     /// Do not display the link monitor.
     #[arg(long, short = 'n')]
     no_monitor: bool,
@@ -420,10 +423,15 @@ impl ServerCli {
         let acceptor = builder.build();
         let mut ports = Vec::new();
 
-        match TcpAcceptor::new([SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), self.tcp)]).await {
+        let tcp_acceptor_res = if self.individual_interfaces {
+            TcpAcceptor::all_interfaces(self.tcp).await
+        } else {
+            TcpAcceptor::new([SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), self.tcp)]).await
+        };
+        match tcp_acceptor_res {
             Ok(tcp) => {
+                ports.push(format!("TCP {tcp}"));
                 acceptor.add(tcp);
-                ports.push(format!("TCP port {}", self.tcp));
             }
             Err(err) => eprintln!("Cannot listen on TCP port {}: {err}", self.tcp),
         }

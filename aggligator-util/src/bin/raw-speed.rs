@@ -11,11 +11,16 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
     tty::IsTty,
 };
+use futures::{
+    stream::{self, SelectAll},
+    StreamExt,
+};
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
 use std::{
     collections::{HashMap, HashSet},
+    io,
     io::stdout,
-    net::{IpAddr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, SocketAddr},
     time::Duration,
 };
 use tokio::{
@@ -82,30 +87,40 @@ pub struct RawClientCli {
     /// Do not display the monitor.
     #[arg(long, short = 'n')]
     no_monitor: bool,
-    /// Server name or IP address and port number.
-    target: String,
+    /// Server name or IP addresses and port number.
+    target: Vec<String>,
 }
 
 impl RawClientCli {
-    async fn resolve_target(&self) -> Result<SocketAddr> {
+    async fn resolve_target(&self) -> Result<HashSet<SocketAddr>> {
         if self.ipv4 && self.ipv6 {
             return Err(anyhow!("IPv4 and IPv6 options are mutually exclusive"));
         }
 
         let mut target = self.target.clone();
-        if !target.contains(':') {
-            target.push_str(&format!(":{PORT}"));
-        }
-
-        for addr in lookup_host(&target).await? {
-            if (addr.is_ipv4() && self.ipv6) || (addr.is_ipv6() && self.ipv4) {
-                continue;
+        for target in &mut target {
+            if !target.contains(':') {
+                target.push_str(&format!(":{PORT}"));
             }
-
-            return Ok(addr);
         }
 
-        Err(anyhow!("cannot resolve IP address of target"))
+        let mut addrs = HashSet::new();
+
+        for target in target {
+            for addr in lookup_host(&target).await? {
+                if (addr.is_ipv4() && self.ipv6) || (addr.is_ipv6() && self.ipv4) {
+                    continue;
+                }
+
+                addrs.insert(addr);
+            }
+        }
+
+        if addrs.is_empty() {
+            Err(anyhow!("cannot resolve IP address of target"))
+        } else {
+            Ok(addrs)
+        }
     }
 
     async fn tcp_connect(iface: &[u8], ifaces: &[NetworkInterface], target: SocketAddr) -> Result<TcpStream> {
@@ -153,90 +168,101 @@ impl RawClientCli {
 
     #[allow(clippy::type_complexity)]
     async fn test_links(
-        target: SocketAddr, send_only: bool, recv_only: bool, limit: Option<usize>, time: Option<Duration>,
-        speeds_tx: Option<mpsc::Sender<(String, Option<(f64, f64)>)>>,
+        targets: HashSet<SocketAddr>, send_only: bool, recv_only: bool, limit: Option<usize>,
+        time: Option<Duration>, speeds_tx: Option<mpsc::Sender<(String, Option<(f64, f64)>)>>,
     ) -> Result<()> {
         let mut connected = HashSet::new();
         let (disconnected_tx, mut disconnected_rx) = mpsc::channel(16);
 
         while !speeds_tx.as_ref().map(|tx| tx.is_closed()).unwrap_or_default() {
-            while let Ok(iface) = disconnected_rx.try_recv() {
-                connected.remove(&iface);
+            while let Ok(conn) = disconnected_rx.try_recv() {
+                connected.remove(&conn);
             }
 
             let interfaces = NetworkInterface::show().context("cannot get network interfaces")?;
             let iface_names: HashSet<_> = interfaces.clone().into_iter().map(|iface| iface.name).collect();
 
             for iface in iface_names {
-                if connected.contains(&iface) {
-                    continue;
-                }
-                connected.insert(iface.clone());
-
-                let iface_disconnected_tx = disconnected_tx.clone();
-                let iface_speeds_tx = speeds_tx.clone();
-                let interfaces = interfaces.clone();
-                tokio::spawn(async move {
-                    if iface_speeds_tx.is_none() {
-                        eprintln!("Trying TCP connection from {iface}");
+                for target in &targets {
+                    if connected.contains(&(iface.clone(), *target)) {
+                        continue;
                     }
+                    connected.insert((iface.clone(), *target));
 
-                    match timeout(TCP_CONNECT_TIMEOUT, Self::tcp_connect(iface.as_bytes(), &interfaces, target))
+                    let iface = iface.clone();
+                    let iface_disconnected_tx = disconnected_tx.clone();
+                    let iface_speeds_tx = speeds_tx.clone();
+                    let interfaces = interfaces.clone();
+                    let target = target.clone();
+                    tokio::spawn(async move {
+                        if iface_speeds_tx.is_none() {
+                            eprintln!("Trying TCP connection from {iface}");
+                        }
+
+                        match timeout(
+                            TCP_CONNECT_TIMEOUT,
+                            Self::tcp_connect(iface.as_bytes(), &interfaces, target),
+                        )
                         .await
-                    {
-                        Ok(Ok(strm)) => {
-                            if iface_speeds_tx.is_none() {
-                                eprintln!("TCP connection established from {iface}");
-                            }
-
-                            let (read, write) = strm.into_split();
-                            let task_iface = iface.clone();
-
-                            let speed_tx = match iface_speeds_tx.clone() {
-                                Some(iface_speeds_tx) => {
-                                    let iface = iface.clone();
-                                    let (tx, mut rx) = watch::channel(Default::default());
-                                    tokio::spawn(async move {
-                                        while let Ok(()) = rx.changed().await {
-                                            let speed = *rx.borrow_and_update();
-                                            if iface_speeds_tx.send((iface.clone(), Some(speed))).await.is_err() {
-                                                break;
-                                            }
-                                        }
-                                        let _ = iface_speeds_tx.send((iface.clone(), None)).await;
-                                    });
-                                    Some(tx)
+                        {
+                            Ok(Ok(strm)) => {
+                                if iface_speeds_tx.is_none() {
+                                    eprintln!("TCP connection established from {iface}");
                                 }
-                                None => None,
-                            };
 
-                            let _ = speed::speed_test(
-                                &iface, read, write, limit, time, !recv_only, !send_only, false, INTERVAL,
-                                speed_tx,
-                            )
-                            .await;
+                                let (read, write) = strm.into_split();
+                                let task_iface = iface.clone();
 
-                            if iface_speeds_tx.is_none() {
-                                eprintln!("TCP connection from {task_iface} done");
+                                let speed_tx = match iface_speeds_tx.clone() {
+                                    Some(iface_speeds_tx) => {
+                                        let iface = iface.clone();
+                                        let (tx, mut rx) = watch::channel(Default::default());
+                                        tokio::spawn(async move {
+                                            while let Ok(()) = rx.changed().await {
+                                                let speed = *rx.borrow_and_update();
+                                                if iface_speeds_tx
+                                                    .send((format!("{iface} -> {target}"), Some(speed)))
+                                                    .await
+                                                    .is_err()
+                                                {
+                                                    break;
+                                                }
+                                            }
+                                            let _ = iface_speeds_tx.send((iface.clone(), None)).await;
+                                        });
+                                        Some(tx)
+                                    }
+                                    None => None,
+                                };
+
+                                let _ = speed::speed_test(
+                                    &iface, read, write, limit, time, !recv_only, !send_only, false, INTERVAL,
+                                    speed_tx,
+                                )
+                                .await;
+
+                                if iface_speeds_tx.is_none() {
+                                    eprintln!("TCP connection from {task_iface} done");
+                                }
+                            }
+                            Ok(Err(err)) => {
+                                if iface_speeds_tx.is_none() {
+                                    eprintln!("TCP connection from {iface} failed: {}", &err);
+                                }
+                            }
+                            Err(_) => {
+                                if iface_speeds_tx.is_none() {
+                                    eprintln!("TCP connection from {iface} timed out");
+                                }
                             }
                         }
-                        Ok(Err(err)) => {
-                            if iface_speeds_tx.is_none() {
-                                eprintln!("TCP connection from {iface} failed: {}", &err);
-                            }
+                        if iface_speeds_tx.is_none() {
+                            eprintln!();
                         }
-                        Err(_) => {
-                            if iface_speeds_tx.is_none() {
-                                eprintln!("TCP connection from {iface} timed out");
-                            }
-                        }
-                    }
-                    if iface_speeds_tx.is_none() {
-                        eprintln!();
-                    }
 
-                    let _ = iface_disconnected_tx.send(iface).await;
-                });
+                        let _ = iface_disconnected_tx.send((iface, target)).await;
+                    });
+                }
             }
 
             sleep(Duration::from_secs(3)).await;
@@ -325,7 +351,7 @@ impl RawClientCli {
         }
 
         let target = self.resolve_target().await.context("cannot resolve target")?;
-        let header = format!("Connecting to raw speed test server at {}", &target);
+        let header = format!("Connecting to raw speed test server at {:?}", &target);
 
         let limit = self.limit.map(|mb| mb * 1_048_576);
         let time = self.time.map(Duration::from_secs);
@@ -359,12 +385,44 @@ pub struct RawServerCli {
 }
 
 impl RawServerCli {
-    async fn tcp_serve(addr: SocketAddr) -> Result<()> {
-        let tcp_listener = TcpListener::bind(addr).await.context("cannot listen")?;
-        eprintln!("Raw speed test server listening on {}\n", addr);
+    fn listen(interface: &NetworkInterface, port: u16) -> Result<TcpListener> {
+        let addr = SocketAddr::new(interface.addr.context("interface has no IP")?.ip(), port);
 
-        loop {
-            let (socket, src) = tcp_listener.accept().await?;
+        let socket = match addr.ip() {
+            IpAddr::V4(_) => TcpSocket::new_v4()?,
+            IpAddr::V6(_) => TcpSocket::new_v6()?,
+        };
+
+        socket.bind(addr)?;
+
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+        socket.bind_device(Some(interface.name.as_bytes()))?;
+
+        Ok(socket.listen(8)?)
+    }
+
+    async fn tcp_serve(port: u16) -> Result<()> {
+        let mut listeners = SelectAll::new();
+
+        let interfaces = NetworkInterface::show().context("cannot get network interfaces")?;
+        for interface in interfaces {
+            match Self::listen(&interface, port) {
+                Ok(listener) => {
+                    eprintln!("Raw speed test server listening on {}", listener.local_addr()?);
+                    let stream = stream::try_unfold(listener, |listener| async move {
+                        let res = listener.accept().await?;
+                        Ok::<_, io::Error>(Some((res, listener)))
+                    });
+                    listeners.push(stream.boxed());
+                }
+                Err(err) => {
+                    eprintln!("Cannot listen on {interface:?}: {err}");
+                }
+            }
+        }
+        eprintln!();
+
+        while let Some((socket, src)) = listeners.next().await.transpose()? {
             eprintln!("Accepted TCP connection from {src}");
 
             let (read, write) = socket.into_split();
@@ -385,9 +443,11 @@ impl RawServerCli {
                 eprintln!("TCP connection from {src} done");
             });
         }
+
+        Ok(())
     }
 
     pub async fn run(self) -> Result<()> {
-        Self::tcp_serve(SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), self.port)).await
+        Self::tcp_serve(self.port).await
     }
 }
