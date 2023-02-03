@@ -841,7 +841,7 @@ where
                 }
                 TaskEvent::ConfirmTimedOut(id) => {
                     tracing::warn!("acknowledgement timeout on link {id}");
-                    self.handle_link_confirm_timeout(id);
+                    self.unconfirm_link(id);
                 }
                 TaskEvent::Resend(packet) => {
                     let id = sendable_idle_link_id.unwrap();
@@ -960,7 +960,7 @@ where
                         .collect();
 
                     for id in slow {
-                        self.handle_link_confirm_timeout(id);
+                        self.unconfirm_link(id);
                     }
                 }
             }
@@ -1006,7 +1006,7 @@ where
         tracing::debug!("removing link {id} for reason {reason:?}");
 
         // Queue unconfirmed packets for resending.
-        self.handle_link_confirm_timeout(id);
+        self.unconfirm_link(id);
 
         // Remove link id from sent acked packets.
         for p in &mut self.txed_packets {
@@ -1384,8 +1384,8 @@ where
         *status = SentReliableStatus::Sent { sent, link_id: id, msg: reliable_msg.clone(), resent: true };
     }
 
-    /// Handles link confirmation timeout.
-    fn handle_link_confirm_timeout(&mut self, id: usize) {
+    /// Unconfirms a link.
+    fn unconfirm_link(&mut self, id: usize) {
         // Mark link as unconfirmed.
         let link = self.links[id].as_mut().unwrap();
         link.unconfirmed = Some(Instant::now());
