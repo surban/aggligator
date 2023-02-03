@@ -363,7 +363,7 @@ impl fmt::Display for TcpAcceptor {
 }
 
 impl TcpAcceptor {
-    /// Create a new TCP transport for incoming connections.
+    /// Create a new TCP transport listening for incoming connections.
     ///
     /// It listens on the local addresses specified in `addrs`.
     pub async fn new(addrs: impl IntoIterator<Item = SocketAddr>) -> Result<Self> {
@@ -373,11 +373,59 @@ impl TcpAcceptor {
             listeners.push(TcpListener::bind(addr).await?);
         }
 
+        Self::from_listeners(listeners)
+    }
+
+    /// Create a new TCP transport for incoming connections using the specified TCP listeners.
+    pub fn from_listeners(listeners: impl IntoIterator<Item = TcpListener>) -> Result<Self> {
+        let listeners: Vec<_> = listeners.into_iter().collect();
+
         if listeners.is_empty() {
-            return Err(Error::new(ErrorKind::InvalidInput, "at least one listening address is required"));
+            return Err(Error::new(ErrorKind::InvalidInput, "at least one listener is required"));
         }
 
-        Ok(Self { listeners })
+        Ok(Self { listeners: listeners.into_iter().collect() })
+    }
+
+    /// Create a new TCP transport for incoming connections, listening individually on all interfaces.
+    ///
+    /// On Linux each listener is specifically bound to a network interface. This may
+    /// be necessary for the operating system to correctly enforce interface-specific
+    /// traffic limits.
+    ///
+    /// In general the use of this function is not necessary.
+    /// Prefer [`new`](Self::new) instead.
+    pub async fn all_interfaces(port: u16) -> Result<Self> {
+        let mut listeners = Vec::new();
+
+        for iface in local_interfaces()? {
+            match Self::listen(&iface, port) {
+                Ok(listener) => listeners.push(listener),
+                Err(err) => {
+                    tracing::warn!("cannot listen on {}: {err}", &iface.name);
+                }
+            }
+        }
+
+        Self::from_listeners(listeners)
+    }
+
+    fn listen(interface: &NetworkInterface, port: u16) -> Result<TcpListener> {
+        let addr = SocketAddr::new(interface.addr.ok_or(ErrorKind::NotFound)?.ip(), port);
+
+        let socket = match addr.ip() {
+            IpAddr::V4(_) => TcpSocket::new_v4()?,
+            IpAddr::V6(_) => TcpSocket::new_v6()?,
+        };
+
+        socket.bind(addr)?;
+
+        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+        socket.bind_device(Some(interface.name.as_bytes()))?;
+
+        tracing::debug!("listening on {addr} on {}", &interface.name);
+
+        socket.listen(8)
     }
 }
 
