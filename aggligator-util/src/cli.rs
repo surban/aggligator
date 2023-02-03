@@ -4,7 +4,7 @@ use anyhow::Context;
 use std::path::PathBuf;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-use aggligator::cfg::Cfg;
+use aggligator::cfg::{Cfg, LinkSteering};
 
 /// Initializes logging for command line utilities.
 pub fn init_log() {
@@ -18,12 +18,18 @@ pub fn print_default_cfg() {
 
 /// Loads an Aggligator configuration from disk or returns the default
 /// configuration if the path is empty.
-pub fn load_cfg(path: &Option<PathBuf>) -> anyhow::Result<Cfg> {
+pub fn load_cfg(path: &Option<PathBuf>, unacked_limit: bool) -> anyhow::Result<Cfg> {
     match path {
         Some(path) => {
             let file = std::fs::File::open(path).context("cannot open configuration file")?;
             serde_json::from_reader(file).context("cannot parse configuration file")
         }
-        None => Ok(Cfg::default()),
+        None => {
+            let mut cfg = Cfg::default();
+            if unacked_limit {
+                cfg.link_steering = LinkSteering::UnackedLimit(Default::default());
+            }
+            Ok(cfg)
+        }
     }
 }

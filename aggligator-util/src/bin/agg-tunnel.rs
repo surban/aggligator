@@ -52,6 +52,9 @@ pub struct TunnelCli {
     /// Dump analysis data to file.
     #[arg(long, short = 'd')]
     dump: Option<PathBuf>,
+    /// Use unacked limit link steering mode.
+    #[arg(long, short = 'u')]
+    unacked_limit: bool,
     /// Client or server.
     #[command(subcommand)]
     command: Commands,
@@ -72,7 +75,7 @@ async fn main() -> Result<()> {
     init_log();
 
     let cli = TunnelCli::parse();
-    let cfg = load_cfg(&cli.cfg)?;
+    let cfg = load_cfg(&cli.cfg, cli.unacked_limit)?;
     let dump = cli.dump.clone();
 
     match cli.command {
