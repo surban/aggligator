@@ -1,0 +1,26 @@
+#!/usr/sbin/nft -f
+#
+# Example nftables script to limit bandwidth on network interfaces for testing.
+#
+# Make sure to run agg-speed server with -i option, otherwise Linux will do strange things.
+#
+
+flush ruleset
+
+table inet limit_bandwidth {
+    chain input {
+        type filter hook input priority filter; policy accept;
+        iifname enp0s25 limit rate over 20 mbytes/second drop
+        iifname enxf8e43b783cdd limit rate over 20 mbytes/second drop
+        iifname enxf8e43b5d87c5 limit rate over 20 mbytes/second drop
+        iifname wlp3s0 limit rate over 5 mbytes/second drop
+    }
+
+    chain output {
+        type filter hook output priority filter; policy accept;
+        oifname enp0s25 limit rate over 20 mbytes/second drop
+        oifname enxf8e43b783cdd limit rate over 20 mbytes/second drop
+        oifname enxf8e43b5d87c5 limit rate over 20 mbytes/second drop
+        oifname wlp3s0 limit rate over 5 mbytes/second drop
+    }
+}
