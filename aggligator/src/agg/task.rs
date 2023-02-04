@@ -8,14 +8,12 @@ use futures::{
 use rand::prelude::*;
 use rand_xoshiro::SplitMix64;
 use std::{
+    cmp::Ordering,
     collections::{HashSet, VecDeque},
     fmt,
     future::IntoFuture,
     io,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+    sync::{atomic::AtomicBool, Arc},
     time::Duration,
 };
 use tokio::{
@@ -150,8 +148,6 @@ enum TaskEvent<TX, RX, TAG> {
     LinkSendTimeout(usize),
     /// Timeout waiting for ping reply over link.
     LinkPingTimeout(usize),
-    /// Flush a link.
-    FlushLink(usize),
     /// A link requires testing.
     LinkTesting,
     /// No working links within timeout.
@@ -459,10 +455,6 @@ where
             let next_send_timeout =
                 self.earliest_link_specific_timeout(self.cfg.link_ping_timeout, |link| link.tx_polling());
 
-            // Timeout for flushing a link.
-            let next_flush_timeout =
-                self.earliest_link_specific_timeout(Duration::from_millis(10), |link| link.tx_unflushed());
-
             // Timeout for next link testing step.
             let next_link_testing = (0..self.links.len()).filter_map(|id| self.link_testing_step(id)).min();
             let link_testing_timeout = async move {
@@ -604,8 +596,6 @@ where
                 link_id = next_pong_timeout => TaskEvent::LinkPingTimeout(link_id),
                 link_id = next_unconfirmed_timeout => TaskEvent::LinkUnconfirmedTimeout(link_id),
                 link_id = next_send_timeout => TaskEvent::LinkSendTimeout(link_id),
-                // link_id = next_flush_timeout, if self.cfg.link_steering.is_min_roundtrip()
-                //     => TaskEvent::FlushLink(link_id),
                 packet = resend_task => TaskEvent::Resend (packet),
                 consume_event = consume_task => consume_event,
                 event = read_closed_task => event,
@@ -922,12 +912,6 @@ where
                     tracing::warn!("removing link {id} due to send timeout");
                     self.remove_link(id, DisconnectReason::SendTimeout);
                 }
-                TaskEvent::FlushLink(id) => {
-                    tracing::trace!("flushing link {id} due to flush timeout");
-                    self.idle_links.retain(|&idle_id| idle_id != id);
-                    let link = self.links[id].as_mut().unwrap();
-                    link.start_flush();
-                }
                 TaskEvent::LinkTesting => (),
                 TaskEvent::NoLinksTimeout => {
                     tracing::warn!("disconnecting because no links are available for too long");
@@ -1100,9 +1084,14 @@ where
 
         tracing::debug!("expected roundtrips for data size {data_size}: {roundtrips:?}");
 
-        if let Some((fastest_id, Some(fastest_rt))) =
-            roundtrips.iter().enumerate().min_by_key(|(_id, rt)| rt.unwrap_or(i32::MAX))
-        {
+        let fastest = roundtrips.iter().enumerate().min_by(|(_, a), (_, b)| match (a, b) {
+            (Some(a), Some(b)) => a.total_cmp(b),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => Ordering::Equal,
+        });
+
+        if let Some((fastest_id, Some(fastest_rt))) = fastest {
             tracing::debug!("using link {fastest_id} with trip time {fastest_rt} ms");
             //eprint!("{fastest_id}");
             for (id, link_opt) in self.links.iter_mut().enumerate() {
@@ -1420,6 +1409,9 @@ where
         // Flush link.
         link.start_flush();
 
+        // Reset limits.
+        link.reset();
+
         // Mark packets as being resent and put them into resend queue.
         for p in &mut self.txed_packets {
             let mut status = p.status.borrow_mut();
@@ -1508,7 +1500,6 @@ where
                             link.unconfirmed = None;
                             link.test = LinkTest::Inactive;
 
-                            link.reset();
                             link.report_ready();
 
                             None
@@ -1563,11 +1554,7 @@ where
                 if let Some((sent, test_data)) = link.current_ping_sent.take() {
                     let elapsed = sent.elapsed();
                     tracing::debug!("ping response received, round-trip time is {} ms", elapsed.as_millis());
-                    link.avg_roundtrip = elapsed;
-                    // if test_data > 0 {
-                    //     link.last_trip = (elapsed, test_data, Duration::ZERO);
-                    // }
-                    link.last_ping = Some(Instant::now());
+                    link.ping_result(elapsed, test_data);
                     self.link_testing_step(id);
                 }
             }
@@ -1654,7 +1641,7 @@ where
                     }
                     ReliableMsg::ReceiveClose => {
                         self.write_error_tx.send_replace(SendError::Closed);
-                        self.write_closed.store(true, Ordering::Relaxed);
+                        self.write_closed.store(true, std::sync::atomic::Ordering::Relaxed);
                         self.rxed_reliable_consumed_force_ack = true;
                     }
                     ReliableMsg::ReceiveFinish => {

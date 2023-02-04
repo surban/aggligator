@@ -319,15 +319,15 @@ where
                                 Print(" "),
                                 Print(format!(
                                     "{} {}",
-                                    format!("{:4}", stats.expected_empty).white(),
+                                    format!("{:4}", stats.expected_empty * 1000.).white(),
                                     "ms".dark_grey()
                                 )),
                                 Print(" "),
-                                Print(format!("p={:5.2} ms ", stats.flight_stats_params.0)),
+                                Print(format!("p={:5.2} ms ", stats.trip * 1000.)),
                                 Print(" "),
-                                Print(format_speed(1000. / stats.flight_stats_params.1)),
-                                Print(" "),
-                                Print(format!("({:4})", stats.flight_stats_size)),
+                                Print(format_speed(stats.bandwidth as f64)),
+                                // Print(" "),
+                                // Print(format!("({:4})", stats.flight_stats_size)),
                                 // Print(" "),
                                 // Print(format!(
                                 //     "{} {}",

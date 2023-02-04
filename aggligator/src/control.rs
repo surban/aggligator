@@ -626,10 +626,13 @@ pub struct LinkStats {
     /// Average measured round trip duration, i.e. ping.
     pub roundtrip: Duration,
     /// Expected time to clear current send queue.
-    pub expected_empty: i32,
-    //pub last_trip: (Duration, usize, Duration),
-    pub flight_stats_params: (f64, f64),
-    pub flight_stats_size: usize,
+    pub expected_empty: f32,
+    /// Trip time to remote endpoint in seconds.
+    ///
+    /// Can be negative due to unsynced clocks and clock drift.
+    pub trip: f32,
+    /// Estimated available bandwidth for sending in bytes per second.
+    pub bandwidth: f32,
     /// Statistics over time intervals specified in the [configuration](crate::cfg::Cfg::stats_intervals).
     pub time_stats: Vec<LinkIntervalStats>,
 }

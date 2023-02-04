@@ -2,18 +2,14 @@
 
 use bytes::Bytes;
 use futures::{future, future::poll_fn, FutureExt, Sink, SinkExt, Stream, StreamExt};
-use linregress::fit_low_level_regression_model;
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::VecDeque,
     fmt,
     fs::File,
     io,
     io::{BufWriter, Write},
     mem,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::Arc,
     task::Poll,
     time::Duration,
 };
@@ -23,6 +19,7 @@ use tokio::{
     time::{sleep_until, Instant},
 };
 
+use crate::cfg::MinRoundtrip;
 use crate::{
     cfg::{Cfg, ExchangedCfg, LinkSteering, UnackedLimit},
     control::{Direction, DisconnectReason, Link, LinkIntervalStats, LinkStats},
@@ -135,6 +132,10 @@ pub(crate) struct LinkInt<TX, RX, TAG> {
     pub(crate) tx_ack_queue: VecDeque<Seq>,
     /// Number of acks sent since last flush.
     txed_acks_unflushed: usize,
+    /// Trip time to remote endpoint.
+    pub(crate) tx_trip: f32,
+    /// Trip time to remote endpoint per byte.
+    pub(crate) tx_trip_per_byte: f32,
     /// Whether this is the fastest link for sending.
     pub(crate) tx_fastest: bool,
     /// Receive sink.
@@ -154,8 +155,6 @@ pub(crate) struct LinkInt<TX, RX, TAG> {
     pub(crate) test: LinkTest,
     /// Average measured roundtrip duration.
     pub(crate) avg_roundtrip: Duration,
-    // /// Last measured roundtrip duration and unacked data.
-    //pub(crate) last_trip: (Duration, usize, Duration),
     /// When last ping has been performed.
     pub(crate) last_ping: Option<Instant>,
     /// When current (not yet answered) ping has been sent and the amount of test data sent before it.
@@ -173,10 +172,7 @@ pub(crate) struct LinkInt<TX, RX, TAG> {
     remote_user_data: Arc<Vec<u8>>,
     /// Link statistics calculator.
     stats: LinkStatistican,
-    flight_stats: VecDeque<(usize, i32)>,
-    flight_stats_hit: AtomicUsize,
-    flight_stats_miss: AtomicUsize,
-    flight_stats_params: (f64, f64),
+
     log_file: BufWriter<File>,
 }
 
@@ -254,13 +250,14 @@ where
             rxed_data_msg: None,
             tx_last_msg: None,
             txed_packets: VecDeque::new(),
+            tx_trip: roundtrip.as_secs_f32() / 2.,
+            tx_trip_per_byte: 1.,
             tx_fastest: false,
             last_ping: None,
             current_ping_sent: None,
             send_ping: None,
             send_pong: false,
             avg_roundtrip: roundtrip,
-            //last_trip: (roundtrip, 0, Duration::ZERO),
             disconnecting: None,
             txed_unacked_data: 0,
             txed_unacked_data_limit,
@@ -272,10 +269,6 @@ where
             tx_pending: false,
             cfg,
             remote_user_data: Arc::new(remote_user_data),
-            flight_stats: VecDeque::new(),
-            flight_stats_hit: 0.into(),
-            flight_stats_miss: 0.into(),
-            flight_stats_params: (roundtrip.as_millis() as f64 / 2., 0.),
             log_file: BufWriter::new(File::create(format!("linklog-{conn_id}-{link_id}.csv")).unwrap()),
         }
     }
@@ -531,71 +524,83 @@ where
     // Actually we cannot know it as this point but we should be able to calculate from ACK?
     // If we get ACK and ack has sent time before our sent time, then we know it was already acked actually.
 
+    // Okay what do we need to do to get that working robustly?
+    // There are two problems:
+    // 1. a link may massively overestimate its speed
+    // 2. a link may masssively underestimate its speed
+    //
+    // In 1 it will time out
+    // In 2 it will never be used.
+    //
+    // We could first improve the initial estimate of the link capacity
+    // when confirming it. Then in case 1 the link should fix itself.
+    //
+    // In case 2 we could also trigger unconfirming the link, but what
+    // criteria to use?
+    // Not used for so many packets?
+    // I.e. constant times number of links?
+    // Could be a possibility.
+    // Time-based is bad because there might be no traffic.
+    //
+    // And what can we do against a link overestimating its speed?
+    // Well, this would be similar to slow buffer increase.
+    // We could limit the maximum increase from last send buffer size.
+    //
+    // But how to make sure that it does fall again when not used
+    // for longer period of time?
+    // Well maybe do averaging then?
+    // Could be an idea.
+    //
+    // Okay, what is first step?
+    // Correctly calculate m from link test.
+
     /// Notify link for statistics that a reliable message has been acknowledged.
     pub(crate) fn reliable_message_acked(&mut self, acked_seq: Seq, recved: Duration, remote_recved: Duration) {
+        const LR: f32 = 0.0001;
+
         let mut ack_size = None;
 
+        // Remove acked packets.
         loop {
             match self.txed_packets.front() {
                 Some(LinkSentReliable { seq, sent, size, unacked_data }) if *seq <= acked_seq => {
+                    // Estimate trip and roundtrip times.
                     if *seq == acked_seq {
+                        let data = *unacked_data as f32;
+                        ack_size = Some(*size);
+
                         let roundtrip = recved - *sent;
                         self.avg_roundtrip = (99 * self.avg_roundtrip + roundtrip) / 100;
 
-                        ack_size = Some(*size);
+                        if data >= 128. {
+                            let sent = sent.as_secs_f32();
+                            let remote_recved = remote_recved.as_secs_f32();
+                            let trip = remote_recved - sent;
 
-                        let sent = sent.as_millis() as i32;
-                        let remote_recved = remote_recved.as_millis() as i32;
-                        let flight = remote_recved - sent;
-                        //let flight = recved.as_millis() as i32 - sent;
+                            // Compute gradient.
+                            let gb = self.tx_trip_per_byte * data + self.tx_trip - trip;
+                            let gm = gb * data;
 
-                        if self.flight_stats.len() % 20 == 0 && !self.flight_stats.is_empty() {
-                            // let mut data = Vec::with_capacity(self.flight_stats.len() * 3);
-                            // let mut cnt = 0;
-                            // for (unacked_data, flight) in &self.flight_stats {
-                            //     if *unacked_data > 100 {
-                            //         data.extend([*flight as f64, 1., *unacked_data as f64]);
-                            //         cnt += 1;
-                            //     }
-                            // }
-                            // if let Ok(model) = fit_low_level_regression_model(&data, cnt, 3) {
-                            //     let params = model.parameters();
-                            //     self.flight_stats_params = (params[0], params[1]);
-                            // }
+                            // Normalize gradient.
+                            let n = (gb.powi(2) + gm.powi(2)).sqrt();
+                            let gb = gb / n;
+                            let gm = gm / n;
 
-                            let mut sum = 0.0;
-                            let mut cnt = 0;
-                            for (unacked_data, flight) in &self.flight_stats {
-                                if *unacked_data > 100 {
-                                    sum += *flight as f64 / *unacked_data as f64;
-                                    cnt += 1;
-                                }
+                            // Perform one step of gradient descent.
+                            self.tx_trip -= LR * gb;
+                            self.tx_trip_per_byte -= LR * gm;
+                            if self.tx_trip_per_byte < 0. {
+                                self.tx_trip_per_byte = 1.;
                             }
-                            let m = sum / cnt as f64;
-                            self.flight_stats_params = (0., m);
 
-                            // if let Ok(model) = fit_low_level_regression_model(&data, self.flight_stats.len(), 2) {
-                            //     let params = model.parameters();
-                            //     self.flight_stats_params = (0., params[0]);
-                            // }
+                            // Direct estimation:
+                            //let est = trip / *unacked_data as f32;
+                            //self.tx_trip_per_byte = (S * self.tx_trip_per_byte + est) / (S + 1.);
+
+                            self.txed_unacked_data_limit = self.txed_unacked_data_limit.max(*unacked_data);
+
+                            writeln!(&mut self.log_file, "{data};{trip}").unwrap();
                         }
-
-                        // if self.flight_stats.len() >= 2000 {
-                        //     self.flight_stats.drain(..100);
-                        // }
-
-                        if self.flight_stats.len() >= 300 {
-                            self.flight_stats.drain(..100);
-                        }
-
-                        writeln!(&mut self.log_file, "{unacked_data};{flight}").unwrap();
-                        self.flight_stats.push_back((*unacked_data, flight));
-
-                        // if let Some(trip) = roundtrip.checked_sub(expected_delay) {
-                        //     self.last_trip = (trip, *unacked_data, expected_delay);
-                        // } else {
-                        //     tracing::warn!("negative trip duration");
-                        // }
                     }
 
                     self.txed_packets.pop_front();
@@ -604,6 +609,7 @@ where
             }
         }
 
+        // Adjust unacked size of packets sent before receiving ack that was in flight.
         if let Some(ack_size) = ack_size {
             for LinkSentReliable { sent, unacked_data, .. } in &mut self.txed_packets {
                 if *sent >= remote_recved {
@@ -613,18 +619,25 @@ where
         }
     }
 
-    /// The expected duration in ms for the message to arrive at the remove endpoint
-    /// if data of the specified size was sent over the link.
-    pub(crate) fn expected_trip(&self, data_size: usize) -> i32 {
-        let to_send = self.txed_unacked_data + data_size;
-
-        let (b, m) = self.flight_stats_params;
+    /// The expected duration in ms for the message to arrive at the remote endpoint
+    /// if data of the specified size was sent over the link now.
+    pub(crate) fn expected_trip(&self, data_size: usize) -> f32 {
+        let data = (self.txed_unacked_data + data_size) as f32;
 
         // m = ms / byte
         // => byte / s = 1000 / m
         //let t = b + m * (to_send as f64);
-        let t = m.abs() * (to_send as f64);
-        t.round() as i32
+        //let t = m.abs() * (to_send as f64);
+        //t.round() as i32
+
+        let mut t = self.tx_trip_per_byte * data + self.tx_trip;
+
+        if data_size > self.txed_unacked_data_limit {
+            // Penalize estimates outside of measured domain.
+            t *= data_size as f32 / self.txed_unacked_data_limit.max(1) as f32 * 5.;
+        }
+
+        t
 
         //         const N: usize = 10;
         //         const RNG: usize = 1024;
@@ -672,16 +685,39 @@ where
 
     /// Reset statistics and limits after the link was reconfirmed.
     pub(crate) fn reset(&mut self) {
-        // Reset unacked data limit.
-        if let LinkSteering::UnackedLimit(UnackedLimit { init, .. }) = &self.cfg.link_steering {
-            self.txed_unacked_data_limit = self.txed_unacked_data_limit.clamp(100, init.get());
-            self.txed_unacked_data_limit_increased = None;
-            self.txed_unacked_data_limit_increased_consecutively = 0;
+        match &self.cfg.link_steering {
+            LinkSteering::MinRoundtrip(MinRoundtrip { .. }) => {
+                // Reset trip estimates.
+                self.tx_trip = self.avg_roundtrip.as_secs_f32() / 2.;
+                self.tx_trip_per_byte = 1.;
+                self.txed_unacked_data_limit = 0;
+            }
+            LinkSteering::UnackedLimit(UnackedLimit { init, .. }) => {
+                // Reset unacked data limit.
+                self.txed_unacked_data_limit = self.txed_unacked_data_limit.clamp(100, init.get());
+                self.txed_unacked_data_limit_increased = None;
+                self.txed_unacked_data_limit_increased_consecutively = 0;
+            }
         }
 
         // Reset sent packets.
         self.txed_packets.clear();
-        //self.flight_stats.clear();
+    }
+
+    /// Provide the link with the result of a ping.
+    pub(crate) fn ping_result(&mut self, roundtrip: Duration, data_size: usize) {
+        self.avg_roundtrip = roundtrip;
+
+        self.tx_trip = roundtrip.as_secs_f32() / 2.;
+        self.txed_unacked_data_limit = data_size;
+
+        if data_size > 128 {
+            self.tx_trip_per_byte = self.tx_trip / data_size as f32;
+        } else {
+            self.tx_trip_per_byte = 1.;
+        }
+
+        self.last_ping = Some(Instant::now());
     }
 
     /// Publishes link statistics.
@@ -690,10 +726,9 @@ where
         self.stats.current.sent_unacked = self.txed_unacked_data as _;
         self.stats.current.unacked_limit = self.txed_unacked_data_limit as _;
         self.stats.current.roundtrip = self.avg_roundtrip;
-        self.stats.current.expected_empty = self.expected_trip(10_000);
-        self.stats.current.flight_stats_size = self.flight_stats.len();
-        self.stats.current.flight_stats_params = self.flight_stats_params;
-        //self.stats.current.last_trip = self.last_trip;
+        self.stats.current.expected_empty = self.expected_trip(0);
+        self.stats.current.trip = self.tx_trip;
+        self.stats.current.bandwidth = 1. / self.tx_trip_per_byte;
 
         self.stats.publish();
     }
@@ -729,6 +764,7 @@ impl LinkStatistican {
     /// Initializes link statistics.
     fn new(intervals: &[Duration], roundtrip: Duration) -> Self {
         let running_stats: Vec<_> = intervals.iter().map(|interval| LinkIntervalStats::new(*interval)).collect();
+        let trip = roundtrip.as_secs_f32() / 2.;
 
         let current = LinkStats {
             established: Instant::now(),
@@ -738,10 +774,9 @@ impl LinkStatistican {
             sent_unacked: 0,
             unacked_limit: 0,
             roundtrip,
-            expected_empty: roundtrip.as_millis() as i32 / 2,
-            flight_stats_size: 0,
-            flight_stats_params: Default::default(),
-            //last_trip: Default::default(),
+            expected_empty: trip,
+            trip,
+            bandwidth: 0.,
             time_stats: running_stats.clone(),
         };
 
