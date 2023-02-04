@@ -323,11 +323,11 @@ where
                                     "ms".dark_grey()
                                 )),
                                 Print(" "),
-                                Print(format!("b={:5.2}", stats.flight_stats_params.0)),
+                                Print(format!("p={:5.2} ms ", stats.flight_stats_params.0)),
                                 Print(" "),
-                                Print(format!("m={:10.3e}", stats.flight_stats_params.1)),
+                                Print(format_speed(1000. / stats.flight_stats_params.1)),
                                 Print(" "),
-                                Print(format!("({:6})", stats.flight_stats_size)),
+                                Print(format!("({:4})", stats.flight_stats_size)),
                                 // Print(" "),
                                 // Print(format!(
                                 //     "{} {}",

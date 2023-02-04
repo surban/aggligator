@@ -549,23 +549,47 @@ where
                         let flight = remote_recved - sent;
                         //let flight = recved.as_millis() as i32 - sent;
 
-                        if self.flight_stats.len() % 1000 == 0 && !self.flight_stats.is_empty() {
-                            let mut data = Vec::with_capacity(self.flight_stats.len() * 3);
+                        if self.flight_stats.len() % 20 == 0 && !self.flight_stats.is_empty() {
+                            // let mut data = Vec::with_capacity(self.flight_stats.len() * 3);
+                            // let mut cnt = 0;
+                            // for (unacked_data, flight) in &self.flight_stats {
+                            //     if *unacked_data > 100 {
+                            //         data.extend([*flight as f64, 1., *unacked_data as f64]);
+                            //         cnt += 1;
+                            //     }
+                            // }
+                            // if let Ok(model) = fit_low_level_regression_model(&data, cnt, 3) {
+                            //     let params = model.parameters();
+                            //     self.flight_stats_params = (params[0], params[1]);
+                            // }
+
+                            let mut sum = 0.0;
+                            let mut cnt = 0;
                             for (unacked_data, flight) in &self.flight_stats {
-                                data.extend([*flight as f64, 1., *unacked_data as f64]);
+                                if *unacked_data > 100 {
+                                    sum += *flight as f64 / *unacked_data as f64;
+                                    cnt += 1;
+                                }
                             }
-                            if let Ok(model) = fit_low_level_regression_model(&data, self.flight_stats.len(), 3) {
-                                let params = model.parameters();
-                                self.flight_stats_params = (params[0], params[1]);
-                            }
+                            let m = sum / cnt as f64;
+                            self.flight_stats_params = (0., m);
+
+                            // if let Ok(model) = fit_low_level_regression_model(&data, self.flight_stats.len(), 2) {
+                            //     let params = model.parameters();
+                            //     self.flight_stats_params = (0., params[0]);
+                            // }
                         }
 
-                        if self.flight_stats.len() >= 10000 {
-                            self.flight_stats.drain(..999);
+                        // if self.flight_stats.len() >= 2000 {
+                        //     self.flight_stats.drain(..100);
+                        // }
+
+                        if self.flight_stats.len() >= 300 {
+                            self.flight_stats.drain(..100);
                         }
 
                         writeln!(&mut self.log_file, "{unacked_data};{flight}").unwrap();
-                        self.flight_stats.push_front((*unacked_data, flight));
+                        self.flight_stats.push_back((*unacked_data, flight));
 
                         // if let Some(trip) = roundtrip.checked_sub(expected_delay) {
                         //     self.last_trip = (trip, *unacked_data, expected_delay);
@@ -580,13 +604,13 @@ where
             }
         }
 
-        // if let Some(ack_size) = ack_size {
-        //     for LinkSentReliable { sent, unacked_data, .. } in &mut self.txed_packets {
-        //         if *sent >= remote_recved {
-        //             *unacked_data = unacked_data.saturating_sub(ack_size);
-        //         }
-        //     }
-        // }
+        if let Some(ack_size) = ack_size {
+            for LinkSentReliable { sent, unacked_data, .. } in &mut self.txed_packets {
+                if *sent >= remote_recved {
+                    *unacked_data = unacked_data.saturating_sub(ack_size);
+                }
+            }
+        }
     }
 
     /// The expected duration in ms for the message to arrive at the remove endpoint
@@ -596,7 +620,10 @@ where
 
         let (b, m) = self.flight_stats_params;
 
-        let t = b + m * (to_send as f64);
+        // m = ms / byte
+        // => byte / s = 1000 / m
+        //let t = b + m * (to_send as f64);
+        let t = m.abs() * (to_send as f64);
         t.round() as i32
 
         //         const N: usize = 10;
