@@ -677,6 +677,7 @@ where
                                     let consumed = self.rxed_reliable_consumed_since_last_ack as u32;
                                     tracing::trace!("acking {consumed} consumed bytes over non-idle link {id}");
                                     self.idle_links.retain(|&idle_id| idle_id != id);
+                                    self.send_reliable_over_link(id, ReliableMsg::Consumed(consumed));
                                     self.rxed_reliable_consumed_since_last_ack = 0;
                                     self.rxed_reliable_consumed_force_ack = false;
                                 } else if resending && link.is_sendable() {
@@ -1550,7 +1551,6 @@ where
         // Update link and queue sending of ack.
         let link = self.links[id].as_mut().unwrap();
         link.tx_ack_queue.push_back(seq);
-
         self.idle_links.retain(|&idle_id| idle_id != id);
         link.report_ready();
 
