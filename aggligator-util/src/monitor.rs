@@ -325,6 +325,8 @@ where
                         Print(format_bytes(stats.total_sent)),
                         Print(" "),
                         Print(format_bytes(stats.total_recved)),
+                        Print(" "),
+                        Print(format!("{}", stats.hangs)),
                         MoveToNextLine(2),
                     )
                     .unwrap();
@@ -348,7 +350,7 @@ where
         .unwrap();
 
         // Handle user events.
-        if poll(Duration::from_secs(1))? {
+        if poll(Duration::from_millis(100))? {
             match read()? {
                 Event::Key(KeyEvent { code: KeyCode::Char(c), .. })
                     if ('0'..='9').contains(&c) && disabled_tags_tx.is_some() =>

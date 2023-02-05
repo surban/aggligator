@@ -625,6 +625,8 @@ pub struct LinkStats {
     pub unacked_limit: u64,
     /// Round trip duration, i.e. ping.
     pub roundtrip: Duration,
+    /// Number of times link exceeded acknowledgement timeout.
+    pub hangs: usize,
     /// Statistics over time intervals specified in the [configuration](crate::cfg::Cfg::stats_intervals).
     pub time_stats: Vec<LinkIntervalStats>,
 }
