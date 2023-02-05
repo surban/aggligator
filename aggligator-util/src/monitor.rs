@@ -290,6 +290,11 @@ where
                     } else {
                         queue!(stdout(), Print("unconfirmed".yellow())).unwrap();
                     }
+
+                    let hangs = link.stats().hangs;
+                    if hangs > 0 {
+                        queue!(stdout(), Print(format!(" ({hangs})").grey())).unwrap();
+                    }
                 } else if let Some(err) = errors.get(&(conn_id, (*tag).clone())) {
                     queue!(stdout(), Print(format!("{err:40}").red())).unwrap();
                 }
@@ -325,8 +330,6 @@ where
                         Print(format_bytes(stats.total_sent)),
                         Print(" "),
                         Print(format_bytes(stats.total_recved)),
-                        Print(" "),
-                        Print(format!("{}", stats.hangs)),
                         MoveToNextLine(2),
                     )
                     .unwrap();
