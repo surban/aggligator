@@ -108,7 +108,12 @@ impl Default for Cfg {
             no_link_timeout: Duration::from_secs(90),
             termination_timeout: Duration::from_secs(300),
             connect_queue: NonZeroUsize::new(32).unwrap(),
-            stats_intervals: vec![Duration::from_secs(1), Duration::from_secs(5), Duration::from_secs(10)],
+            stats_intervals: vec![
+                Duration::from_millis(100),
+                Duration::from_secs(1),
+                Duration::from_secs(5),
+                Duration::from_secs(10),
+            ],
             _non_exhaustive: (),
         }
     }
