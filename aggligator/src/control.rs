@@ -585,6 +585,7 @@ pub struct LinkIntervalStats {
     pub start: Instant,
     /// Bytes sent within time interval.
     pub sent: u64,
+    pub sent_dummy: u64,
     /// Bytes received within time interval.
     pub recved: u64,
     /// Whether sending was used to capacity within time interval.
@@ -593,13 +594,19 @@ pub struct LinkIntervalStats {
 
 impl LinkIntervalStats {
     pub(crate) fn new(interval: Duration) -> Self {
-        Self { interval, start: Instant::now(), sent: 0, recved: 0, busy: true }
+        Self { interval, start: Instant::now(), sent: 0, sent_dummy: 0, recved: 0, busy: true }
     }
 
     /// Send speed in bytes per second.
     pub fn send_speed(&self) -> f64 {
         self.sent as f64 / self.interval.as_secs_f64()
     }
+
+    /// Send speed in bytes per second.
+    pub fn send_dummy_speed(&self) -> f64 {
+        self.sent_dummy as f64 / self.interval.as_secs_f64()
+    }
+
 
     /// Receive speed in bytes per second.
     pub fn recv_speed(&self) -> f64 {
@@ -617,22 +624,22 @@ pub struct LinkStats {
     pub working: bool,
     /// Total data sent in bytes.
     pub total_sent: u64,
+    pub total_sent_dummy: u64,
     /// Total data received in bytes.
     pub total_recved: u64,
     /// Current data sent but not yet acknowledged by remote endpoint in bytes.
     pub sent_unacked: u64,
+    pub sent_unacked_dummy: u64,
     /// Current limit of [`sent_unacked`](Self::sent_unacked).
     pub unacked_limit: u64,
     /// Average measured round trip duration, i.e. ping.
     pub roundtrip: Duration,
     /// Expected time to clear current send queue.
     pub expected_empty: f32,
-    /// Trip time to remote endpoint in seconds.
-    ///
-    /// Can be negative due to unsynced clocks and clock drift.
-    pub trip: f32,
     /// Estimated available bandwidth for sending in bytes per second.
     pub bandwidth: f32,
+    pub estimates: usize,
+    pub resets: usize,
     /// Statistics over time intervals specified in the [configuration](crate::cfg::Cfg::stats_intervals).
     pub time_stats: Vec<LinkIntervalStats>,
 }
@@ -658,6 +665,8 @@ pub enum DisconnectReason {
     ConnectionClosed,
     /// The link was rejected by the local link filter.
     LinkFilter,
+    /// The allowed clock drift to the remote endpoint exceeded its limit.
+    ClockDrift,
     /// The connection task was terminated.
     TaskTerminated,
 }
@@ -674,6 +683,7 @@ impl fmt::Display for DisconnectReason {
             Self::RemotelyRequested => write!(f, "remotely requested"),
             Self::ConnectionClosed => write!(f, "connection closed"),
             Self::LinkFilter => write!(f, "link filter"),
+            Self::ClockDrift => write!(f, "clock drift exceeded"),
             Self::TaskTerminated => write!(f, "task terminated"),
         }
     }

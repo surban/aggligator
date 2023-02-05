@@ -2,6 +2,7 @@
 
 use bytes::Bytes;
 use futures::{future, future::poll_fn, FutureExt, Sink, SinkExt, Stream, StreamExt};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::{
     collections::VecDeque,
     fmt,
@@ -132,12 +133,13 @@ pub(crate) struct LinkInt<TX, RX, TAG> {
     pub(crate) tx_ack_queue: VecDeque<Seq>,
     /// Number of acks sent since last flush.
     txed_acks_unflushed: usize,
-    /// Trip time to remote endpoint.
-    pub(crate) tx_trip: f32,
     /// Trip time to remote endpoint per byte.
     pub(crate) tx_trip_per_byte: f32,
     /// Whether this is the fastest link for sending.
     pub(crate) tx_fastest: bool,
+    pub(crate) tx_dummy: bool,
+    pub(crate) txed_unacked_data_all: usize,
+    tx_trip_estimates: usize,
     /// Receive sink.
     rx: RX,
     /// Received data message, when waiting for the corresponding data packet.
@@ -170,9 +172,11 @@ pub(crate) struct LinkInt<TX, RX, TAG> {
     pub(crate) goodbye_sent: bool,
     /// User data provided by remote endpoint.
     remote_user_data: Arc<Vec<u8>>,
+    /// Milliseconds to add to clock of remote endpoint.
+    clock_offset: Arc<AtomicU32>,
     /// Link statistics calculator.
     stats: LinkStatistican,
-
+    resets: usize,
     log_file: BufWriter<File>,
 }
 
@@ -250,9 +254,11 @@ where
             rxed_data_msg: None,
             tx_last_msg: None,
             txed_packets: VecDeque::new(),
-            tx_trip: roundtrip.as_secs_f32() / 2.,
             tx_trip_per_byte: 1.,
+            tx_trip_estimates: 0,
             tx_fastest: false,
+            tx_dummy: false,
+            txed_unacked_data_all: 0,
             last_ping: None,
             current_ping_sent: None,
             send_ping: None,
@@ -268,9 +274,16 @@ where
             tx_idle_since: None,
             tx_pending: false,
             cfg,
+            clock_offset: Arc::new(AtomicU32::default()),
             remote_user_data: Arc::new(remote_user_data),
+            resets: 0,
             log_file: BufWriter::new(File::create(format!("linklog-{conn_id}-{link_id}.csv")).unwrap()),
         }
+    }
+
+    /// Sets the shared clock offset reference.
+    pub(crate) fn set_clock_offset(&mut self, clock_offset: Arc<AtomicU32>) {
+        self.clock_offset = clock_offset;
     }
 
     /// Returns the next event for this link.
@@ -331,7 +344,7 @@ where
             loop {
                 match self.rx.next().await {
                     Some(Ok(buf)) => {
-                        self.stats.record(0, buf.len());
+                        self.stats.record(0, buf.len(), false);
 
                         match self.rxed_data_msg.take() {
                             Some(msg) => {
@@ -390,7 +403,7 @@ where
     /// Send message over link, optionally followed by data.
     ///
     /// Link must be ready for sending.
-    pub(crate) fn start_send_msg(&mut self, msg: LinkMsg, data: Option<Bytes>) {
+    pub(crate) fn start_send_msg(&mut self, msg: LinkMsg, data: Option<Bytes>, dummy: bool) {
         assert!(self.tx_polling.is_none());
         assert!(self.tx_data.is_none());
 
@@ -408,7 +421,7 @@ where
             return;
         }
 
-        self.stats.record(msg_len + data_len, 0);
+        self.stats.record(msg_len + data_len, 0, dummy);
 
         self.tx_data = data;
         self.tx_last_msg = Some(Instant::now());
@@ -512,7 +525,13 @@ where
 
     /// Notify link for statistics that a reliable message has been sent.
     pub(crate) fn reliable_message_sent(&mut self, seq: Seq, size: usize, sent: Duration) {
-        self.txed_packets.push_back(LinkSentReliable { seq, sent, size, unacked_data: self.txed_unacked_data });
+        self.txed_unacked_data_all += size;
+        self.txed_packets.push_back(LinkSentReliable {
+            seq,
+            sent,
+            size,
+            unacked_data: self.txed_unacked_data_all,
+        });
     }
 
     // For the unacked data we don't actually know the true value.
@@ -554,50 +573,70 @@ where
     // Okay, what is first step?
     // Correctly calculate m from link test.
 
+    //
+    // Still two problems:
+    //
+    // 1. links that are thought slow will never be used
+    //    => they need to send test data?
+    //    => hmm how difficult is it to send non-useful data?
+    //    => maybe just duplicate a packet, becaue double-ack doesn't matter but should be received by the link
+    //    => could be a good idea to give some traffic to the link.
+    //
+    // 2. packets can be sent over a link even if it is predicted that maximum trip time will be exceeded
+    //
+    // 3. we should use estimated trip time for unconfirmed timeout
+
     /// Notify link for statistics that a reliable message has been acknowledged.
     pub(crate) fn reliable_message_acked(&mut self, acked_seq: Seq, recved: Duration, remote_recved: Duration) {
-        const LR: f32 = 0.0001;
+        const S: usize = 200;
+        const D: usize = 100;
 
-        let mut ack_size = None;
+        //let mut ack_size = None;
 
         // Remove acked packets.
         loop {
             match self.txed_packets.front() {
                 Some(LinkSentReliable { seq, sent, size, unacked_data }) if *seq <= acked_seq => {
+                    self.txed_unacked_data_all =
+                        self.txed_unacked_data_all.checked_sub(*size).expect("unacked data underflow");
+
                     // Estimate trip and roundtrip times.
                     if *seq == acked_seq {
-                        let data = *unacked_data as f32;
-                        ack_size = Some(*size);
+                        let data = *unacked_data;
+                        //ack_size = Some(*size);
 
                         let roundtrip = recved - *sent;
-                        self.avg_roundtrip = (99 * self.avg_roundtrip + roundtrip) / 100;
+                        let s = S as u32;
+                        self.avg_roundtrip = (s * self.avg_roundtrip + roundtrip) / (s + 1);
 
-                        if data >= 128. {
-                            let sent = sent.as_secs_f32();
-                            let remote_recved = remote_recved.as_secs_f32();
-                            let trip = remote_recved - sent;
-
-                            // Compute gradient.
-                            let gb = self.tx_trip_per_byte * data + self.tx_trip - trip;
-                            let gm = gb * data;
-
-                            // Normalize gradient.
-                            let n = (gb.powi(2) + gm.powi(2)).sqrt();
-                            let gb = gb / n;
-                            let gm = gm / n;
-
-                            // Perform one step of gradient descent.
-                            self.tx_trip -= LR * gb;
-                            self.tx_trip_per_byte -= LR * gm;
-                            if self.tx_trip_per_byte < 0. {
-                                self.tx_trip_per_byte = 1.;
+                        if let LinkSteering::MinRoundtrip(_) = &self.cfg.link_steering {
+                            let data = (data * 12 / 10).max(self.cfg.io_write_size.get() * 5);
+                            if data >= self.txed_unacked_data_limit {
+                                self.txed_unacked_data_limit = data;
+                            } else {
+                                self.txed_unacked_data_limit = self.txed_unacked_data_limit * (D - 1) / D;
                             }
+                        }
+
+                        if data >= 128 {
+                            let data = data as f32;
+                            let clock_offset = self.clock_offset.load(Ordering::Relaxed);
+                            let sent = sent.as_secs_f32();
+                            let remote_recved = remote_recved.as_secs_f32() + clock_offset as f32 / 1000.;
+
+                            let trip = if sent <= remote_recved {
+                                remote_recved - sent
+                            } else {
+                                let new_offset = clock_offset + ((sent - remote_recved) * 1000.) as u32;
+                                self.clock_offset.store(new_offset, Ordering::Relaxed);
+                                0.
+                            };
 
                             // Direct estimation:
-                            //let est = trip / *unacked_data as f32;
-                            //self.tx_trip_per_byte = (S * self.tx_trip_per_byte + est) / (S + 1.);
-
-                            self.txed_unacked_data_limit = self.txed_unacked_data_limit.max(*unacked_data);
+                            let est = trip / *unacked_data as f32;
+                            let s = S as f32;
+                            self.tx_trip_per_byte = (s * self.tx_trip_per_byte + est) / (s + 1.);
+                            self.tx_trip_estimates += 1;
 
                             writeln!(&mut self.log_file, "{data};{trip}").unwrap();
                         }
@@ -608,87 +647,37 @@ where
                 _ => break,
             }
         }
-
-        // Adjust unacked size of packets sent before receiving ack that was in flight.
-        if let Some(ack_size) = ack_size {
-            for LinkSentReliable { sent, unacked_data, .. } in &mut self.txed_packets {
-                if *sent >= remote_recved {
-                    *unacked_data = unacked_data.saturating_sub(ack_size);
-                }
-            }
-        }
+        //
+        //         // Adjust unacked size of packets sent before receiving ack that was in flight.
+        //         if let Some(ack_size) = ack_size {
+        //             for LinkSentReliable { sent, unacked_data, .. } in &mut self.txed_packets {
+        //                 if *sent >= remote_recved {
+        //                     *unacked_data = unacked_data.saturating_sub(ack_size);
+        //                 }
+        //             }
+        //         }
     }
 
     /// The expected duration in ms for the message to arrive at the remote endpoint
     /// if data of the specified size was sent over the link now.
     pub(crate) fn expected_trip(&self, data_size: usize) -> f32 {
-        let data = (self.txed_unacked_data + data_size) as f32;
+        let total = (self.txed_unacked_data + data_size) as f32;
+        let mut t = self.tx_trip_per_byte * total;
 
-        // m = ms / byte
-        // => byte / s = 1000 / m
-        //let t = b + m * (to_send as f64);
-        //let t = m.abs() * (to_send as f64);
-        //t.round() as i32
-
-        let mut t = self.tx_trip_per_byte * data + self.tx_trip;
-
-        if data_size > self.txed_unacked_data_limit {
-            // Penalize estimates outside of measured domain.
-            t *= data_size as f32 / self.txed_unacked_data_limit.max(1) as f32 * 5.;
+        // Penalize estimates outside of measured domain.
+        if total > self.txed_unacked_data_limit as f32 {
+            t *= (total / self.txed_unacked_data_limit.max(1) as f32).powi(2);
         }
 
         t
-
-        //         const N: usize = 10;
-        //         const RNG: usize = 1024;
-        //
-        //         let over = self.flight_stats.range(to_send..to_send.saturating_add(RNG));
-        //         let under = self.flight_stats.range(to_send.saturating_sub(RNG)..to_send).rev();
-        //         let all: Vec<_> = over.chain(under).map(|(_data, flight)| *flight).collect();
-
-        // match all.len() {
-        //     0 => {
-        //         self.flight_stats_miss.fetch_add(1, Ordering::Relaxed);
-        //         (self.avg_roundtrip.as_millis() as i32) / 2
-        //     }
-        //     len => {
-        //         self.flight_stats_hit.fetch_add(1, Ordering::Relaxed);
-        //         let sum: i32 = all.into_iter().sum();
-        //         sum / (len as i32)
-        //     }
-        // }
-
-        //         let (last_t, last_ql, last_delay) = self.last_trip;
-        //         let last_ql: u32 = last_ql.try_into().unwrap_or(u32::MAX).max(1);
-        //
-        //         let adjusted_t = last_t * now_ql / last_ql;
-        //         //let mut t = last_t.max(adjusted_t);
-        //         //let mut rt = adjusted_rt;
-        //
-        //         let mut calc_t = adjusted_t;
-        //
-        //         if let Some(LinkSentReliable { sent, unacked_data: ql, .. }) = self.txed_packets.front() {
-        //             let ql: u32 = (*ql).try_into().unwrap_or(u32::MAX).max(1);
-        //             let elapsed_rt = sent.elapsed() * now_ql / ql;
-        //             if let Some(elapsed_t) = elapsed_rt.checked_sub(last_delay) {
-        //                 calc_t = calc_t.max(elapsed_t);
-        //             }
-        //         }
-        //
-        //         //t
-        //         //last_rt
-        //         //self.avg_roundtrip
-        //
-        //         //last_t
-        //         calc_t.clamp(last_t / 2, last_t * 2).clamp(self.avg_roundtrip / 2, self.avg_roundtrip * 2)
     }
 
-    /// Reset statistics and limits after the link was reconfirmed.
+    /// Reset statistics and limits when the link is unconfirmed.
     pub(crate) fn reset(&mut self) {
         match &self.cfg.link_steering {
             LinkSteering::MinRoundtrip(MinRoundtrip { .. }) => {
                 // Reset trip estimates.
-                self.tx_trip = self.avg_roundtrip.as_secs_f32() / 2.;
+                self.tx_trip_estimates = 0;
                 self.tx_trip_per_byte = 1.;
                 self.txed_unacked_data_limit = 0;
             }
@@ -700,19 +689,21 @@ where
             }
         }
 
+        self.resets += 1;
+
         // Reset sent packets.
-        self.txed_packets.clear();
+        //self.txed_packets.clear();
     }
 
     /// Provide the link with the result of a ping.
     pub(crate) fn ping_result(&mut self, roundtrip: Duration, data_size: usize) {
         self.avg_roundtrip = roundtrip;
 
-        self.tx_trip = roundtrip.as_secs_f32() / 2.;
-        self.txed_unacked_data_limit = data_size;
+        let trip = roundtrip.as_secs_f32() / 2.;
+        self.txed_unacked_data_limit = self.txed_unacked_data_limit.max(data_size);
 
         if data_size > 128 {
-            self.tx_trip_per_byte = self.tx_trip / data_size as f32;
+            self.tx_trip_per_byte = 5. * trip / data_size as f32;
         } else {
             self.tx_trip_per_byte = 1.;
         }
@@ -724,11 +715,14 @@ where
     pub(crate) fn publish_stats(&mut self) {
         self.stats.current.working = self.unconfirmed.is_none();
         self.stats.current.sent_unacked = self.txed_unacked_data as _;
+        self.stats.current.sent_unacked_dummy =
+            (self.txed_unacked_data_all as u64).saturating_sub(self.stats.current.sent_unacked);
         self.stats.current.unacked_limit = self.txed_unacked_data_limit as _;
         self.stats.current.roundtrip = self.avg_roundtrip;
         self.stats.current.expected_empty = self.expected_trip(0);
-        self.stats.current.trip = self.tx_trip;
         self.stats.current.bandwidth = 1. / self.tx_trip_per_byte;
+        self.stats.current.estimates = self.tx_trip_estimates;
+        self.stats.current.resets = self.resets;
 
         self.stats.publish();
     }
@@ -770,13 +764,16 @@ impl LinkStatistican {
             established: Instant::now(),
             working: false,
             total_sent: 0,
+            total_sent_dummy: 0,
             total_recved: 0,
             sent_unacked: 0,
+            sent_unacked_dummy: 0,
             unacked_limit: 0,
             roundtrip,
             expected_empty: trip,
-            trip,
             bandwidth: 0.,
+            estimates: 0,
+            resets: 0,
             time_stats: running_stats.clone(),
         };
 
@@ -808,12 +805,22 @@ impl LinkStatistican {
     }
 
     /// Records sent and received data.
-    fn record(&mut self, sent: usize, received: usize) {
-        self.current.total_sent = self.current.total_sent.wrapping_add(sent as _);
+    fn record(&mut self, sent: usize, received: usize, dummy: bool) {
+        if dummy {
+            self.current.total_sent_dummy = self.current.total_sent_dummy.wrapping_add(sent as _);
+        } else {
+            self.current.total_sent = self.current.total_sent.wrapping_add(sent as _);
+        }
+
         self.current.total_recved = self.current.total_recved.wrapping_add(received as _);
 
         for ts in &mut self.running_stats {
-            ts.sent = ts.sent.wrapping_add(sent as _);
+            if dummy {
+                ts.sent_dummy = ts.sent_dummy.wrapping_add(sent as _);
+            } else {
+                ts.sent = ts.sent.wrapping_add(sent as _);
+            }
+
             ts.recved = ts.recved.wrapping_add(received as _);
         }
     }

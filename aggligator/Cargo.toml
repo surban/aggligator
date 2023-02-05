@@ -30,7 +30,6 @@ x25519-dalek = "1.2"
 rand_core = "0.5"
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
-linregress = "0.5"
 
 [dev-dependencies]
 tokio = { version = "1.19", features = ["rt", "rt-multi-thread"] }

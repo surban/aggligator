@@ -300,9 +300,11 @@ where
                     let stats = link.stats();
 
                     let mut tx_speed = 0.;
+                    let mut tx_dummy_speed = 0.;
                     let mut rx_speed = 0.;
                     if let Some(ts) = stats.time_stats.get(time_stats_idx) {
                         tx_speed = ts.send_speed();
+                        tx_dummy_speed = ts.send_dummy_speed();
                         rx_speed = ts.recv_speed();
                     }
 
@@ -319,32 +321,19 @@ where
                                 Print(" "),
                                 Print(format!(
                                     "{} {}",
-                                    format!("{:4}", stats.expected_empty * 1000.).white(),
+                                    format!("{:4.0}", stats.expected_empty * 1000.).white(),
                                     "ms".dark_grey()
                                 )),
                                 Print(" "),
-                                Print(format!("p={:5.2} ms ", stats.trip * 1000.)),
-                                Print(" "),
                                 Print(format_speed(stats.bandwidth as f64)),
-                                // Print(" "),
-                                // Print(format!("({:4})", stats.flight_stats_size)),
-                                // Print(" "),
-                                // Print(format!(
-                                //     "{} {}",
-                                //     format!("{:4}", stats.last_trip.0.as_millis()).white(),
-                                //     "ms".dark_grey()
-                                // )),
-                                // Print(" "),
-                                // Print(format_bytes(stats.last_trip.1 as _)),
-                                // Print(" "),
-                                // Print(format!(
-                                //     "{} {}",
-                                //     format!("{:4}", stats.last_trip.2.as_millis()).white(),
-                                //     "ms".dark_grey()
-                                // )),
-                                Print(" "),
+                                Print(" ("),
+                                Print(format!("{:5}", stats.estimates)),
+                                Print(") "),
                                 Print(format_bytes(stats.sent_unacked)),
-                                Print("   "),
+                                Print(" ("),
+                                Print(format_bytes(stats.sent_unacked_dummy)),
+                                Print(") /".grey()),
+                                Print(format_bytes(stats.unacked_limit)),
                             )
                             .unwrap();
                         }
@@ -371,12 +360,16 @@ where
                         stdout(),
                         //MoveToColumn(STATS_COL),
                         Print(format_speed(tx_speed)),
-                        Print(" "),
+                        Print(" ("),
+                        Print(format_speed(tx_dummy_speed)),
+                        Print(") "),
                         Print(format_speed(rx_speed)),
                         Print("   "),
                         Print(format_bytes(stats.total_sent)),
                         Print(" "),
                         Print(format_bytes(stats.total_recved)),
+                        Print(" "),
+                        Print(format!("{}", stats.resets)),
                         MoveToNextLine(2),
                     )
                     .unwrap();
