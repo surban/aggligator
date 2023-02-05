@@ -211,6 +211,8 @@ pub struct Task<TX, RX, TAG> {
     tx_seq: Seq,
     /// Send overrun handling.
     tx_overrun: SendOverrun,
+    /// Since when send overrun condition is active.
+    tx_overrun_since: Option<Instant>,
     /// Packets that have been sent but not yet become consumable by the remote endpoint.
     txed_packets: VecDeque<Arc<SentReliable>>,
     /// Size of data sent and not yet acknowledged by remote endpoint.
@@ -304,6 +306,7 @@ where
             write_error_tx,
             tx_seq: Seq::ZERO,
             tx_overrun: SendOverrun::Armed,
+            tx_overrun_since: None,
             txed_packets: VecDeque::new(),
             txed_unacked: 0,
             resend_queue: VecDeque::new(),
@@ -824,10 +827,8 @@ where
                             })
                         })
                         .collect();
+                    self.idle_links.retain(|idle_id| !self.unflushed_links.contains(idle_id));
                     self.flushed_tx = Some(tx);
-                    for id in &self.unflushed_links {
-                        self.idle_links.remove(*id);
-                    }
                 }
                 TaskEvent::ConfirmTimedOut(id) => {
                     tracing::warn!("acknowledgement timeout on link {id}");
@@ -1054,6 +1055,10 @@ where
     /// Adjusts the link transmission buffer limits to ensure that no link stalls the channel.
     fn adjust_link_tx_limits(&mut self) {
         let Some(remote_recv_buffer) = self.remote_recv_buffer() else { return };
+        let coming_seq = match self.resend_queue.front() {
+            Some(packet) => packet.seq,
+            None => self.tx_seq,
+        };
 
         // Check for unconsumable data approaching its limits.
         let unconsumable_limit = (self.cfg.send_buffer.get() as usize).min(remote_recv_buffer);
@@ -1084,18 +1089,30 @@ where
                     link.txed_unacked_data_limit = current * 95 / 100;
                     self.tx_overrun = SendOverrun::Soft;
                 }
+                self.tx_overrun_since = Some(Instant::now());
                 tracing::debug!(
                     "decreasing unacked limit of link {id} to {} bytes",
                     link.txed_unacked_data_limit
                 );
 
                 // Block link from increasing its send data limit.
-                link.txed_unacked_data_limit_increased = Some(self.tx_seq);
+                link.txed_unacked_data_limit_increased = Some(coming_seq);
                 link.txed_unacked_data_limit_increased_consecutively = 0;
             }
         } else if self.tx_overrun != SendOverrun::Armed && !soft_overrun && !hard_overrun {
             tracing::trace!("re-arming send overrun handling");
             self.tx_overrun = SendOverrun::Armed;
+            self.tx_overrun_since = None;
+        }
+
+        // Rearm send overrun handling if it is blocked for too long.
+        match self.tx_overrun_since {
+            Some(since) if since.elapsed() >= Duration::from_secs(1) => {
+                tracing::debug!("re-arming send overrun handling due to timeout");
+                self.tx_overrun = SendOverrun::Armed;
+                self.tx_overrun_since = None
+            }
+            _ => (),
         }
 
         // Decrease data limits of links that approach maximum ping.
@@ -1126,7 +1143,7 @@ where
                                 );
 
                                 // Block link from increasing its send data limit.
-                                link.txed_unacked_data_limit_increased = Some(self.tx_seq);
+                                link.txed_unacked_data_limit_increased = Some(coming_seq);
                                 link.txed_unacked_data_limit_increased_consecutively = 0;
                             }
                             _ => (),
@@ -1140,7 +1157,8 @@ where
         };
 
         // Check if data is available for sending but no link is available.
-        let send_data_avail = self.write_rx.as_mut().map(|rx| rx.try_peek().is_ok()).unwrap_or_default();
+        let send_data_avail = self.write_rx.as_mut().map(|rx| rx.try_peek().is_ok()).unwrap_or_default()
+            || !self.resend_queue.is_empty();
         let sendable_link_avail = self.links.iter().any(|link_opt| {
             link_opt
                 .as_ref()
@@ -1190,7 +1208,7 @@ where
                         );
 
                         // Block link from increasing limit again until newly sent data is received.
-                        link.txed_unacked_data_limit_increased = Some(self.tx_seq);
+                        link.txed_unacked_data_limit_increased = Some(coming_seq);
                         link.txed_unacked_data_limit_increased_consecutively =
                             link.txed_unacked_data_limit_increased_consecutively.saturating_add(1);
                     }
@@ -1325,8 +1343,15 @@ where
 
         // Update link statistics.
         if let ReliableMsg::Data(data) = reliable_msg {
-            let link = self.links[id].as_mut().unwrap();
             link.txed_unacked_data += data.len();
+        }
+
+        // Adjust last buffer increase sequence number if necessary.
+        match &mut link.txed_unacked_data_limit_increased {
+            Some(last_increased) if packet.seq < *last_increased => {
+                *last_increased = packet.seq;
+            }
+            _ => (),
         }
 
         // Update packet.
