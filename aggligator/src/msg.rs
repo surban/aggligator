@@ -10,6 +10,7 @@ use crate::{
     cfg::ExchangedCfg,
     id::{EncryptedConnId, ServerId},
     protocol_err,
+    seq::Seq,
 };
 
 /// Reason for refusal of an incoming link.
@@ -110,35 +111,35 @@ pub(crate) enum LinkMsg {
     /// This is followed by one data packet.
     Data {
         /// Sequence number.
-        seq: u32,
+        seq: Seq,
     },
     /// Acknowledges data received over this link.
     Ack {
         /// Sequence that has been received on this link.
-        received: u32,
+        received: Seq,
     },
     /// Notifies that received data has been consumed.
     Consumed {
         /// Sequence number.
-        seq: u32,
+        seq: Seq,
         /// Number of bytes consumed.
         consumed: u32,
     },
     /// No more data will be sent.
     SendFinish {
         /// Sequence number.
-        seq: u32,
+        seq: Seq,
     },
     /// Not interested in receiving any more data,
     /// but already sent data will still be processed.
     ReceiveClose {
         /// Sequence number.
-        seq: u32,
+        seq: Seq,
     },
     /// No more received data will be processed.
     ReceiveFinish {
         /// Sequence number.
-        seq: u32,
+        seq: Seq,
     },
     /// Test data to check link.
     TestData {
@@ -231,28 +232,28 @@ impl LinkMsg {
             }
             LinkMsg::Data { seq } => {
                 writer.write_u8(Self::MSG_DATA)?;
-                writer.write_u32::<LE>(*seq)?;
+                writer.write_u32::<LE>((*seq).into())?;
             }
             LinkMsg::Ack { received } => {
                 writer.write_u8(Self::MSG_ACK)?;
-                writer.write_u32::<LE>(*received)?;
+                writer.write_u32::<LE>((*received).into())?;
             }
             LinkMsg::Consumed { seq, consumed } => {
                 writer.write_u8(Self::MSG_CONSUMED)?;
-                writer.write_u32::<LE>(*seq)?;
+                writer.write_u32::<LE>((*seq).into())?;
                 writer.write_u32::<LE>(*consumed)?;
             }
             LinkMsg::SendFinish { seq } => {
                 writer.write_u8(Self::MSG_SEND_FINISH)?;
-                writer.write_u32::<LE>(*seq)?;
+                writer.write_u32::<LE>((*seq).into())?;
             }
             LinkMsg::ReceiveClose { seq } => {
                 writer.write_u8(Self::MSG_RECEIVE_CLOSE)?;
-                writer.write_u32::<LE>(*seq)?;
+                writer.write_u32::<LE>((*seq).into())?;
             }
             LinkMsg::ReceiveFinish { seq } => {
                 writer.write_u8(Self::MSG_RECEIVE_FINISH)?;
-                writer.write_u32::<LE>(*seq)?;
+                writer.write_u32::<LE>((*seq).into())?;
             }
             LinkMsg::TestData { size } => {
                 writer.write_u8(Self::MSG_TEST_DATA)?;
@@ -338,14 +339,14 @@ impl LinkMsg {
             Self::MSG_REFUSED => Self::Refused { reason: RefusedReason::try_from(reader.read_u8()?)? },
             Self::MSG_PING => Self::Ping,
             Self::MSG_PONG => Self::Pong,
-            Self::MSG_DATA => Self::Data { seq: reader.read_u32::<LE>()? },
-            Self::MSG_ACK => Self::Ack { received: reader.read_u32::<LE>()? },
+            Self::MSG_DATA => Self::Data { seq: reader.read_u32::<LE>()?.into() },
+            Self::MSG_ACK => Self::Ack { received: reader.read_u32::<LE>()?.into() },
             Self::MSG_CONSUMED => {
-                Self::Consumed { seq: reader.read_u32::<LE>()?, consumed: reader.read_u32::<LE>()? }
+                Self::Consumed { seq: reader.read_u32::<LE>()?.into(), consumed: reader.read_u32::<LE>()? }
             }
-            Self::MSG_SEND_FINISH => Self::SendFinish { seq: reader.read_u32::<LE>()? },
-            Self::MSG_RECEIVE_CLOSE => Self::ReceiveClose { seq: reader.read_u32::<LE>()? },
-            Self::MSG_RECEIVE_FINISH => Self::ReceiveFinish { seq: reader.read_u32::<LE>()? },
+            Self::MSG_SEND_FINISH => Self::SendFinish { seq: reader.read_u32::<LE>()?.into() },
+            Self::MSG_RECEIVE_CLOSE => Self::ReceiveClose { seq: reader.read_u32::<LE>()?.into() },
+            Self::MSG_RECEIVE_FINISH => Self::ReceiveFinish { seq: reader.read_u32::<LE>()?.into() },
             Self::MSG_TEST_DATA => Self::TestData { size: reader.bytes().count() },
             Self::MSG_GOODBYE => Self::Goodbye,
             other => return Err(protocol_err!("invalid message id {other}")),
@@ -415,7 +416,7 @@ impl fmt::Debug for ReliableMsg {
 
 impl ReliableMsg {
     /// Convert to link message.
-    pub(crate) fn to_link_msg(&self, seq: u32) -> (LinkMsg, Option<Bytes>) {
+    pub(crate) fn to_link_msg(&self, seq: Seq) -> (LinkMsg, Option<Bytes>) {
         match self {
             ReliableMsg::Data(data) => (LinkMsg::Data { seq }, Some(data.clone())),
             ReliableMsg::Consumed(n) => (LinkMsg::Consumed { seq, consumed: *n }, None),
@@ -426,7 +427,7 @@ impl ReliableMsg {
     }
 
     /// Convert from link message.
-    pub(crate) fn from_link_msg(msg: LinkMsg, data: Option<Bytes>) -> (Self, u32) {
+    pub(crate) fn from_link_msg(msg: LinkMsg, data: Option<Bytes>) -> (Self, Seq) {
         match msg {
             LinkMsg::Data { seq } => (Self::Data(data.unwrap()), seq),
             LinkMsg::Consumed { seq, consumed } => (Self::Consumed(consumed), seq),
