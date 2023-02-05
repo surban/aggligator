@@ -215,6 +215,11 @@ impl<TX, RX, TAG> Control<TX, RX, TAG> {
         self.direction
     }
 
+    /// The configuration of the connection.
+    pub fn cfg(&self) -> &Cfg {
+        &self.cfg
+    }
+
     /// Returns whether the connection has been terminated.
     pub fn is_terminated(&self) -> bool {
         self.link_tx.is_closed()
@@ -503,6 +508,11 @@ impl<TAG> Link<TAG> {
     /// Direction of link.
     pub fn direction(&self) -> Direction {
         self.direction
+    }
+
+    /// The configuration of the connection.
+    pub fn cfg(&self) -> &Cfg {
+        &self.cfg
     }
 
     /// The user-defined tag of this link.
