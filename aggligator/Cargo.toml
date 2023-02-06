@@ -28,6 +28,7 @@ rand_xoshiro = "0.6"
 atomic_refcell = "0.1.8"
 x25519-dalek = "1.2"
 rand_core = "0.5"
+crc = "3"
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 
