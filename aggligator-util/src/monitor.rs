@@ -285,8 +285,15 @@ where
                 if disabled.contains(tag) {
                     queue!(stdout(), Print("disabled".dark_red())).unwrap();
                 } else if let Some(link) = link {
-                    match link.stats().not_working {
-                        None => queue!(stdout(), Print("connected".green())).unwrap(),
+                    let stats = link.stats();
+                    match stats.not_working {
+                        None => queue!(
+                            stdout(),
+                            Print("connected".green()),
+                            Print(" since ".dark_grey()),
+                            Print(format_duration(stats.established.elapsed())),
+                        )
+                        .unwrap(),
                         Some((since, reason)) => {
                             queue!(
                                 stdout(),
