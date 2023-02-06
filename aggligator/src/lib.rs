@@ -96,6 +96,9 @@
 //! [aggligator-util]: https://docs.rs/aggligator-util/latest/aggligator_util/
 //!
 
+#[cfg(any(target_pointer_width = "8", target_pointer_width = "16"))]
+compile_error!("target pointer width must be at least 32 bits");
+
 mod agg;
 pub mod alc;
 pub mod cfg;

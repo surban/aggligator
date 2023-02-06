@@ -4,7 +4,7 @@
 //! and managed internally.
 //!
 
-use byteorder::{ByteOrder, LE};
+use byteorder::{ByteOrder, BE};
 use rand::{random, rngs::OsRng, Rng};
 use std::{fmt, num::NonZeroU128, sync::Arc};
 use tokio::sync::mpsc;
@@ -46,13 +46,13 @@ impl fmt::Debug for EncryptedConnId {
 impl EncryptedConnId {
     /// Encrypts the connection id with the first 16 bytes of the shared secret.
     pub fn new(id: ConnId, secret: &SharedSecret) -> Self {
-        let key = LE::read_u128(secret.as_bytes());
+        let key = BE::read_u128(secret.as_bytes());
         Self(key ^ id.0)
     }
 
     /// Decrypts the connection id with the first 16 bytes of the shared secret.
     pub fn decrypt(self, secret: &SharedSecret) -> ConnId {
-        let key = LE::read_u128(secret.as_bytes());
+        let key = BE::read_u128(secret.as_bytes());
         ConnId(key ^ self.0)
     }
 }

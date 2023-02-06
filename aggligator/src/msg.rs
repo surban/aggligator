@@ -1,6 +1,6 @@
 //! Protocol messages.
 
-use byteorder::{ReadBytesExt, WriteBytesExt, LE};
+use byteorder::{ReadBytesExt, WriteBytesExt, BE};
 use bytes::Bytes;
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use std::{fmt, io, num::NonZeroU128};
@@ -153,7 +153,7 @@ pub(crate) enum LinkMsg {
 
 impl LinkMsg {
     /// Protocol version.
-    pub const PROTOCOL_VERSION: u8 = 2;
+    pub const PROTOCOL_VERSION: u8 = 3;
 
     /// Magic identifier.
     const MAGIC: &'static [u8; 5] = b"LIAG\0";
@@ -179,10 +179,10 @@ impl LinkMsg {
                 writer.write_u8(Self::MSG_WELCOME)?;
                 writer.write_all(Self::MAGIC)?;
                 writer.write_u8(Self::PROTOCOL_VERSION)?;
-                writer.write_u32::<LE>(*extensions)?;
+                writer.write_u32::<BE>(*extensions)?;
                 writer.write_all(public_key.as_bytes())?;
-                writer.write_u128::<LE>(server_id.0.get())?;
-                writer.write_u16::<LE>(
+                writer.write_u128::<BE>(server_id.0.get())?;
+                writer.write_u16::<BE>(
                     user_data
                         .len()
                         .try_into()
@@ -203,12 +203,12 @@ impl LinkMsg {
                 writer.write_u8(Self::MSG_CONNECT)?;
                 writer.write_all(Self::MAGIC)?;
                 writer.write_u8(Self::PROTOCOL_VERSION)?;
-                writer.write_u32::<LE>(*extensions)?;
+                writer.write_u32::<BE>(*extensions)?;
                 writer.write_all(public_key.as_bytes())?;
-                writer.write_u128::<LE>(server_id.map(|si| si.0.get()).unwrap_or(0))?;
-                writer.write_u128::<LE>(connection_id.0)?;
+                writer.write_u128::<BE>(server_id.map(|si| si.0.get()).unwrap_or(0))?;
+                writer.write_u128::<BE>(connection_id.0)?;
                 writer.write_u8(*existing_connection as u8)?;
-                writer.write_u16::<LE>(
+                writer.write_u16::<BE>(
                     user_data
                         .len()
                         .try_into()
@@ -232,28 +232,28 @@ impl LinkMsg {
             }
             LinkMsg::Data { seq } => {
                 writer.write_u8(Self::MSG_DATA)?;
-                writer.write_u32::<LE>((*seq).into())?;
+                writer.write_u32::<BE>((*seq).into())?;
             }
             LinkMsg::Ack { received } => {
                 writer.write_u8(Self::MSG_ACK)?;
-                writer.write_u32::<LE>((*received).into())?;
+                writer.write_u32::<BE>((*received).into())?;
             }
             LinkMsg::Consumed { seq, consumed } => {
                 writer.write_u8(Self::MSG_CONSUMED)?;
-                writer.write_u32::<LE>((*seq).into())?;
-                writer.write_u32::<LE>(*consumed)?;
+                writer.write_u32::<BE>((*seq).into())?;
+                writer.write_u32::<BE>(*consumed)?;
             }
             LinkMsg::SendFinish { seq } => {
                 writer.write_u8(Self::MSG_SEND_FINISH)?;
-                writer.write_u32::<LE>((*seq).into())?;
+                writer.write_u32::<BE>((*seq).into())?;
             }
             LinkMsg::ReceiveClose { seq } => {
                 writer.write_u8(Self::MSG_RECEIVE_CLOSE)?;
-                writer.write_u32::<LE>((*seq).into())?;
+                writer.write_u32::<BE>((*seq).into())?;
             }
             LinkMsg::ReceiveFinish { seq } => {
                 writer.write_u8(Self::MSG_RECEIVE_FINISH)?;
-                writer.write_u32::<LE>((*seq).into())?;
+                writer.write_u32::<BE>((*seq).into())?;
             }
             LinkMsg::TestData { size } => {
                 writer.write_u8(Self::MSG_TEST_DATA)?;
@@ -284,18 +284,18 @@ impl LinkMsg {
                     ));
                 }
                 Self::Welcome {
-                    extensions: reader.read_u32::<LE>()?,
+                    extensions: reader.read_u32::<BE>()?,
                     public_key: {
                         let mut buf = [0; 32];
                         reader.read_exact(&mut buf)?;
                         buf.into()
                     },
                     server_id: ServerId(
-                        NonZeroU128::new(reader.read_u128::<LE>()?)
+                        NonZeroU128::new(reader.read_u128::<BE>()?)
                             .ok_or_else(|| protocol_err!("server id must not be zero"))?,
                     ),
                     user_data: {
-                        let len = reader.read_u16::<LE>()?;
+                        let len = reader.read_u16::<BE>()?;
                         let mut buf = vec![0; len.into()];
                         reader.read_exact(&mut buf)?;
                         buf
@@ -317,17 +317,17 @@ impl LinkMsg {
                     ));
                 }
                 Self::Connect {
-                    extensions: reader.read_u32::<LE>()?,
+                    extensions: reader.read_u32::<BE>()?,
                     public_key: {
                         let mut buf = [0; 32];
                         reader.read_exact(&mut buf)?;
                         buf.into()
                     },
-                    server_id: NonZeroU128::new(reader.read_u128::<LE>()?).map(ServerId),
-                    connection_id: EncryptedConnId(reader.read_u128::<LE>()?),
+                    server_id: NonZeroU128::new(reader.read_u128::<BE>()?).map(ServerId),
+                    connection_id: EncryptedConnId(reader.read_u128::<BE>()?),
                     existing_connection: reader.read_u8()? != 0,
                     user_data: {
-                        let len = reader.read_u16::<LE>()?;
+                        let len = reader.read_u16::<BE>()?;
                         let mut buf = vec![0; len.into()];
                         reader.read_exact(&mut buf)?;
                         buf
@@ -339,14 +339,14 @@ impl LinkMsg {
             Self::MSG_REFUSED => Self::Refused { reason: RefusedReason::try_from(reader.read_u8()?)? },
             Self::MSG_PING => Self::Ping,
             Self::MSG_PONG => Self::Pong,
-            Self::MSG_DATA => Self::Data { seq: reader.read_u32::<LE>()?.into() },
-            Self::MSG_ACK => Self::Ack { received: reader.read_u32::<LE>()?.into() },
+            Self::MSG_DATA => Self::Data { seq: reader.read_u32::<BE>()?.into() },
+            Self::MSG_ACK => Self::Ack { received: reader.read_u32::<BE>()?.into() },
             Self::MSG_CONSUMED => {
-                Self::Consumed { seq: reader.read_u32::<LE>()?.into(), consumed: reader.read_u32::<LE>()? }
+                Self::Consumed { seq: reader.read_u32::<BE>()?.into(), consumed: reader.read_u32::<BE>()? }
             }
-            Self::MSG_SEND_FINISH => Self::SendFinish { seq: reader.read_u32::<LE>()?.into() },
-            Self::MSG_RECEIVE_CLOSE => Self::ReceiveClose { seq: reader.read_u32::<LE>()?.into() },
-            Self::MSG_RECEIVE_FINISH => Self::ReceiveFinish { seq: reader.read_u32::<LE>()?.into() },
+            Self::MSG_SEND_FINISH => Self::SendFinish { seq: reader.read_u32::<BE>()?.into() },
+            Self::MSG_RECEIVE_CLOSE => Self::ReceiveClose { seq: reader.read_u32::<BE>()?.into() },
+            Self::MSG_RECEIVE_FINISH => Self::ReceiveFinish { seq: reader.read_u32::<BE>()?.into() },
             Self::MSG_TEST_DATA => Self::TestData { size: reader.bytes().count() },
             Self::MSG_GOODBYE => Self::Goodbye,
             other => return Err(protocol_err!("invalid message id {other}")),

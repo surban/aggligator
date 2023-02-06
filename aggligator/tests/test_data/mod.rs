@@ -1,7 +1,7 @@
 //! Test data generator and verifier.
 #![allow(dead_code)]
 
-use byteorder::{ReadBytesExt, WriteBytesExt, LE};
+use byteorder::{ReadBytesExt, WriteBytesExt, BE};
 use bytes::{Buf, Bytes};
 use crc::{Crc, CRC_32_CKSUM};
 use futures::join;
@@ -46,14 +46,14 @@ impl Generator {
         let size = size.saturating_sub(8);
         let mut packet = Vec::with_capacity(size + 8);
 
-        packet.write_u32::<LE>(self.seq.0).unwrap();
+        packet.write_u32::<BE>(self.seq.0).unwrap();
         self.seq += 1;
 
         for _ in 0..size {
             packet.write_u8(rng.gen()).unwrap();
         }
 
-        packet.write_u32::<LE>(CRC.checksum(&packet)).unwrap();
+        packet.write_u32::<BE>(CRC.checksum(&packet)).unwrap();
 
         self.total += packet.len();
         Bytes::from(packet)
@@ -86,7 +86,7 @@ impl Verifier {
     pub fn verify(&mut self, packet: Bytes) -> Result<(), io::Error> {
         let mut reader = packet.clone().reader();
 
-        let seq = reader.read_u32::<LE>()?;
+        let seq = reader.read_u32::<BE>()?;
         if seq != self.seq.0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -97,7 +97,7 @@ impl Verifier {
 
         reader.consume(packet.len() - 8);
 
-        let cksum = reader.read_u32::<LE>()?;
+        let cksum = reader.read_u32::<BE>()?;
         let cksum2 = CRC.checksum(&packet[..packet.len() - 4]);
         if cksum != cksum2 {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "mismatched checksum"));

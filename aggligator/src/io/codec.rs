@@ -10,7 +10,6 @@ const CRC32: Crc<u32> = Crc::<u32>::new(&CRC_32_BZIP2);
 
 /// A packet decoding error.
 #[derive(Debug, Clone)]
-#[non_exhaustive]
 pub enum IntegrityError {
     /// A packet exceeds the maximum allowed size.
     PacketTooBig,

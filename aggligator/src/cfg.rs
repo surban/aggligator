@@ -1,6 +1,6 @@
 //! Connection configuration.
 
-use byteorder::{ReadBytesExt, WriteBytesExt, LE};
+use byteorder::{ReadBytesExt, WriteBytesExt, BE};
 use std::{
     io,
     num::{NonZeroU32, NonZeroUsize},
@@ -128,13 +128,13 @@ pub(crate) struct ExchangedCfg {
 
 impl ExchangedCfg {
     pub fn write(&self, mut writer: impl io::Write) -> Result<(), io::Error> {
-        writer.write_u32::<LE>(self.recv_buffer.get())?;
+        writer.write_u32::<BE>(self.recv_buffer.get())?;
         Ok(())
     }
 
     pub fn read(mut reader: impl io::Read) -> Result<Self, io::Error> {
         let this = Self {
-            recv_buffer: NonZeroU32::new(reader.read_u32::<LE>()?)
+            recv_buffer: NonZeroU32::new(reader.read_u32::<BE>()?)
                 .ok_or_else(|| protocol_err!("recv_buffer must not be zero"))?,
         };
         Ok(this)
