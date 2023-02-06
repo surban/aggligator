@@ -91,10 +91,6 @@ enum SentReliableStatus {
     },
     /// Message was received by remote endpoint.
     Received {
-        /// Index of link used to send the packet.
-        ///
-        /// Set to `None` if link was removed.
-        link_id: Option<usize>,
         /// Size of data.
         size: usize,
     },
@@ -993,15 +989,6 @@ where
         // Queue unconfirmed packets for resending.
         self.unconfirm_link(id);
 
-        // Remove link id from sent acked packets.
-        for p in &mut self.txed_packets {
-            let mut status = p.status.borrow_mut();
-            match &mut *status {
-                SentReliableStatus::Received { link_id, .. } if *link_id == Some(id) => *link_id = None,
-                _ => (),
-            }
-        }
-
         // Send disconnect reason.
         let link = self.links[id].take().unwrap();
         link.notify_disconnected(reason);
@@ -1675,8 +1662,8 @@ where
             assert_eq!(packet.seq, rxed_seq);
 
             let mut status = packet.status.borrow_mut();
-            if let SentReliableStatus::Sent { sent, link_id, msg, .. } = &*status {
-                if *link_id == id {
+            match &*status {
+                SentReliableStatus::Sent { sent, link_id, msg, .. } if *link_id == id => {
                     let size = if let ReliableMsg::Data(data) = &msg { data.len() } else { 0 };
 
                     link.txed_unacked_data -= size;
@@ -1685,8 +1672,18 @@ where
 
                     link.roundtrip = (99 * link.roundtrip + sent.elapsed()) / 100;
 
-                    *status = SentReliableStatus::Received { link_id: Some(*link_id), size };
+                    *status = SentReliableStatus::Received { size };
                 }
+                SentReliableStatus::ResendQueued { msg } => {
+                    let size = if let ReliableMsg::Data(data) = &msg { data.len() } else { 0 };
+
+                    self.txed_unacked -= size;
+                    self.txed_unconsumable += size;
+                    self.resend_queue.retain(|packet| packet.seq != rxed_seq);
+
+                    *status = SentReliableStatus::Received { size };
+                }
+                _ => (),
             }
         }
 

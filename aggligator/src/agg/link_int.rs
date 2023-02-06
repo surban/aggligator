@@ -378,7 +378,10 @@ where
 
         match &msg {
             LinkMsg::Ack { .. } | LinkMsg::Consumed { .. } => self.txed_acks_unflushed += 1,
-            LinkMsg::Data { seq } => self.txed_unacked = Some(*seq),
+            LinkMsg::Data { seq } => match self.txed_unacked {
+                Some(txed_unacked) if txed_unacked > *seq => (),
+                _ => self.txed_unacked = Some(*seq),
+            },
             LinkMsg::Accepted
             | LinkMsg::Ping
             | LinkMsg::Pong
