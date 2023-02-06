@@ -116,6 +116,7 @@ where
     let mut controls: Vec<(Control<TX, RX, TAG>, String)> = Vec::new();
     let mut errors: HashMap<(ConnId, TAG), String> = HashMap::new();
     let mut disabled: HashSet<TAG> = HashSet::new();
+    let mut toggle_link_block: Option<usize> = None;
 
     enable_raw_mode()?;
 
@@ -286,25 +287,33 @@ where
                     queue!(stdout(), Print("disabled".dark_red())).unwrap();
                 } else if let Some(link) = link {
                     let stats = link.stats();
-                    match stats.not_working {
-                        None => queue!(
-                            stdout(),
-                            Print("connected".green()),
-                            Print(" since ".dark_grey()),
-                            Print(format_duration(stats.established.elapsed())),
-                        )
-                        .unwrap(),
-                        Some((since, reason)) => {
+                    match (link.not_working_reason(), link.not_working_since()) {
+                        (Some(reason), Some(since)) => {
                             queue!(
                                 stdout(),
-                                Print("unconfirmed".yellow()),
-                                Print(" since ".dark_grey()),
+                                Print("unconfirmed ".yellow()),
                                 Print(format_duration(since.elapsed())),
                                 Print(": ".dark_grey()),
                                 Print(reason.to_string().white())
                             )
                             .unwrap();
                         }
+                        _ => queue!(
+                            stdout(),
+                            Print("connected ".green()),
+                            Print(format_duration(stats.established.elapsed())),
+                        )
+                        .unwrap(),
+                    }
+
+                    if toggle_link_block == Some(n) {
+                        link.set_blocked(!link.is_blocked());
+                    }
+
+                    if link.is_blocked() {
+                        queue!(stdout(), Print(" blocked".dark_red())).unwrap();
+                    } else if link.is_remotely_blocked() {
+                        queue!(stdout(), Print(" remotely blocked".dark_red())).unwrap();
                     }
 
                     let hangs = link.stats().hangs;
@@ -359,26 +368,28 @@ where
         }
 
         // Usage line.
-        let toggle = if disabled_tags_tx.is_some() { "0-9 to toggle a link, " } else { "" };
         execute!(
             stdout(),
             MoveTo(0, rows - 2),
-            Print(format!("Press {toggle}q to quit.").grey()),
+            Print("Press 0-9 to toggle a link, q to quit.".grey()),
             MoveToNextLine(1)
         )
         .unwrap();
 
         // Handle user events.
+        toggle_link_block = None;
         if poll(Duration::from_millis(100))? {
             match read()? {
-                Event::Key(KeyEvent { code: KeyCode::Char(c), .. })
-                    if ('0'..='9').contains(&c) && disabled_tags_tx.is_some() =>
-                {
+                Event::Key(KeyEvent { code: KeyCode::Char(c), .. }) if ('0'..='9').contains(&c) => {
                     let n = c.to_digit(10).unwrap();
-                    if let Some(tag) = tags.and_then(|tags| tags.get(n as usize).cloned()) {
-                        if !disabled.remove(&tag) {
-                            disabled.insert(tag);
+                    if disabled_tags_tx.is_some() {
+                        if let Some(tag) = tags.and_then(|tags| tags.get(n as usize).cloned()) {
+                            if !disabled.remove(&tag) {
+                                disabled.insert(tag);
+                            }
                         }
+                    } else {
+                        toggle_link_block = Some(n as usize);
                     }
                 }
                 Event::Key(KeyEvent { code: KeyCode::Char('q'), .. }) => break,

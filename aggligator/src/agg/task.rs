@@ -639,6 +639,7 @@ where
                         LinkIntEvent::TxReady => {
                             // Link is ready to send more data.
                             let link = self.links[id].as_mut().unwrap();
+                            let link_blocked = link.blocked.load(Ordering::SeqCst);
                             if link.needs_tx_accepted {
                                 tracing::debug!("sending Accepted over link {id}");
                                 self.idle_links.retain(|&idle_id| idle_id != id);
@@ -667,11 +668,16 @@ where
                                 link.start_send_msg(LinkMsg::Ping, None);
                                 link.current_ping_sent = Some(Instant::now());
                                 link.send_ping = false;
+                            } else if link_blocked != link.blocked_sent {
+                                tracing::debug!("local block status of link {id} has become {link_blocked}");
+                                self.idle_links.retain(|&idle_id| idle_id != id);
+                                link.start_send_msg(LinkMsg::SetBlock { blocked: link_blocked }, None);
+                                link.blocked_sent = link_blocked;
                             } else if let Some(recved_seq) = link.tx_ack_queue.pop_front() {
                                 tracing::trace!("acking sequence {recved_seq} over non-idle link {id}");
                                 self.idle_links.retain(|&idle_id| idle_id != id);
                                 link.start_send_msg(LinkMsg::Ack { received: recved_seq }, None);
-                            } else if link.unconfirmed.is_none() {
+                            } else if link.unconfirmed.is_none() && !link.is_blocked() {
                                 // This is a link that is believed to be working, so we can submit
                                 // reliable messages over it. Do so by priority.
                                 if is_consume_ack_required {
@@ -771,6 +777,13 @@ where
                                 DisconnectReason::IoError(Arc::new(err))
                             };
                             self.remove_link(id, reason);
+                        }
+                        LinkIntEvent::BlockedChanged => {
+                            // Local link blocking has changed.
+                            let link = self.links[id].as_mut().unwrap();
+                            self.idle_links.retain(|&idle_id| idle_id != id);
+                            link.report_ready();
+                            link.blocked_changed_out_tx.send_replace(());
                         }
                         LinkIntEvent::Disconnect => {
                             // Local request to disconnect link.
@@ -921,7 +934,7 @@ where
                 let all_links_slow = self.links.iter().all(|link_opt| {
                     link_opt
                         .as_ref()
-                        .map(|link| link.unconfirmed.is_some() || link.roundtrip > max_ping)
+                        .map(|link| link.unconfirmed.is_some() || link.is_blocked() || link.roundtrip > max_ping)
                         .unwrap_or(true)
                 });
 
@@ -1111,7 +1124,9 @@ where
                 all_links_slow = self.links.iter().all(|link_opt| {
                     link_opt
                         .as_ref()
-                        .map(|link| link.unconfirmed.is_some() || link.roundtrip > max_ping / 2)
+                        .map(|link| {
+                            link.unconfirmed.is_some() || link.is_blocked() || link.roundtrip > max_ping / 2
+                        })
                         .unwrap_or(true)
                 });
 
@@ -1154,6 +1169,7 @@ where
                 .map(|link| {
                     !link.tx_pending
                         && link.unconfirmed.is_none()
+                        && !link.is_blocked()
                         && link.txed_unacked_data < link.txed_unacked_data_limit
                 })
                 .unwrap_or_default()
@@ -1166,6 +1182,7 @@ where
                     Some(link)
                         if !link.tx_pending
                             && link.unconfirmed.is_none()
+                            && !link.is_blocked()
                             && link.txed_unacked_data >= link.txed_unacked_data_limit
                             && link.txed_unacked_data_limit_increased.is_none()
                             && link.txed_unacked_data_limit < self.cfg.link_unacked_limit.get()
@@ -1403,7 +1420,12 @@ where
             Some(max_ping) => self.links.iter().enumerate().all(|(link_id, link_opt)| {
                 link_opt
                     .as_ref()
-                    .map(|link| link_id == id || link.unconfirmed.is_some() || link.roundtrip > max_ping)
+                    .map(|link| {
+                        link_id == id
+                            || link.unconfirmed.is_some()
+                            || link.is_blocked()
+                            || link.roundtrip > max_ping
+                    })
                     .unwrap_or(true)
             }),
             None => false,
@@ -1535,6 +1557,13 @@ where
             }
             LinkMsg::TestData { size } => {
                 tracing::trace!("link {id} received {size} bytes of test data");
+            }
+            LinkMsg::SetBlock { blocked } => {
+                tracing::debug!("remote block status of link {id} has become {blocked}");
+                link.remotely_blocked.store(blocked, Ordering::SeqCst);
+                self.idle_links.retain(|&idle_id| idle_id != id);
+                link.report_ready();
+                link.blocked_changed_out_tx.send_replace(());
             }
             LinkMsg::Goodbye => {
                 match link.disconnecting {

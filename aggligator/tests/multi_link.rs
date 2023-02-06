@@ -8,7 +8,7 @@ use std::{
     num::{NonZeroU32, NonZeroUsize},
     time::Duration,
 };
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
 
 use crate::test_data::send_and_verify;
 use aggligator::{
@@ -20,11 +20,12 @@ use aggligator::{
 mod test_channel;
 mod test_data;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct LinkDesc {
     cfg: test_channel::Cfg,
     pause: Option<(usize, Duration)>,
     fail: Option<usize>,
+    block: Option<(usize, Duration)>,
 }
 
 async fn multi_link_test(
@@ -114,6 +115,20 @@ async fn multi_link_test(
                             println!("failing link a {n}");
                             let ctrl = a_controls[n].clone();
                             tokio::spawn(async move { ctrl.disconnect().await });
+                        }
+                    }
+                    if let Some((when, dur)) = desc.block {
+                        if i == when {
+                            println!("blocking link a {n}");
+                            let link = added_links[n].clone();
+                            link.set_blocked(true);
+                            assert!(link.is_blocked());
+                            tokio::spawn(async move {
+                                sleep(dur).await;
+                                println!("unblocking link a {n}");
+                                link.set_blocked(false);
+                                assert!(!link.is_blocked());
+                            });
                         }
                     }
                 }
@@ -288,8 +303,7 @@ async fn multi_link_test(
 async fn five_x_unlimited_multi_thread() {
     let link_desc = LinkDesc {
         cfg: test_channel::Cfg { speed: 0, latency: None, ..Default::default() },
-        pause: None,
-        fail: None,
+        ..Default::default()
     };
     let link_descs: Vec<_> = iter::repeat(link_desc).take(5).collect();
     let alc_cfg = Cfg { ..Default::default() };
@@ -301,8 +315,7 @@ async fn five_x_unlimited_multi_thread() {
 async fn five_x_unlimited_current_thread() {
     let link_desc = LinkDesc {
         cfg: test_channel::Cfg { speed: 0, latency: None, ..Default::default() },
-        pause: None,
-        fail: None,
+        ..Default::default()
     };
     let link_descs: Vec<_> = iter::repeat(link_desc).take(5).collect();
     let alc_cfg = Cfg { ..Default::default() };
@@ -319,8 +332,7 @@ async fn five_x_very_high_latency() {
             buffer_size: 10_000_000,
             buffer_items: 50_000,
         },
-        pause: None,
-        fail: None,
+        ..Default::default()
     };
     let link_descs: Vec<_> = iter::repeat(link_desc).take(5).collect();
 
@@ -339,6 +351,25 @@ async fn five_x_very_high_latency() {
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread"))]
+async fn five_x_blocked() {
+    let link_desc = LinkDesc {
+        cfg: test_channel::Cfg { speed: 0, latency: None, ..Default::default() },
+        ..Default::default()
+    };
+    let mut link_descs: Vec<_> = iter::repeat(link_desc).take(5).collect();
+
+    link_descs[0].block = Some((0, Duration::from_secs(1)));
+    link_descs[1].block = Some((1000, Duration::from_secs(1)));
+    link_descs[2].block = Some((2000, Duration::from_secs(1)));
+    link_descs[3].block = Some((5000, Duration::from_secs(1)));
+    link_descs[4].block = Some((9990, Duration::from_secs(1)));
+
+    let alc_cfg = Cfg { ..Default::default() };
+
+    multi_link_test(&link_descs, alc_cfg, 16384, 10000, 10_000_000, false).await;
+}
+
+#[test_log::test(tokio::test(flavor = "multi_thread"))]
 async fn ten_x_hundert_kb_per_s() {
     let link_desc = LinkDesc {
         cfg: test_channel::Cfg {
@@ -347,8 +378,7 @@ async fn ten_x_hundert_kb_per_s() {
             buffer_size: 4096,
             ..Default::default()
         },
-        pause: None,
-        fail: None,
+        ..Default::default()
     };
     let link_descs: Vec<_> = iter::repeat(link_desc).take(10).collect();
 
@@ -366,8 +396,7 @@ async fn ten_x_paused_link() {
             buffer_size: 100_000,
             ..Default::default()
         },
-        pause: None,
-        fail: None,
+        ..Default::default()
     };
     let mut link_descs = Vec::new();
     for n in 0..10 {
@@ -388,8 +417,7 @@ async fn ten_x_failed_link() {
             buffer_size: 100_000,
             ..Default::default()
         },
-        pause: None,
-        fail: None,
+        ..Default::default()
     };
     let mut link_descs = Vec::new();
     for n in 0..10 {
@@ -420,8 +448,7 @@ async fn ten_x_all_failed_link() {
             buffer_size: 100_000,
             ..Default::default()
         },
-        pause: None,
-        fail: None,
+        ..Default::default()
     };
     let mut link_descs = Vec::new();
     for n in 0..10 {
@@ -450,8 +477,7 @@ async fn ten_x_link_timeout() {
             buffer_size: 100_000,
             ..Default::default()
         },
-        pause: None,
-        fail: None,
+        ..Default::default()
     };
     let mut link_descs = Vec::new();
     for n in 0..10 {

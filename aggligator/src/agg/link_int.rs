@@ -2,7 +2,16 @@
 
 use bytes::Bytes;
 use futures::{future, future::poll_fn, FutureExt, Sink, SinkExt, Stream, StreamExt};
-use std::{collections::VecDeque, fmt, io, mem, sync::Arc, task::Poll, time::Duration};
+use std::{
+    collections::VecDeque,
+    fmt, io, mem,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    task::Poll,
+    time::Duration,
+};
 use tokio::{
     select,
     sync::{mpsc, watch},
@@ -39,6 +48,8 @@ pub(crate) enum LinkIntEvent {
     FlushDelayPassed,
     /// Local disconnection request.
     Disconnect,
+    /// Link blocked status has changed.
+    BlockedChanged,
 }
 
 /// Link test status.
@@ -119,9 +130,27 @@ pub(crate) struct LinkInt<TX, RX, TAG> {
     disconnect_tx: mpsc::Sender<()>,
     /// Graceful disconnect request receiver.
     disconnect_rx: mpsc::Receiver<()>,
+    /// Link blocked by user.
+    pub(crate) blocked: Arc<AtomicBool>,
+    /// Blocked status last sent to remote endpoint.
+    pub(crate) blocked_sent: bool,
+    /// Link blocking changed.
+    pub(crate) blocked_changed_tx: mpsc::Sender<()>,
+    /// Link blocking changed receiver.
+    blocked_changed_rx: mpsc::Receiver<()>,
+    /// Link blocking changed notification to link handle.
+    pub(crate) blocked_changed_out_tx: watch::Sender<()>,
+    /// Link blocking changed notification to link handle.
+    blocked_changed_out_rx: watch::Receiver<()>,
+    /// Link blocked by remote endpoint.
+    pub(crate) remotely_blocked: Arc<AtomicBool>,
     /// Since when the link is unconfirmed, i.e. it has not been tested or message
     /// acknowledgement timed out.
     pub(crate) unconfirmed: Option<(Instant, NotWorkingReason)>,
+    /// Channel for publishing `unconfirmed`.
+    unconfirmed_tx: watch::Sender<Option<(Instant, NotWorkingReason)>>,
+    /// Channel for publishing `unconfirmed`.
+    unconfirmed_rx: watch::Receiver<Option<(Instant, NotWorkingReason)>>,
     /// Link test status.
     pub(crate) test: LinkTest,
     /// Last measured roundtrip duration.
@@ -184,7 +213,10 @@ where
     ) -> Self {
         let (disconnected_tx, _) = watch::channel(DisconnectReason::TaskTerminated);
         let (disconnect_tx, disconnect_rx) = mpsc::channel(1);
+        let (blocked_changed_tx, blocked_changed_rx) = mpsc::channel(2);
         let stats = LinkStatistican::new(&cfg.stats_intervals, roundtrip);
+        let (unconfirmed_tx, unconfirmed_rx) = watch::channel(None);
+        let (blocked_changed_out_tx, blocked_changed_out_rx) = watch::channel(());
 
         Self {
             tag: Arc::new(tag),
@@ -203,7 +235,16 @@ where
             stats,
             goodbye_sent: false,
             tx_polling: None,
+            blocked: Arc::new(AtomicBool::new(false)),
+            blocked_sent: false,
+            blocked_changed_tx,
+            blocked_changed_rx,
+            blocked_changed_out_tx,
+            blocked_changed_out_rx,
+            remotely_blocked: Arc::new(AtomicBool::new(false)),
             unconfirmed: None,
+            unconfirmed_tx,
+            unconfirmed_rx,
             test: LinkTest::Inactive,
             tx_flushing: false,
             tx_flushed: true,
@@ -234,6 +275,16 @@ where
         if let Some(err) = self.tx_error.take() {
             return LinkIntEvent::TxError(err);
         }
+
+        // Publish unconfirmed status.
+        self.unconfirmed_tx.send_if_modified(|m| {
+            if *m != self.unconfirmed {
+                *m = self.unconfirmed.clone();
+                true
+            } else {
+                false
+            }
+        });
 
         let flushable = !(self.tx_flushing || self.tx_flushed);
 
@@ -339,6 +390,7 @@ where
             rx_event = rx_task => rx_event,
             () = flush_req_task => LinkIntEvent::FlushDelayPassed,
             Some(()) = self.disconnect_rx.recv() => LinkIntEvent::Disconnect,
+            Some(()) = self.blocked_changed_rx.recv() => LinkIntEvent::BlockedChanged,
         }
     }
 
@@ -484,9 +536,13 @@ where
         self.txed_unacked_data_limit_increased_consecutively = 0;
     }
 
+    /// Whether link is blocked locally or remotely.
+    pub(crate) fn is_blocked(&self) -> bool {
+        self.blocked.load(Ordering::SeqCst) || self.remotely_blocked.load(Ordering::SeqCst)
+    }
+
     /// Publishes link statistics.
     pub(crate) fn publish_stats(&mut self) {
-        self.stats.current.not_working = self.unconfirmed.clone();
         self.stats.current.sent_unacked = self.txed_unacked_data as _;
         self.stats.current.unacked_limit = self.txed_unacked_data_limit as _;
         self.stats.current.roundtrip = self.roundtrip;
@@ -507,6 +563,11 @@ impl<TX, RX, TAG> From<&LinkInt<TX, RX, TAG>> for Link<TAG> {
             disconnect_tx: link_int.disconnect_tx.clone(),
             stats_rx: link_int.stats.subscribe(),
             remote_user_data: link_int.remote_user_data.clone(),
+            blocked: link_int.blocked.clone(),
+            blocked_changed_tx: link_int.blocked_changed_tx.clone(),
+            blocked_changed_rx: link_int.blocked_changed_out_rx.clone(),
+            not_working_rx: link_int.unconfirmed_rx.clone(),
+            remotely_blocked: link_int.remotely_blocked.clone(),
         }
     }
 }
@@ -528,7 +589,6 @@ impl LinkStatistican {
 
         let current = LinkStats {
             established: Instant::now(),
-            not_working: Some((Instant::now(), NotWorkingReason::New)),
             total_sent: 0,
             total_recved: 0,
             sent_unacked: 0,

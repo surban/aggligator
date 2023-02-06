@@ -146,6 +146,11 @@ pub(crate) enum LinkMsg {
         /// Size of data.
         size: usize,
     },
+    /// Set blocking of link.
+    SetBlock {
+        /// Whether the link is blocked.
+        blocked: bool,
+    },
     /// No more message will be send, but messages will be received
     /// until `Goodbye` is received.
     Goodbye,
@@ -153,7 +158,7 @@ pub(crate) enum LinkMsg {
 
 impl LinkMsg {
     /// Protocol version.
-    pub const PROTOCOL_VERSION: u8 = 3;
+    pub const PROTOCOL_VERSION: u8 = 4;
 
     /// Magic identifier.
     const MAGIC: &'static [u8; 5] = b"LIAG\0";
@@ -171,7 +176,8 @@ impl LinkMsg {
     const MSG_RECEIVE_CLOSE: u8 = 11;
     const MSG_RECEIVE_FINISH: u8 = 12;
     const MSG_TEST_DATA: u8 = 13;
-    const MSG_GOODBYE: u8 = 14;
+    const MSG_SET_BLOCK: u8 = 14;
+    const MSG_GOODBYE: u8 = 15;
 
     fn write(&self, mut writer: impl io::Write) -> Result<(), io::Error> {
         match self {
@@ -261,6 +267,10 @@ impl LinkMsg {
                     writer.write_u8(n as u8)?;
                 }
             }
+            LinkMsg::SetBlock { blocked } => {
+                writer.write_u8(Self::MSG_SET_BLOCK)?;
+                writer.write_u8(*blocked as u8)?;
+            }
             LinkMsg::Goodbye => {
                 writer.write_u8(Self::MSG_GOODBYE)?;
             }
@@ -348,6 +358,7 @@ impl LinkMsg {
             Self::MSG_RECEIVE_CLOSE => Self::ReceiveClose { seq: reader.read_u32::<BE>()?.into() },
             Self::MSG_RECEIVE_FINISH => Self::ReceiveFinish { seq: reader.read_u32::<BE>()?.into() },
             Self::MSG_TEST_DATA => Self::TestData { size: reader.bytes().count() },
+            Self::MSG_SET_BLOCK => Self::SetBlock { blocked: reader.read_u8()? != 0 },
             Self::MSG_GOODBYE => Self::Goodbye,
             other => return Err(protocol_err!("invalid message id {other}")),
         };

@@ -436,6 +436,11 @@ pub struct Link<TAG> {
     pub(crate) disconnect_tx: mpsc::Sender<()>,
     pub(crate) stats_rx: watch::Receiver<LinkStats>,
     pub(crate) remote_user_data: Arc<Vec<u8>>,
+    pub(crate) blocked: Arc<AtomicBool>,
+    pub(crate) blocked_changed_tx: mpsc::Sender<()>,
+    pub(crate) blocked_changed_rx: watch::Receiver<()>,
+    pub(crate) remotely_blocked: Arc<AtomicBool>,
+    pub(crate) not_working_rx: watch::Receiver<Option<(Instant, NotWorkingReason)>>,
 }
 
 impl<TAG> Clone for Link<TAG> {
@@ -450,6 +455,11 @@ impl<TAG> Clone for Link<TAG> {
             disconnect_tx: self.disconnect_tx.clone(),
             stats_rx: self.stats_rx.clone(),
             remote_user_data: self.remote_user_data.clone(),
+            blocked: self.blocked.clone(),
+            blocked_changed_tx: self.blocked_changed_tx.clone(),
+            blocked_changed_rx: self.blocked_changed_rx.clone(),
+            remotely_blocked: self.remotely_blocked.clone(),
+            not_working_rx: self.not_working_rx.clone(),
         }
     }
 }
@@ -564,6 +574,53 @@ impl<TAG> Link<TAG> {
         let _ = self.disconnect_tx.try_send(());
     }
 
+    /// Returns whether the link is blocked locally.
+    pub fn is_blocked(&self) -> bool {
+        self.blocked.load(Ordering::SeqCst)
+    }
+
+    /// Blocks or unblocks the link.
+    ///
+    /// If the link is blocked it stays connected but not data will be exchanged over it.
+    pub fn set_blocked(&self, blocked: bool) {
+        self.blocked.store(blocked, Ordering::SeqCst);
+        let _ = self.blocked_changed_tx.try_send(());
+    }
+
+    /// Returns whether the link is blocked by the remote endpoint.
+    pub fn is_remotely_blocked(&self) -> bool {
+        self.remotely_blocked.load(Ordering::SeqCst)
+    }
+
+    /// Waits until the blocked status (local or remotely) changes.
+    pub async fn blocked_updated(&mut self) {
+        let _ = self.blocked_changed_rx.changed().await;
+    }
+
+    /// Returns whether the link is working.
+    pub fn is_working(&self) -> bool {
+        self.not_working_reason().is_none()
+    }
+
+    /// Reason why the link is not working.
+    ///
+    /// `None` if link is working.
+    pub fn not_working_reason(&self) -> Option<NotWorkingReason> {
+        self.not_working_rx.borrow().as_ref().map(|(_since, reason)| reason.clone())
+    }
+
+    /// Since when the link is not working.
+    ///
+    /// `None` if link is working.
+    pub fn not_working_since(&self) -> Option<Instant> {
+        self.not_working_rx.borrow().as_ref().map(|(since, _reason)| *since)
+    }
+
+    /// Waits until the working status of the link changed.
+    pub async fn working_updated(&mut self) {
+        let _ = self.not_working_rx.changed().await;
+    }
+
     /// The current link statistics.
     pub fn stats(&self) -> LinkStats {
         self.stats_rx.borrow().clone()
@@ -613,8 +670,6 @@ impl LinkIntervalStats {
 pub struct LinkStats {
     /// Time when link was established.
     pub established: Instant,
-    /// Since when and reason why the link is not working.
-    pub not_working: Option<(Instant, NotWorkingReason)>,
     /// Total data sent in bytes.
     pub total_sent: u64,
     /// Total data received in bytes.
@@ -629,13 +684,6 @@ pub struct LinkStats {
     pub hangs: usize,
     /// Statistics over time intervals specified in the [configuration](crate::cfg::Cfg::stats_intervals).
     pub time_stats: Vec<LinkIntervalStats>,
-}
-
-impl LinkStats {
-    /// Returns whether the link is working properly and being used.
-    pub fn is_working(&self) -> bool {
-        self.not_working.is_none()
-    }
 }
 
 /// Reason why a link is not working.
