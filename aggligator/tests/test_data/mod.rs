@@ -3,7 +3,7 @@
 
 use byteorder::{ReadBytesExt, WriteBytesExt, BE};
 use bytes::{Buf, Bytes};
-use crc::{Crc, CRC_32_CKSUM};
+use crc32fast::hash;
 use futures::join;
 use rand::prelude::*;
 use rand_xoshiro::SplitMix64;
@@ -14,8 +14,6 @@ use std::{
 use tokio::time::Instant;
 
 use aggligator::alc::{Receiver, RecvError, SendError, Sender};
-
-const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_CKSUM);
 
 /// Test data generator.
 pub struct Generator {
@@ -53,7 +51,7 @@ impl Generator {
             packet.write_u8(rng.gen()).unwrap();
         }
 
-        packet.write_u32::<BE>(CRC.checksum(&packet)).unwrap();
+        packet.write_u32::<BE>(hash(&packet)).unwrap();
 
         self.total += packet.len();
         Bytes::from(packet)
@@ -98,7 +96,7 @@ impl Verifier {
         reader.consume(packet.len() - 8);
 
         let cksum = reader.read_u32::<BE>()?;
-        let cksum2 = CRC.checksum(&packet[..packet.len() - 4]);
+        let cksum2 = hash(&packet[..packet.len() - 4]);
         if cksum != cksum2 {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "mismatched checksum"));
         }

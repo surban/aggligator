@@ -34,7 +34,6 @@ serde_json = { version = "1", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1.19", features = ["rt", "rt-multi-thread"] }
-crc = "3"
 test-log = { version = "0.2", default-features = false, features = ["trace"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = [
     "env-filter",
