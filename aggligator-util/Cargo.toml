@@ -1,6 +1,6 @@
 [package]
 name = "aggligator-util"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 rust-version = "1.65"
 authors = ["Sebastian Urban <surban@surban.net>"]
@@ -38,7 +38,7 @@ monitor = ["crossterm"]
 dump = ["aggligator/dump"]
 
 [dependencies]
-aggligator = { version = "0.4.0", path = "../aggligator" }
+aggligator = { version = "0.5.0", path = "../aggligator" }
 
 futures = "0.3"
 tokio = { version = "1.21", features = ["rt", "rt-multi-thread"] }
