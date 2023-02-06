@@ -5,6 +5,13 @@ All notable changes to aggligator utilities will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.0 - 2023-02-06
+### Added
+- link monitor: display link unconfirmed reason
+- link monitor: display link connected time
+### Changed
+- use Aggligator 0.4.0
+
 ## 0.3.3 - 2023-02-05
 ### Added
 - command line option `--individual-interfaces` for servers to listen on each
