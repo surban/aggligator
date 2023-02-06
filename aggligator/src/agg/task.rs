@@ -29,7 +29,7 @@ use crate::{
     agg::link_int::{DisconnectInitiator, LinkInt, LinkIntEvent, LinkTest},
     alc::{RecvError, SendError},
     cfg::{Cfg, ExchangedCfg, LinkPing},
-    control::{Direction, DisconnectReason, Link, Stats},
+    control::{Direction, DisconnectReason, Link, NotWorkingReason, Stats},
     id::{ConnId, OwnedConnId},
     msg::{LinkMsg, RefusedReason, ReliableMsg},
     peekable_mpsc::{PeekableReceiver, RecvIfError},
@@ -443,8 +443,10 @@ where
                 self.earliest_link_specific_timeout(self.cfg.link_ping_timeout, |link| link.current_ping_sent);
 
             // Timeout for removing an unconfirmed link.
-            let next_unconfirmed_timeout =
-                self.earliest_link_specific_timeout(self.cfg.link_non_working_timeout, |link| link.unconfirmed);
+            let next_unconfirmed_timeout = self
+                .earliest_link_specific_timeout(self.cfg.link_non_working_timeout, |link| {
+                    link.unconfirmed.as_ref().map(|(since, _)| *since)
+                });
 
             // Timeout for removing a link that takes too long to send data.
             let next_send_timeout =
@@ -828,7 +830,7 @@ where
                 }
                 TaskEvent::ConfirmTimedOut(id) => {
                     tracing::warn!("acknowledgement timeout on link {id}");
-                    self.unconfirm_link(id);
+                    self.unconfirm_link(id, NotWorkingReason::AckTimeout);
                 }
                 TaskEvent::Resend(packet) => {
                     let id = sendable_idle_link_id.unwrap();
@@ -941,7 +943,7 @@ where
                         .collect();
 
                     for id in slow {
-                        self.unconfirm_link(id);
+                        self.unconfirm_link(id, NotWorkingReason::MaxPingExceeded);
                     }
                 }
             }
@@ -966,7 +968,7 @@ where
     /// Adds a newly established link and returns its id.
     fn add_link(&mut self, mut link: LinkInt<TX, RX, TAG>) -> usize {
         link.report_ready();
-        link.unconfirmed = Some(Instant::now());
+        link.unconfirmed = Some((Instant::now(), NotWorkingReason::New));
 
         for (id, link_opt) in self.links.iter_mut().enumerate() {
             if link_opt.is_none() {
@@ -987,7 +989,7 @@ where
         tracing::debug!("removing link {id} for reason {reason:?}");
 
         // Queue unconfirmed packets for resending.
-        self.unconfirm_link(id);
+        self.unconfirm_link(id, NotWorkingReason::Disconnecting);
 
         // Send disconnect reason.
         let link = self.links[id].take().unwrap();
@@ -1351,10 +1353,10 @@ where
     }
 
     /// Unconfirms a link.
-    fn unconfirm_link(&mut self, id: usize) {
+    fn unconfirm_link(&mut self, id: usize, reason: NotWorkingReason) {
         // Mark link as unconfirmed.
         let link = self.links[id].as_mut().unwrap();
-        link.unconfirmed = Some(Instant::now());
+        link.unconfirmed = Some((Instant::now(), reason));
         self.idle_links.retain(|&idle_id| idle_id != id);
         self.unflushed_links.remove(&id);
 
@@ -1467,6 +1469,10 @@ where
                             );
                             let when = Instant::now();
                             link.test = LinkTest::Failed(when);
+                            match &mut link.unconfirmed {
+                                Some((_since, reason)) => *reason = NotWorkingReason::TestFailed,
+                                None => link.unconfirmed = Some((Instant::now(), NotWorkingReason::TestFailed)),
+                            }
                             Some(when + self.cfg.link_retest_interval)
                         }
                     } else {

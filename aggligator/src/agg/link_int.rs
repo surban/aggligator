@@ -11,7 +11,7 @@ use tokio::{
 
 use crate::{
     cfg::{Cfg, ExchangedCfg},
-    control::{Direction, DisconnectReason, Link, LinkIntervalStats, LinkStats},
+    control::{Direction, DisconnectReason, Link, LinkIntervalStats, LinkStats, NotWorkingReason},
     id::{ConnId, LinkId},
     msg::LinkMsg,
     seq::Seq,
@@ -121,7 +121,7 @@ pub(crate) struct LinkInt<TX, RX, TAG> {
     disconnect_rx: mpsc::Receiver<()>,
     /// Since when the link is unconfirmed, i.e. it has not been tested or message
     /// acknowledgement timed out.
-    pub(crate) unconfirmed: Option<Instant>,
+    pub(crate) unconfirmed: Option<(Instant, NotWorkingReason)>,
     /// Link test status.
     pub(crate) test: LinkTest,
     /// Last measured roundtrip duration.
@@ -486,7 +486,7 @@ where
 
     /// Publishes link statistics.
     pub(crate) fn publish_stats(&mut self) {
-        self.stats.current.working = self.unconfirmed.is_none();
+        self.stats.current.not_working = self.unconfirmed.clone();
         self.stats.current.sent_unacked = self.txed_unacked_data as _;
         self.stats.current.unacked_limit = self.txed_unacked_data_limit as _;
         self.stats.current.roundtrip = self.roundtrip;
@@ -528,7 +528,7 @@ impl LinkStatistican {
 
         let current = LinkStats {
             established: Instant::now(),
-            working: false,
+            not_working: Some((Instant::now(), NotWorkingReason::New)),
             total_sent: 0,
             total_recved: 0,
             sent_unacked: 0,

@@ -613,8 +613,8 @@ impl LinkIntervalStats {
 pub struct LinkStats {
     /// Time when link was established.
     pub established: Instant,
-    /// Link is working properly and being used.
-    pub working: bool,
+    /// Since when and reason why the link is not working.
+    pub not_working: Option<(Instant, NotWorkingReason)>,
     /// Total data sent in bytes.
     pub total_sent: u64,
     /// Total data received in bytes.
@@ -625,10 +625,52 @@ pub struct LinkStats {
     pub unacked_limit: u64,
     /// Round trip duration, i.e. ping.
     pub roundtrip: Duration,
-    /// Number of times link exceeded acknowledgement timeout.
+    /// Number of times link exceeded timeout.
     pub hangs: usize,
     /// Statistics over time intervals specified in the [configuration](crate::cfg::Cfg::stats_intervals).
     pub time_stats: Vec<LinkIntervalStats>,
+}
+
+impl LinkStats {
+    /// Returns whether the link is working properly and being used.
+    pub fn is_working(&self) -> bool {
+        self.not_working.is_none()
+    }
+}
+
+/// Reason why a link is not working.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum NotWorkingReason {
+    /// Link is new and yet to be tested.
+    New,
+    /// Link is being disconnected.
+    Disconnecting,
+    /// Acknowledgement timeout.
+    AckTimeout,
+    /// Maximum ping was exceeded.
+    MaxPingExceeded,
+    /// The link test failed and will be retried.
+    TestFailed,
+}
+
+impl fmt::Display for NotWorkingReason {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::New => write!(f, "new"),
+            Self::Disconnecting => write!(f, "disconnecting"),
+            Self::AckTimeout => write!(f, "ack timeout"),
+            Self::MaxPingExceeded => write!(f, "max ping exceeded"),
+            Self::TestFailed => write!(f, "test failed"),
+        }
+    }
+}
+
+impl Error for NotWorkingReason {}
+
+impl From<NotWorkingReason> for std::io::Error {
+    fn from(err: NotWorkingReason) -> Self {
+        io::Error::new(io::ErrorKind::TimedOut, err)
+    }
 }
 
 /// The reason for the disconnection of a link.
@@ -676,8 +718,8 @@ impl fmt::Display for DisconnectReason {
 impl Error for DisconnectReason {}
 
 impl From<DisconnectReason> for std::io::Error {
-    fn from(value: DisconnectReason) -> Self {
-        io::Error::new(io::ErrorKind::ConnectionReset, value)
+    fn from(err: DisconnectReason) -> Self {
+        io::Error::new(io::ErrorKind::ConnectionReset, err)
     }
 }
 
