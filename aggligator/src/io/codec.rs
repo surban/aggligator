@@ -1,12 +1,9 @@
 //! Integrity codec.
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use crc::{Crc, CRC_32_BZIP2};
+use crc32fast::hash;
 use std::{fmt, io, mem::size_of};
 use tokio_util::codec::{Decoder, Encoder};
-
-/// CRC calculator.
-const CRC32: Crc<u32> = Crc::<u32>::new(&CRC_32_BZIP2);
 
 /// A packet decoding error.
 #[derive(Debug, Clone)]
@@ -59,7 +56,7 @@ struct Header {
 }
 
 impl IntegrityCodec {
-    const HEAD_LEN: usize = size_of::<u32>() + size_of::<u32>() + size_of::<u16>();
+    const HEADER_LEN: usize = size_of::<u32>() + size_of::<u16>() + size_of::<u32>();
 
     /// Creates a new `IntegrityCodec` with the default configuration values.
     pub fn new() -> Self {
@@ -83,7 +80,7 @@ impl IntegrityCodec {
     }
 
     fn decode_header(&mut self, src: &mut BytesMut) -> io::Result<Option<Header>> {
-        if src.len() < Self::HEAD_LEN {
+        if src.len() < Self::HEADER_LEN {
             return Ok(None);
         }
 
@@ -111,7 +108,7 @@ impl IntegrityCodec {
 
         let data = src.split_to(header.length as usize);
 
-        if header.checksum != CRC32.checksum(&data) {
+        if header.checksum != hash(&data) {
             return Err(io::Error::new(io::ErrorKind::InvalidData, IntegrityError::DataCorrupted));
         }
 
@@ -138,7 +135,7 @@ impl Decoder for IntegrityCodec {
         match self.decode_data(header, src)? {
             Some(data) => {
                 self.state = DecodeState::Header;
-                src.reserve(Self::HEAD_LEN.saturating_sub(src.len()));
+                src.reserve(Self::HEADER_LEN.saturating_sub(src.len()));
 
                 Ok(Some(data))
             }
@@ -150,19 +147,19 @@ impl Decoder for IntegrityCodec {
 impl Encoder<Bytes> for IntegrityCodec {
     type Error = io::Error;
 
-    fn encode(&mut self, data: Bytes, dst: &mut BytesMut) -> Result<(), io::Error> {
+    fn encode(&mut self, data: Bytes, dst: &mut BytesMut) -> io::Result<()> {
         if data.len() > self.max_frame_len as usize {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, IntegrityError::PacketTooBig));
         }
 
-        dst.reserve(Self::HEAD_LEN + data.len());
+        dst.reserve(Self::HEADER_LEN + data.len());
 
         dst.put_u32(data.len() as u32);
 
         dst.put_u16(self.encode_seq);
         self.encode_seq = self.encode_seq.wrapping_add(1);
 
-        dst.put_u32(CRC32.checksum(&data));
+        dst.put_u32(hash(&data));
 
         dst.extend_from_slice(&data[..]);
 
