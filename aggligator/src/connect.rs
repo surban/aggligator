@@ -570,7 +570,7 @@ where
 {
     /// Adds an incoming, stream-based link.
     ///
-    /// The stream-based link is wrapped in the [length-delimited codec](tokio_util::codec::length_delimited)
+    /// The stream-based link is wrapped in the [integrity codec](crate::io::IntegrityCodec)
     /// to make it packet-based.
     ///
     /// If the incoming link belongs to an existing connection, it is added to that connection.

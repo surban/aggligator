@@ -381,7 +381,7 @@ where
 {
     /// Adds a new outgoing, stream-based link to the connection.
     ///
-    /// The stream-based link is wrapped in the [length-delimited codec](tokio_util::codec::length_delimited)
+    /// The stream-based link is wrapped in the [integrity codec](crate::io::IntegrityCodec)
     /// to make it packet-based.
     ///
     /// The `tag` consists of user-defined data that will be attached to the link.
