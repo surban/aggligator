@@ -37,7 +37,7 @@ use aggligator_util::{
 
 #[cfg(feature = "rfcomm")]
 use aggligator_util::transport::rfcomm::{RfcommAcceptor, RfcommConnector};
-#[cfg(feature = "rfcomm_profile")]
+#[cfg(feature = "rfcomm-profile")]
 use aggligator_util::transport::rfcomm_profile::{RfcommProfileAcceptor, RfcommProfileConnector};
 
 const TCP_PORT: u16 = 5700;
@@ -45,7 +45,7 @@ const DUMP_BUFFER: usize = 8192;
 
 #[cfg(feature = "rfcomm")]
 const RFCOMM_CHANNEL: u8 = 20;
-#[cfg(feature = "rfcomm_profile")]
+#[cfg(feature = "rfcomm-profile")]
 const RFCOMM_UUID: bluer::Uuid = bluer::Uuid::from_u128(0x7f95058c_c00e_44a9_9003_2ce90d60e2e7);
 
 static TLS_CERT_PEM: &[u8] = include_bytes!("agg-speed-cert.pem");
@@ -184,7 +184,7 @@ pub struct ClientCli {
     #[arg(long, value_parser=parse_rfcomm)]
     rfcomm: Option<bluer::rfcomm::SocketAddr>,
     /// Bluetooth RFCOMM profile server address.
-    #[cfg(feature = "rfcomm_profile")]
+    #[cfg(feature = "rfcomm-profile")]
     #[arg(long)]
     rfcomm_profile: Option<bluer::Address>,
 }
@@ -237,7 +237,7 @@ impl ClientCli {
             connector.add(rfcomm_connector);
         }
 
-        #[cfg(feature = "rfcomm_profile")]
+        #[cfg(feature = "rfcomm-profile")]
         if let Some(addr) = self.rfcomm_profile {
             let rfcomm_profile_connector = RfcommProfileConnector::new(addr, RFCOMM_UUID)
                 .await
@@ -442,7 +442,7 @@ impl ServerCli {
             Err(err) => eprintln!("Cannot listen on RFCOMM channel {}: {err}", self.rfcomm),
         }
 
-        #[cfg(feature = "rfcomm_profile")]
+        #[cfg(feature = "rfcomm-profile")]
         match RfcommProfileAcceptor::new(RFCOMM_UUID).await {
             Ok(rfcomm_profile) => {
                 acceptor.add(rfcomm_profile);

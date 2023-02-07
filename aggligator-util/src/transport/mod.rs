@@ -249,6 +249,6 @@ pub mod tcp;
 #[cfg_attr(docsrs, doc(cfg(feature = "rfcomm")))]
 pub mod rfcomm;
 
-#[cfg(feature = "rfcomm_profile")]
-#[cfg_attr(docsrs, doc(cfg(feature = "rfcomm_profile")))]
+#[cfg(feature = "rfcomm-profile")]
+#[cfg_attr(docsrs, doc(cfg(feature = "rfcomm-profile")))]
 pub mod rfcomm_profile;

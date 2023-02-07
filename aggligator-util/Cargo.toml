@@ -16,11 +16,11 @@ default = ["cli", "tls", "tcp"]
 tcp = ["tokio/net"]
 tls = ["rustls", "tokio-rustls"]
 rfcomm = ["bluer/rfcomm"]
-rfcomm_profile = ["bluer/rfcomm", "bluer/bluetoothd"]
+rfcomm-profile = ["bluer/rfcomm", "bluer/bluetoothd"]
 cli = [
     "tcp",
     "tls",
-    "speed-test",
+    "speed",
     "monitor",
     "dump",
     "clap",
@@ -33,7 +33,7 @@ cli = [
     "rustls/dangerous_configuration",
 ]
 raw-speed-cli = ["cli"]
-speed-test = ["rand", "rand_xoshiro"]
+speed = ["rand", "rand_xoshiro"]
 monitor = ["crossterm"]
 dump = ["aggligator/dump"]
 

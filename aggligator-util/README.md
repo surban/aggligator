@@ -28,9 +28,9 @@ The following crate features are available:
 
   * `tcp` - TCP transport,
   * `rfcomm` - Bluetooth RFCOMM transport (Linux-only),
-  * `rfcomm_profile` - Bluetooth RFCOMM transport using profiles for connecting (Linux-only),
+  * `rfcomm-profile` - Bluetooth RFCOMM transport using profiles for connecting (Linux-only),
   * `monitor` — enables the text-based, interactive connection and link monitor,
-  * `speed-test` — enables speed test functions,
+  * `speed` — enables speed test functions,
   * `dump` — enables saving of analysis data to disk.
 
 ## Installing the command line tools

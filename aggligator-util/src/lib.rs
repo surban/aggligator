@@ -55,7 +55,7 @@ pub mod monitor;
 #[cfg(feature = "tcp")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tcp")))]
 pub mod net;
-#[cfg(feature = "speed-test")]
-#[cfg_attr(docsrs, doc(cfg(feature = "speed-test")))]
+#[cfg(feature = "speed")]
+#[cfg_attr(docsrs, doc(cfg(feature = "speed")))]
 pub mod speed;
 pub mod transport;
