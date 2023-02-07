@@ -79,6 +79,8 @@ pub struct Cfg {
     pub termination_timeout: Duration,
     /// Queue length for establishing connections.
     pub connect_queue: NonZeroUsize,
+    /// Disconnect the aggregated connection when a server id mismatch occurs while connecting a link.
+    pub disconnect_on_server_id_mismatch: bool,
     /// Link speed statistics interval durations.
     pub stats_intervals: Vec<Duration>,
     #[doc(hidden)]
@@ -108,6 +110,7 @@ impl Default for Cfg {
             no_link_timeout: Duration::from_secs(90),
             termination_timeout: Duration::from_secs(300),
             connect_queue: NonZeroUsize::new(32).unwrap(),
+            disconnect_on_server_id_mismatch: true,
             stats_intervals: vec![
                 Duration::from_millis(100),
                 Duration::from_secs(1),

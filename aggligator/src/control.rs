@@ -36,6 +36,8 @@ pub enum AddLinkError {
     Io(io::Error),
     /// The link is connected to a different server than the other links of
     /// this connection.
+    ///
+    /// This will occur when the server is restarted while a client is connected.
     ServerIdMismatch {
         /// Expected server id.
         expected: ServerId,
@@ -140,6 +142,7 @@ pub struct Control<TX, RX, TAG> {
     pub(crate) link_tx: mpsc::Sender<LinkInt<TX, RX, TAG>>,
     pub(crate) links_rx: watch::Receiver<Vec<Link<TAG>>>,
     pub(crate) stats_rx: watch::Receiver<Stats>,
+    pub(crate) server_changed_tx: mpsc::Sender<()>,
 }
 
 impl<TX, RX, TAG> Clone for Control<TX, RX, TAG> {
@@ -154,6 +157,7 @@ impl<TX, RX, TAG> Clone for Control<TX, RX, TAG> {
             link_tx: self.link_tx.clone(),
             links_rx: self.links_rx.clone(),
             stats_rx: self.stats_rx.clone(),
+            server_changed_tx: self.server_changed_tx.clone(),
         }
     }
 }
@@ -311,6 +315,9 @@ where
                 let mut remote_server_id = self.remote_server_id.lock().await;
                 match &*remote_server_id {
                     Some(remote_server_id) if *remote_server_id != server_id => {
+                        if self.cfg.disconnect_on_server_id_mismatch {
+                            let _ = self.server_changed_tx.try_send(());
+                        }
                         return Err(AddLinkError::ServerIdMismatch {
                             expected: *remote_server_id,
                             present: server_id,
@@ -742,6 +749,10 @@ pub enum DisconnectReason {
     ConnectionClosed,
     /// The link was rejected by the local link filter.
     LinkFilter,
+    /// A link connected to another server than the other links.
+    ///
+    /// This will occur when the server is restarted while a client is connected.
+    ServerIdMismatch,
     /// The connection task was terminated.
     TaskTerminated,
 }
@@ -758,6 +769,7 @@ impl fmt::Display for DisconnectReason {
             Self::RemotelyRequested => write!(f, "remotely requested"),
             Self::ConnectionClosed => write!(f, "connection closed"),
             Self::LinkFilter => write!(f, "link filter"),
+            Self::ServerIdMismatch => write!(f, "link connected to another server"),
             Self::TaskTerminated => write!(f, "task terminated"),
         }
     }

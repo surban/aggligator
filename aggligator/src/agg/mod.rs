@@ -52,6 +52,7 @@ where
         let (link_tx, link_rx) = link_tx_rx.unwrap_or_else(|| mpsc::channel(cfg.connect_queue.get()));
         let (connected_tx, connected_rx) = oneshot::channel();
         let (stats_tx, stats_rx) = watch::channel(Default::default());
+        let (server_changed_tx, server_changed_rx) = mpsc::channel(1);
         let remote_cfg = links.first().as_ref().map(|link| link.remote_cfg());
         let connected = Arc::new(AtomicBool::new(!links.is_empty()));
 
@@ -70,6 +71,7 @@ where
                 read_error_tx,
                 write_error_tx,
                 stats_tx,
+                server_changed_rx,
                 links,
             ),
             channel: Channel::new(
@@ -92,6 +94,7 @@ where
                 links_rx,
                 connected,
                 stats_rx,
+                server_changed_tx,
             },
             connected_rx,
         }

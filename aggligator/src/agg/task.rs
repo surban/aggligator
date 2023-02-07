@@ -152,6 +152,8 @@ enum TaskEvent<TX, RX, TAG> {
     PublishLinkStats,
     /// A refused link task completed.
     RefusedLinkTask,
+    /// The server id changed.
+    ServerChanged,
 }
 
 /// Link filter function type.
@@ -255,6 +257,8 @@ pub struct Task<TX, RX, TAG> {
     init_links: VecDeque<LinkInt<TX, RX, TAG>>,
     /// Tasks handling refused links.
     refused_links_tasks: FuturesUnordered<BoxFuture<'static, ()>>,
+    /// Server changed notification.
+    server_changed_rx: mpsc::Receiver<()>,
     /// Channel for sending analysis data.
     #[cfg(feature = "dump")]
     dump_tx: Option<mpsc::Sender<super::dump::ConnDump>>,
@@ -279,7 +283,7 @@ where
         connected_tx: oneshot::Sender<Arc<ExchangedCfg>>, read_tx: mpsc::Sender<Bytes>,
         read_closed_rx: mpsc::Receiver<()>, write_rx: mpsc::Receiver<SendReq>,
         read_error_tx: watch::Sender<Option<RecvError>>, write_error_tx: watch::Sender<SendError>,
-        stats_tx: watch::Sender<Stats>, links: Vec<LinkInt<TX, RX, TAG>>,
+        stats_tx: watch::Sender<Stats>, server_changed_rx: mpsc::Receiver<()>, links: Vec<LinkInt<TX, RX, TAG>>,
     ) -> Self {
         Self {
             cfg,
@@ -326,6 +330,7 @@ where
             link_filter: Box::new(|_, _| async { true }.boxed()),
             init_links: links.into(),
             refused_links_tasks: FuturesUnordered::new(),
+            server_changed_rx,
             #[cfg(feature = "dump")]
             dump_tx: None,
         }
@@ -593,6 +598,7 @@ where
                 Some(_) = stat_timers.next() => TaskEvent::PublishLinkStats,
                 Some(()) = self.refused_links_tasks.next(), if !self.refused_links_tasks.is_empty()
                     => TaskEvent::RefusedLinkTask,
+                Some(()) = self.server_changed_rx.recv() => TaskEvent::ServerChanged,
             };
 
             // Handle event.
@@ -927,6 +933,13 @@ where
                     }
                 }
                 TaskEvent::RefusedLinkTask => (),
+                TaskEvent::ServerChanged => {
+                    tracing::warn!("disconnecting because server id changed");
+                    read_term = Some(RecvError::AllLinksFailed);
+                    write_term = SendError::AllLinksFailed;
+                    link_term = DisconnectReason::ServerIdMismatch;
+                    break;
+                }
             }
 
             // Check for link ping exceeding configured limit.
