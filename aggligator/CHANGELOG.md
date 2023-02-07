@@ -5,13 +5,17 @@ All notable changes to Aggligator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.6.0 - 2023-02-07
+### Added
+- configuration option to disconnect on server id mismatch
+
 ## 0.5.1 - 2023-02-07
 ### Changed
 - reduce debug logging
 
 ## 0.5.0 - 2023-02-06
 ### Added
-- link blocking 
+- link blocking
 ### Changed
 - protocol version 4
 
@@ -62,7 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## 0.2.0
 ### Added
 - encrypt connection id using a shared secret exchanged using Diffie-Helmann;
-  this hinders an eavesdropper to take over a connection by spoofing the 
+  this hinders an eavesdropper to take over a connection by spoofing the
   connection id
 ### Changed
 - increse buffer sizes and adjust timeouts for better performance over high latency
