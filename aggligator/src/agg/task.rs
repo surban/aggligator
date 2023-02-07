@@ -646,7 +646,7 @@ where
                                 link.start_send_msg(LinkMsg::Accepted, None);
                                 link.needs_tx_accepted = false;
                             } else if link.send_pong {
-                                tracing::debug!("sending Pong over link {id}");
+                                tracing::trace!("sending Pong over link {id}");
                                 self.idle_links.retain(|&idle_id| idle_id != id);
                                 link.start_send_msg(LinkMsg::Pong, None);
                                 link.send_pong = false;
@@ -663,7 +663,7 @@ where
                                     self.remove_link(id, DisconnectReason::RemotelyRequested);
                                 }
                             } else if link.send_ping {
-                                tracing::debug!("sending Ping over link {id}");
+                                tracing::trace!("sending Ping over link {id}");
                                 self.idle_links.retain(|&idle_id| idle_id != id);
                                 link.start_send_msg(LinkMsg::Ping, None);
                                 link.current_ping_sent = Some(Instant::now());
@@ -894,7 +894,7 @@ where
                     }
                 }
                 TaskEvent::PingLink(id) => {
-                    tracing::debug!("requesting ping of link {id}");
+                    tracing::trace!("requesting ping of link {id}");
                     let link = self.links[id].as_mut().unwrap();
                     link.send_ping = true;
                     self.flush_link(id);
@@ -1434,7 +1434,7 @@ where
         if let Some(link) = self.links[id].as_mut() {
             match link.test {
                 LinkTest::Failed(when) if when.elapsed() >= self.cfg.link_retest_interval => {
-                    tracing::debug!("link {id} is ready for retry of test");
+                    tracing::trace!("link {id} is ready for retry of test");
                     link.test = LinkTest::Inactive;
                 }
                 _ => (),
@@ -1529,14 +1529,14 @@ where
         match msg {
             LinkMsg::Ping => {
                 // Respond with pong on same link.
-                tracing::debug!("ping received, requesting sending resposne");
+                tracing::trace!("ping received, requesting sending resposne");
                 link.send_pong = true;
                 self.flush_link(id);
             }
             LinkMsg::Pong => {
                 if let Some(current_ping_sent) = link.current_ping_sent.take() {
                     let elapsed = current_ping_sent.elapsed();
-                    tracing::debug!("ping response received, round-trip time is {} ms", elapsed.as_millis());
+                    tracing::trace!("ping round-trip time is {} ms", elapsed.as_millis());
                     link.roundtrip = elapsed;
                     link.last_ping = Some(Instant::now());
                     self.link_testing_step(id);
