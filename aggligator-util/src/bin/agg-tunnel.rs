@@ -1,6 +1,6 @@
 //! Tunnel TCP connections in aggregated connections.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use crossterm::{style::Stylize, tty::IsTty};
 use futures::future;
@@ -35,7 +35,10 @@ use aggligator_util::{
     },
 };
 
-const PORT: u16 = 5800;
+#[cfg(feature = "rfcomm")]
+use aggligator_util::transport::rfcomm::{RfcommAcceptor, RfcommConnector};
+
+const TCP_PORT: u16 = 5800;
 const FLUSH_DELAY: Option<Duration> = Some(Duration::from_millis(10));
 const DUMP_BUFFER: usize = 8192;
 
@@ -110,9 +113,13 @@ pub struct ClientCli {
     /// If unspecified only loopback connections are accepted.
     #[arg(long, short = 'g')]
     global: bool,
-    /// Server name or IP addresses and port number.
-    #[arg(required = true)]
-    target: Vec<String>,
+    /// TCP server name or IP addresses and port number.
+    #[arg(long)]
+    tcp: Vec<String>,
+    /// Bluetooth RFCOMM server address.
+    #[cfg(feature = "rfcomm")]
+    #[arg(long)]
+    rfcomm: Option<bluer::rfcomm::SocketAddr>,
 }
 
 impl ClientCli {
@@ -124,11 +131,42 @@ impl ClientCli {
         let ports: Vec<_> =
             self.port.clone().into_iter().map(|(s, c)| if s == 0 { (c, c) } else { (s, c) }).collect();
 
-        let mut tcp_connector =
-            TcpConnector::new(self.target.clone(), PORT).await.context("cannot resolve target")?;
-        tcp_connector.set_ip_version(IpVersion::from_only(self.ipv4, self.ipv6)?);
+        let mut watch_conn: Vec<Box<dyn ConnectingTransport>> = Vec::new();
+        let mut targets = Vec::new();
 
-        let target = tcp_connector.to_string();
+        let tcp_connector = if !self.tcp.is_empty() {
+            match TcpConnector::new(self.tcp.clone(), TCP_PORT).await {
+                Ok(mut tcp) => {
+                    tcp.set_ip_version(IpVersion::from_only(self.ipv4, self.ipv6)?);
+                    targets.push(tcp.to_string());
+                    watch_conn.push(Box::new(tcp.clone()));
+                    Some(tcp)
+                }
+                Err(err) => {
+                    eprintln!("cannot use TCP target: {err}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        #[cfg(feature = "rfcomm")]
+        let rfcomm_connector = match self.rfcomm {
+            Some(addr) => {
+                let rfcomm_connector = RfcommConnector::new(addr);
+                targets.push(addr.to_string());
+                watch_conn.push(Box::new(rfcomm_connector.clone()));
+                Some(rfcomm_connector)
+            }
+            None => None,
+        };
+
+        if targets.is_empty() {
+            bail!("No connection transports.");
+        }
+
+        let target = targets.join(", ");
         let title = format!(
             "Tunneling ports of {target} (remote->local): {}",
             ports.iter().map(|(s, l)| format!("{s}->{l}")).collect::<Vec<_>>().join(" ")
@@ -137,8 +175,7 @@ impl ClientCli {
         let (tag_err_tx, tag_err_rx) = broadcast::channel(128);
         let (disabled_tags_tx, disabled_tags_rx) = watch::channel(HashSet::new());
         let (control_tx, control_rx) = broadcast::channel(8);
-        let all_tags_rx =
-            self.all_links.then(|| watch_tags([Box::new(tcp_connector.clone()) as Box<dyn ConnectingTransport>]));
+        let all_tags_rx = self.all_links.then(|| watch_tags(watch_conn));
 
         let mut port_tasks = Vec::new();
         for (server_port, client_port) in ports {
@@ -151,6 +188,8 @@ impl ClientCli {
             let disabled_tags_rx = disabled_tags_rx.clone();
             let port_cfg = cfg.clone();
             let tcp_connector = tcp_connector.clone();
+            #[cfg(feature = "rfcomm")]
+            let rfcomm_connector = rfcomm_connector.clone();
             let dump = dump.clone();
             port_tasks.push(async move {
                 loop {
@@ -164,7 +203,13 @@ impl ClientCli {
                     }
 
                     let mut connector = builder.build();
-                    connector.add(tcp_connector.clone());
+                    if let Some(c) = tcp_connector.clone() {
+                        connector.add(c);
+                    }
+                    #[cfg(feature = "rfcomm")]
+                    if let Some(c) = rfcomm_connector.clone() {
+                        connector.add(c);
+                    }
                     let control = connector.control();
                     let outgoing = connector.channel().unwrap();
 
@@ -255,9 +300,13 @@ pub struct ServerCli {
     /// Target can be a host name or IP address. If unspecified localhost is used as target.
     #[arg(long, short = 'p', value_parser = parse_key_val::<String, u16>, required=true)]
     port: Vec<(String, u16)>,
-    /// Server TCP port.
-    #[arg(long, short = 's', default_value_t = PORT)]
-    server_port: u16,
+    /// TCP port to listen on.
+    #[arg(long)]
+    tcp: Option<u16>,
+    /// RFCOMM channel number to listen on.
+    #[cfg(feature = "rfcomm")]
+    #[arg(long)]
+    rfcomm: Option<u8>,
 }
 
 impl ServerCli {
@@ -289,7 +338,32 @@ impl ServerCli {
         }
 
         let acceptor = builder.build();
-        acceptor.add(TcpAcceptor::new([SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), self.server_port)]).await?);
+        let mut server_ports = Vec::new();
+
+        if let Some(port) = self.tcp {
+            match TcpAcceptor::new([SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), port)]).await {
+                Ok(tcp) => {
+                    server_ports.push(format!("TCP {tcp}"));
+                    acceptor.add(tcp);
+                }
+                Err(err) => eprintln!("Cannot listen on TCP port {port}: {err}"),
+            }
+        }
+
+        #[cfg(feature = "rfcomm")]
+        if let Some(ch) = self.rfcomm {
+            match RfcommAcceptor::new(bluer::rfcomm::SocketAddr::new(bluer::Address::any(), ch)).await {
+                Ok(rfcomm) => {
+                    acceptor.add(rfcomm);
+                    server_ports.push(format!("RFCOMM channel {}", ch));
+                }
+                Err(err) => eprintln!("Cannot listen on RFCOMM channel {}: {err}", ch),
+            }
+        }
+
+        if server_ports.is_empty() {
+            bail!("No listening transports.");
+        }
 
         let (control_tx, control_rx) = broadcast::channel(16);
 
