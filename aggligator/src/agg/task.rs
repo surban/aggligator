@@ -9,6 +9,7 @@ use rand::prelude::*;
 use rand_xoshiro::SplitMix64;
 use std::{
     collections::{HashSet, VecDeque},
+    error::Error,
     fmt,
     future::IntoFuture,
     io,
@@ -30,12 +31,54 @@ use crate::{
     alc::{RecvError, SendError},
     cfg::{Cfg, ExchangedCfg, LinkPing},
     control::{Direction, DisconnectReason, Link, NotWorkingReason, Stats},
-    id::{ConnId, OwnedConnId},
+    id::{ConnId, LinkId, OwnedConnId},
     msg::{LinkMsg, RefusedReason, ReliableMsg},
     peekable_mpsc::{PeekableReceiver, RecvIfError},
     protocol_err,
     seq::Seq,
 };
+
+/// Error indicating why a connection of aggregated links failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskError {
+    /// All links were unconfirmed for too long at the same time.
+    AllUnconfirmedTimeout,
+    /// No links were available for too long.
+    NoLinksTimeout,
+    /// A protocol error occured on a link.
+    ProtocolError {
+        /// Link on which the error occured.
+        link_id: LinkId,
+        /// Protocol error description.
+        error: String,
+    },
+    /// A link connected to another server than the other links.
+    ///
+    /// This will occur when the server is restarted while a client is connected.
+    ServerIdMismatch,
+    /// The task was terminated, possibly due to the runtime shutting down.
+    Terminated,
+}
+
+impl fmt::Display for TaskError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::AllUnconfirmedTimeout => write!(f, "all links unconfirmed timeout"),
+            Self::NoLinksTimeout => write!(f, "no links available timeout"),
+            Self::ProtocolError { link_id, error } => write!(f, "protocol error on link {link_id}: {error}"),
+            Self::ServerIdMismatch => write!(f, "a new link connected to another server"),
+            Self::Terminated => write!(f, "task terminated"),
+        }
+    }
+}
+
+impl Error for TaskError {}
+
+impl From<TaskError> for std::io::Error {
+    fn from(err: TaskError) -> Self {
+        io::Error::new(io::ErrorKind::ConnectionReset, err)
+    }
+}
 
 /// A send request to the link aggregator task.
 #[derive(Debug)]
@@ -259,6 +302,8 @@ pub struct Task<TX, RX, TAG> {
     refused_links_tasks: FuturesUnordered<BoxFuture<'static, ()>>,
     /// Server changed notification.
     server_changed_rx: mpsc::Receiver<()>,
+    /// Result of task sender.
+    result_tx: watch::Sender<Result<(), TaskError>>,
     /// Channel for sending analysis data.
     #[cfg(feature = "dump")]
     dump_tx: Option<mpsc::Sender<super::dump::ConnDump>>,
@@ -283,7 +328,8 @@ where
         connected_tx: oneshot::Sender<Arc<ExchangedCfg>>, read_tx: mpsc::Sender<Bytes>,
         read_closed_rx: mpsc::Receiver<()>, write_rx: mpsc::Receiver<SendReq>,
         read_error_tx: watch::Sender<Option<RecvError>>, write_error_tx: watch::Sender<SendError>,
-        stats_tx: watch::Sender<Stats>, server_changed_rx: mpsc::Receiver<()>, links: Vec<LinkInt<TX, RX, TAG>>,
+        stats_tx: watch::Sender<Stats>, server_changed_rx: mpsc::Receiver<()>,
+        result_tx: watch::Sender<Result<(), TaskError>>, links: Vec<LinkInt<TX, RX, TAG>>,
     ) -> Self {
         Self {
             cfg,
@@ -331,6 +377,7 @@ where
             init_links: links.into(),
             refused_links_tasks: FuturesUnordered::new(),
             server_changed_rx,
+            result_tx,
             #[cfg(feature = "dump")]
             dump_tx: None,
         }
@@ -341,7 +388,7 @@ where
     /// This returns when the connection has been terminated.
     /// Cancelling the returned future leads to immediate termination of the connection.
     #[tracing::instrument(level = "debug")]
-    pub async fn run(mut self) {
+    pub async fn run(mut self) -> Result<(), TaskError> {
         tracing::debug!("link aggregator task starting");
         self.start_time = Instant::now();
 
@@ -354,6 +401,7 @@ where
         let read_term;
         let write_term;
         let link_term;
+        let result;
 
         // Main loop.
         loop {
@@ -384,6 +432,7 @@ where
                     || since.elapsed() >= self.cfg.termination_timeout
                 {
                     tracing::info!("disconnecting because sender and receiver were dropped");
+                    result = Ok(());
                     read_term = None;
                     write_term = SendError::Closed;
                     link_term = DisconnectReason::ConnectionClosed;
@@ -395,6 +444,7 @@ where
             // new links can be established.
             if !links_available && self.link_rx.is_none() {
                 tracing::warn!("disconnecting because no links available and none can be added");
+                result = Err(TaskError::AllUnconfirmedTimeout);
                 read_term = Some(RecvError::AllLinksFailed);
                 write_term = SendError::AllLinksFailed;
                 link_term = DisconnectReason::AllUnconfirmedTimeout;
@@ -761,9 +811,13 @@ where
                             // Link has received a message.
                             if let Err(err) = self.handle_received_msg(id, msg, data) {
                                 tracing::warn!("link {id} caused protocol error: {err}");
-                                read_term = Some(RecvError::AllLinksFailed);
-                                write_term = SendError::AllLinksFailed;
-                                link_term = DisconnectReason::IoError(Arc::new(err));
+                                result = Err(TaskError::ProtocolError {
+                                    link_id: self.links[id].as_ref().unwrap().link_id(),
+                                    error: err.to_string(),
+                                });
+                                read_term = Some(RecvError::ProtocolError);
+                                write_term = SendError::ProtocolError;
+                                link_term = DisconnectReason::ProtocolError(err.to_string());
                                 break;
                             }
                         }
@@ -920,6 +974,7 @@ where
                 TaskEvent::LinkTesting => (),
                 TaskEvent::NoLinksTimeout => {
                     tracing::warn!("disconnecting because no links are available for too long");
+                    result = Err(TaskError::NoLinksTimeout);
                     read_term = Some(RecvError::AllLinksFailed);
                     write_term = SendError::AllLinksFailed;
                     link_term = DisconnectReason::AllUnconfirmedTimeout;
@@ -935,8 +990,9 @@ where
                 TaskEvent::RefusedLinkTask => (),
                 TaskEvent::ServerChanged => {
                     tracing::warn!("disconnecting because server id changed");
-                    read_term = Some(RecvError::AllLinksFailed);
-                    write_term = SendError::AllLinksFailed;
+                    result = Err(TaskError::ServerIdMismatch);
+                    read_term = Some(RecvError::ServerIdMismatch);
+                    write_term = SendError::ServerIdMismatch;
                     link_term = DisconnectReason::ServerIdMismatch;
                     break;
                 }
@@ -976,6 +1032,7 @@ where
         }
 
         // Publish termination reasons.
+        let _ = self.result_tx.send_replace(result.clone());
         if *self.read_error_tx.borrow() == Some(RecvError::TaskTerminated) {
             self.read_error_tx.send_replace(read_term);
         }
@@ -988,7 +1045,11 @@ where
             }
         }
 
-        tracing::debug!("link aggregator task exiting");
+        match &result {
+            Ok(()) => tracing::debug!("link aggregator task exiting"),
+            Err(err) => tracing::warn!("link aggregator task failed: {err}"),
+        }
+        result
     }
 
     /// Adds a newly established link and returns its id.
@@ -1855,9 +1916,9 @@ where
     TX: Sink<Bytes, Error = io::Error> + Unpin + Send + Sync + 'static,
     TAG: Send + Sync + 'static,
 {
-    type Output = ();
+    type Output = Result<(), TaskError>;
 
-    type IntoFuture = BoxFuture<'static, ()>;
+    type IntoFuture = BoxFuture<'static, Result<(), TaskError>>;
 
     fn into_future(self) -> Self::IntoFuture {
         self.run().boxed()

@@ -19,6 +19,10 @@ use crate::id::ConnId;
 pub enum RecvError {
     /// All links have failed.
     AllLinksFailed,
+    /// A protocol error occured on a link.
+    ProtocolError,
+    /// A link connected to another server than the other links.
+    ServerIdMismatch,
     /// The connection task was terminated.
     TaskTerminated,
 }
@@ -27,6 +31,8 @@ impl fmt::Display for RecvError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::AllLinksFailed => write!(f, "all links failed"),
+            Self::ProtocolError => write!(f, "protocol error"),
+            Self::ServerIdMismatch => write!(f, "a new link connected to another server"),
             Self::TaskTerminated => write!(f, "task terminated"),
         }
     }

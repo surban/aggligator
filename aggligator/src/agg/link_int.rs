@@ -270,6 +270,11 @@ where
         }
     }
 
+    /// Link id.
+    pub(crate) fn link_id(&self) -> LinkId {
+        self.link_id
+    }
+
     /// Returns the next event for this link.
     pub(crate) async fn event(&mut self, id: usize) -> LinkIntEvent {
         if let Some(err) = self.tx_error.take() {

@@ -167,7 +167,12 @@ async fn multi_link_test(
         }
 
         println!("server: waiting for termination notification");
-        control.terminated().await;
+        let result = control.terminated().await;
+        if should_fail {
+            result.expect_err("control did not fail");
+        } else {
+            result.expect("control failed");
+        }
         assert!(control.is_terminated());
 
         for (n, link) in added_links.iter().enumerate() {
@@ -178,9 +183,14 @@ async fn multi_link_test(
         }
 
         println!("server: waiting for task termination");
-        task.await.unwrap();
-
-        println!("server: done");
+        let result = task.await.unwrap();
+        if !should_fail {
+            result.expect("server task failed");
+            println!("server: done");
+        } else {
+            let err = result.expect_err("server task did not fail");
+            println!("server error: {err}");
+        }
     };
 
     let client_task = async move {
@@ -265,11 +275,23 @@ async fn multi_link_test(
         drop(tx);
 
         println!("client: waiting for termination notification");
-        control.terminated().await;
+        let result = control.terminated().await;
+        if should_fail {
+            result.expect_err("control did not fail");
+        } else {
+            result.expect("control failed");
+        }
         assert!(control.is_terminated());
 
         println!("client: waiting for task termination");
-        task.await.unwrap();
+        let result = task.await.unwrap();
+        if !should_fail {
+            result.expect("client task failed");
+            println!("client: task done");
+        } else {
+            let err = result.expect_err("client task did not fail");
+            println!("client error: {err}");
+        }
 
         for (n, (link, desc)) in added_links.iter().zip(link_descs).enumerate() {
             println!("client: link status {n} (name: {}): {:?}", link.tag(), link.disconnect_reason());

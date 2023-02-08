@@ -343,7 +343,7 @@ impl ClientCli {
                 Ok(res) => res?,
                 Err(_) => {
                     println!("Exiting...");
-                    control.terminated().await;
+                    control.terminated().await?;
                     return Ok(());
                 }
             }
@@ -363,7 +363,7 @@ impl ClientCli {
         }
 
         println!("Exiting...");
-        control.terminated().await;
+        control.terminated().await?;
         Ok(())
     }
 }

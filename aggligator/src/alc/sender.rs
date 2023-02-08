@@ -33,6 +33,10 @@ pub enum SendError {
     DataTooBig,
     /// All links have failed.
     AllLinksFailed,
+    /// A protocol error occured on a link.
+    ProtocolError,
+    /// A link connected to another server than the other links.
+    ServerIdMismatch,
     /// The connection task was terminated.
     TaskTerminated,
 }
@@ -45,6 +49,8 @@ impl fmt::Display for SendError {
             Self::Shutdown => write!(f, "connection was shut down or closed locally"),
             Self::DataTooBig => write!(f, "data too big for remote endpoint"),
             Self::AllLinksFailed => write!(f, "all links failed"),
+            Self::ProtocolError => write!(f, "protocol error"),
+            Self::ServerIdMismatch => write!(f, "a new link connected to another server"),
             Self::TaskTerminated => write!(f, "task terminated"),
         }
     }
@@ -58,7 +64,10 @@ impl From<SendError> for io::Error {
             SendError::Closed | SendError::Dropped => io::ErrorKind::ConnectionReset,
             SendError::Shutdown => io::ErrorKind::BrokenPipe,
             SendError::DataTooBig => io::ErrorKind::InvalidData,
-            SendError::AllLinksFailed | SendError::TaskTerminated => io::ErrorKind::ConnectionAborted,
+            SendError::AllLinksFailed
+            | SendError::TaskTerminated
+            | SendError::ProtocolError
+            | SendError::ServerIdMismatch => io::ErrorKind::ConnectionAborted,
         };
         io::Error::new(kind, err)
     }

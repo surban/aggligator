@@ -114,7 +114,7 @@ mod seq;
 #[cfg_attr(docsrs, doc(cfg(feature = "dump")))]
 pub use agg::dump;
 
-pub use agg::task::Task;
+pub use agg::task::{Task, TaskError};
 
 /// Link aggregator protocol error.
 macro_rules! protocol_err {

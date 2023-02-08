@@ -14,6 +14,7 @@ use crate::{
     cfg::{Cfg, ExchangedCfg},
     control::{Control, Direction, Link},
     id::{OwnedConnId, ServerId},
+    TaskError,
 };
 
 #[cfg(feature = "dump")]
@@ -53,6 +54,7 @@ where
         let (connected_tx, connected_rx) = oneshot::channel();
         let (stats_tx, stats_rx) = watch::channel(Default::default());
         let (server_changed_tx, server_changed_rx) = mpsc::channel(1);
+        let (result_tx, result_rx) = watch::channel(Err(TaskError::Terminated));
         let remote_cfg = links.first().as_ref().map(|link| link.remote_cfg());
         let connected = Arc::new(AtomicBool::new(!links.is_empty()));
 
@@ -72,6 +74,7 @@ where
                 write_error_tx,
                 stats_tx,
                 server_changed_rx,
+                result_tx,
                 links,
             ),
             channel: Channel::new(
@@ -95,6 +98,7 @@ where
                 connected,
                 stats_rx,
                 server_changed_tx,
+                result_rx,
             },
             connected_rx,
         }

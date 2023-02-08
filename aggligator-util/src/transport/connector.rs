@@ -290,7 +290,7 @@ impl Connector {
                 Some(transport_pack) = transport_rx.recv() => ConnectorEvent::TransportAdded(transport_pack),
                 _ = tags_changed => ConnectorEvent::TagsChanged,
                 Some(()) = transport_tasks.next() => ConnectorEvent::TransportTerminated,
-                () = control.terminated() => {
+                _ = control.terminated() => {
                     tracing::debug!("connection was terminated");
                     break;
                 }
@@ -461,7 +461,7 @@ impl Connector {
                 Ok(()) = disabled_tags_rx.changed() => (),
                 Ok(()) = tags_rx.changed() => tags_changed = true,
                 () = changed_control.links_changed() => (),
-                () = control.terminated() => break Ok(()),
+                _ = control.terminated() => break Ok(()),
                 Some((tag, reason)) = connecting_tasks.next() => {
                     connecting_tags.remove(&tag);
                     match reason {

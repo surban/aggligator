@@ -109,16 +109,26 @@ async fn single_link_test(
         }
 
         println!("server: waiting for termination notification");
-        control.terminated().await;
+        let result = control.terminated().await;
+        if fail_link.is_some() {
+            result.expect_err("control did not fail");
+        } else {
+            result.expect("control failed");
+        }
         assert!(control.is_terminated());
 
         println!("server: waiting for link disconnect notification");
         link.disconnected().await;
 
         println!("server: waiting for task termination");
-        task.await.unwrap();
-
-        println!("server: done");
+        let result = task.await.unwrap();
+        if fail_link.is_none() {
+            result.expect("server task failed");
+            println!("server: done");
+        } else {
+            let err = result.expect_err("server task did not fail");
+            println!("server error: {err}");
+        }
     };
 
     let client_task = async move {
@@ -195,11 +205,23 @@ async fn single_link_test(
         }
 
         println!("client: waiting for termination notification");
-        control.terminated().await;
+        let result = control.terminated().await;
+        if fail_link.is_some() {
+            result.expect_err("control did not fail");
+        } else {
+            result.expect("control failed");
+        }
         assert!(control.is_terminated());
 
         println!("client: waiting for task termination");
-        task.await.unwrap();
+        let result = task.await.unwrap();
+        if fail_link.is_none() {
+            result.expect("client task failed");
+            println!("client: task done");
+        } else {
+            let err = result.expect_err("client task did not fail");
+            println!("client error: {err}");
+        }
 
         println!("client: link status: {:?}", link.disconnect_reason());
         if fail_link.is_some() {

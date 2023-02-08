@@ -26,7 +26,7 @@ use crate::{
     id::{ConnId, EncryptedConnId, LinkId, ServerId},
     io::{IoRx, IoTx},
     msg::{LinkMsg, RefusedReason},
-    protocol_err,
+    protocol_err, TaskError,
 };
 
 /// Error adding a link to a connection.
@@ -143,6 +143,7 @@ pub struct Control<TX, RX, TAG> {
     pub(crate) links_rx: watch::Receiver<Vec<Link<TAG>>>,
     pub(crate) stats_rx: watch::Receiver<Stats>,
     pub(crate) server_changed_tx: mpsc::Sender<()>,
+    pub(crate) result_rx: watch::Receiver<Result<(), TaskError>>,
 }
 
 impl<TX, RX, TAG> Clone for Control<TX, RX, TAG> {
@@ -158,6 +159,7 @@ impl<TX, RX, TAG> Clone for Control<TX, RX, TAG> {
             links_rx: self.links_rx.clone(),
             stats_rx: self.stats_rx.clone(),
             server_changed_tx: self.server_changed_tx.clone(),
+            result_rx: self.result_rx.clone(),
         }
     }
 }
@@ -230,8 +232,9 @@ impl<TX, RX, TAG> Control<TX, RX, TAG> {
     }
 
     /// Waits until the connection has been terminated.
-    pub async fn terminated(&self) {
-        self.link_tx.closed().await
+    pub async fn terminated(&self) -> Result<(), TaskError> {
+        self.link_tx.closed().await;
+        self.result_rx.borrow().clone()
     }
 
     /// Gets handles to all links of the connection.
@@ -753,6 +756,8 @@ pub enum DisconnectReason {
     ///
     /// This will occur when the server is restarted while a client is connected.
     ServerIdMismatch,
+    /// A protocol error occured on this link.
+    ProtocolError(String),
     /// The connection task was terminated.
     TaskTerminated,
 }
@@ -770,6 +775,7 @@ impl fmt::Display for DisconnectReason {
             Self::ConnectionClosed => write!(f, "connection closed"),
             Self::LinkFilter => write!(f, "link filter"),
             Self::ServerIdMismatch => write!(f, "link connected to another server"),
+            Self::ProtocolError(err) => write!(f, "protocol error: {err}"),
             Self::TaskTerminated => write!(f, "task terminated"),
         }
     }
