@@ -9,6 +9,7 @@ use std::{
     io::stdout,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     path::PathBuf,
+    process::exit,
     sync::Arc,
     time::Duration,
 };
@@ -113,6 +114,9 @@ pub struct ClientCli {
     /// If unspecified only loopback connections are accepted.
     #[arg(long, short = 'g')]
     global: bool,
+    /// Exit after handling one connection.
+    #[arg(long)]
+    once: bool,
     /// TCP server name or IP addresses and port number.
     #[arg(long)]
     tcp: Vec<String>,
@@ -125,6 +129,7 @@ pub struct ClientCli {
 impl ClientCli {
     async fn run(self, cfg: Cfg, dump: Option<PathBuf>) -> Result<()> {
         let no_monitor = self.no_monitor || !stdout().is_tty();
+        let once = self.once;
 
         let listen_addr = IpAddr::from(if self.global { Ipv6Addr::UNSPECIFIED } else { Ipv6Addr::LOCALHOST });
 
@@ -250,6 +255,11 @@ impl ClientCli {
                         if no_monitor {
                             eprintln!("Incoming connection from {src} done");
                         }
+
+                        if once {
+                            exit(0);
+                        }
+
                         anyhow::Ok(())
                     });
                 }
