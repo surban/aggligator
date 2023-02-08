@@ -214,7 +214,7 @@ impl ConnectingTransport for RfcommProfileConnector {
         let connect_task = async {
             let _ = dev.connect().await;
             dev.connect_profile(&self.uuid).await?;
-            Ok(())
+            bluer::Result::Ok(())
         }
         .fuse();
         pin_mut!(connect_task);
@@ -222,11 +222,7 @@ impl ConnectingTransport for RfcommProfileConnector {
         let stream = timeout(Duration::from_secs(15), async {
             loop {
                 tokio::select! {
-                    res = &mut connect_task => {
-                        if let Err(err) = res {
-                            return Err(err);
-                        }
-                    },
+                    res = &mut connect_task => res?,
                     Some(req) = hndl.next() => {
                         if req.device() == *remote {
                             return req.accept();

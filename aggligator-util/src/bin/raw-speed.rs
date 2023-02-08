@@ -193,7 +193,7 @@ impl RawClientCli {
                     let iface_disconnected_tx = disconnected_tx.clone();
                     let iface_speeds_tx = speeds_tx.clone();
                     let interfaces = interfaces.clone();
-                    let target = target.clone();
+                    let target = *target;
                     tokio::spawn(async move {
                         if iface_speeds_tx.is_none() {
                             eprintln!("Trying TCP connection from {iface}");
@@ -317,7 +317,7 @@ impl RawClientCli {
             for (iface, (tx, rx)) in speeds {
                 execute!(
                     stdout(),
-                    Print(format!("{:20}", iface).cyan()),
+                    Print(format!("{iface:20}").cyan()),
                     Print(format_speed(tx)),
                     Print("    "),
                     Print(format_speed(rx)),
@@ -357,7 +357,7 @@ impl RawClientCli {
         let time = self.time.map(Duration::from_secs);
 
         if self.no_monitor {
-            eprintln!("{}", header);
+            eprintln!("{header}");
             Self::test_links(
                 target,
                 self.send_only,

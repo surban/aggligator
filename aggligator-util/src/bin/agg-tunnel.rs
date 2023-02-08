@@ -355,9 +355,9 @@ impl ServerCli {
             match RfcommAcceptor::new(bluer::rfcomm::SocketAddr::new(bluer::Address::any(), ch)).await {
                 Ok(rfcomm) => {
                     acceptor.add(rfcomm);
-                    server_ports.push(format!("RFCOMM channel {}", ch));
+                    server_ports.push(format!("RFCOMM channel {ch}"));
                 }
-                Err(err) => eprintln!("Cannot listen on RFCOMM channel {}: {err}", ch),
+                Err(err) => eprintln!("Cannot listen on RFCOMM channel {ch}: {err}"),
             }
         }
 
