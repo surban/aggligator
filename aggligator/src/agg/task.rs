@@ -1525,7 +1525,8 @@ where
                             self.cfg.link_unacked_init.get()
                         } else {
                             self.cfg.link_unacked_limit.get().min(self.cfg.send_buffer.get() as usize)
-                        };
+                        }
+                        .min(self.cfg.link_test_data_limit);
                         let test_data = link.send_test_data(self.cfg.io_write_size.get(), test_data_limit);
                         link.send_ping = true;
                         link.test = LinkTest::InProgress;

@@ -67,6 +67,8 @@ pub struct Cfg {
     ///
     /// A link is used anyways if all links have a ping higher than the specified value.
     pub link_max_ping: Option<Duration>,
+    /// Maximum amount of data to send to test the functionality of a link before using it.
+    pub link_test_data_limit: usize,
     /// Time to wait before link is tested again after a test has failed.
     pub link_retest_interval: Duration,
     /// Timeout after which a non-working link is disconnected.
@@ -104,6 +106,7 @@ impl Default for Cfg {
             link_ping: LinkPing::WhenIdle(Duration::from_secs(15)),
             link_ping_timeout: Duration::from_secs(40),
             link_max_ping: None,
+            link_test_data_limit: usize::MAX,
             link_retest_interval: Duration::from_secs(15),
             link_non_working_timeout: Duration::from_secs(600),
             link_flush_delay: Duration::from_millis(500),
