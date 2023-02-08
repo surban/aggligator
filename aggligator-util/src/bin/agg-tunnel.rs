@@ -16,7 +16,7 @@ use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     select,
-    sync::{broadcast, mpsc, watch},
+    sync::{broadcast, mpsc, oneshot, watch},
     task::block_in_place,
     time::sleep,
 };
@@ -371,15 +371,29 @@ impl ServerCli {
             loop {
                 let (ch, control) = acceptor.accept().await?;
                 let id = ch.id();
-                let _ = control_tx.send((control, id.to_string()));
 
-                let (client_read, client_write) = ch.into_stream().into_split();
-                if let Err(err) = Self::handle_client(ports.clone(), client_write, client_read, !no_monitor).await
-                {
-                    if no_monitor {
-                        eprintln!("Connection {id} failed: {err}");
+                let control_tx = control_tx.clone();
+                let (target_tx, target_rx) = oneshot::channel();
+                tokio::spawn(async move {
+                    let name = if let Ok((port, target)) = target_rx.await {
+                        format!("{port} -> {target}")
+                    } else {
+                        "unknown".to_string()
+                    };
+                    let _ = control_tx.send((control, name));
+                });
+
+                let ports = ports.clone();
+                tokio::spawn(async move {
+                    let (client_read, client_write) = ch.into_stream().into_split();
+                    if let Err(err) =
+                        Self::handle_client(ports, client_write, client_read, !no_monitor, target_tx).await
+                    {
+                        if no_monitor {
+                            eprintln!("Connection {id} failed: {err}");
+                        }
                     }
-                }
+                });
             }
 
             #[allow(unreachable_code)]
@@ -407,10 +421,12 @@ impl ServerCli {
 
     async fn handle_client(
         ports: Arc<HashMap<u16, String>>, client_write: SenderSink, mut client_read: ReceiverStream, quiet: bool,
+        target_tx: oneshot::Sender<(u16, String)>,
     ) -> Result<()> {
         let port = client_read.read_u16().await?;
 
         if let Some(target) = ports.get(&port) {
+            let _ = target_tx.send((port, target.clone()));
             if !quiet {
                 eprintln!("Client wants port {port} which connects to {target}");
             }
