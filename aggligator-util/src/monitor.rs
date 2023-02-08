@@ -117,6 +117,7 @@ where
     let mut errors: HashMap<(ConnId, TAG), String> = HashMap::new();
     let mut disabled: HashSet<TAG> = HashSet::new();
     let mut toggle_link_block: Option<usize> = None;
+    let mut interval = Duration::from_secs(3);
 
     enable_raw_mode()?;
 
@@ -127,6 +128,7 @@ where
             match control_rx.try_recv() {
                 Ok(control_info) => {
                     if controls.iter().all(|c| c.0.id() != control_info.0.id()) {
+                        interval = control_info.0.cfg().stats_intervals[time_stats_idx];
                         controls.push(control_info);
                     }
                 }
@@ -378,7 +380,7 @@ where
 
         // Handle user events.
         toggle_link_block = None;
-        if poll(Duration::from_millis(100))? {
+        if poll(interval)? {
             match read()? {
                 Event::Key(KeyEvent { code: KeyCode::Char(c), .. }) if ('0'..='9').contains(&c) => {
                     let n = c.to_digit(10).unwrap();
