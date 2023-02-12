@@ -261,13 +261,13 @@ impl<TX, RX, TAG> Control<TX, RX, TAG> {
 
     /// Mark the current connection statistics as seen.
     ///
-    /// This will cause [`stats_updated`](Self::stats_updated) to wait until a change occurs.
+    /// This will cause [`stats_changed`](Self::stats_changed) to wait until a change occurs.
     pub fn stats_update(&mut self) -> Stats {
         self.stats_rx.borrow_and_update().clone()
     }
 
-    /// Waits until the connection statistics have been updated.
-    pub async fn stats_updated(&mut self) {
+    /// Waits until the connection statistics have been changed.
+    pub async fn stats_changed(&mut self) {
         let _ = self.stats_rx.changed().await;
     }
 }
@@ -603,8 +603,15 @@ impl<TAG> Link<TAG> {
     }
 
     /// Waits until the blocked status (local or remotely) changes.
-    pub async fn blocked_updated(&mut self) {
+    pub async fn blocked_changed(&mut self) {
         let _ = self.blocked_changed_rx.changed().await;
+    }
+
+    /// Marks the blocked status (local or remotely) as seen.
+    ///
+    /// This will cause [`blocked_changed`](Self::blocked_changed) to wait until a change occurs.
+    pub fn blocked_update(&mut self) {
+        self.blocked_changed_rx.borrow_and_update();
     }
 
     /// Returns whether the link is working.
@@ -626,8 +633,15 @@ impl<TAG> Link<TAG> {
         self.not_working_rx.borrow().as_ref().map(|(since, _reason)| *since)
     }
 
+    /// Marks the working status of the link as seen.
+    ///
+    /// This will cause [`working_changed`](Self::working_changed) to wait until a change occurs.
+    pub fn working_update(&mut self) {
+        self.not_working_rx.borrow_and_update();
+    }
+
     /// Waits until the working status of the link changed.
-    pub async fn working_updated(&mut self) {
+    pub async fn working_changed(&mut self) {
         let _ = self.not_working_rx.changed().await;
     }
 
@@ -636,8 +650,15 @@ impl<TAG> Link<TAG> {
         self.stats_rx.borrow().clone()
     }
 
+    /// Mark the current link statistics as seen.
+    ///
+    /// This will cause [`stats_changed`](Self::stats_changed) to wait until a change occurs.
+    pub fn stats_update(&mut self) -> LinkStats {
+        self.stats_rx.borrow_and_update().clone()
+    }
+
     /// Waits until the link statistics have been updated.
-    pub async fn stats_updated(&mut self) {
+    pub async fn stats_changed(&mut self) {
         let _ = self.stats_rx.changed().await;
     }
 }
