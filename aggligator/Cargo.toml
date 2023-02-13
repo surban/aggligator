@@ -1,6 +1,6 @@
 [package]
 name = "aggligator"
-version = "0.8.0"
+version = "0.8.1"
 edition = "2021"
 rust-version = "1.65"
 authors = ["Sebastian Urban <surban@surban.net>"]
