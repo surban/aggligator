@@ -1014,7 +1014,7 @@ where
                         .enumerate()
                         .filter_map(|(id, link_opt)| match link_opt {
                             Some(link) if link.unconfirmed.is_none() && link.roundtrip > max_ping => {
-                                tracing::debug!(
+                                tracing::warn!(
                                     "unconfirming link {id} due to slow ping of {} ms",
                                     link.roundtrip.as_millis()
                                 );
@@ -1166,7 +1166,7 @@ where
                     self.tx_overrun = SendOverrun::Soft;
                 }
                 self.tx_overrun_since = Some(Instant::now());
-                tracing::debug!(
+                tracing::trace!(
                     "decreasing unacked limit of link {id} to {} bytes",
                     link.txed_unacked_data_limit
                 );
@@ -1184,7 +1184,7 @@ where
         // Rearm send overrun handling if it is blocked for too long.
         match self.tx_overrun_since {
             Some(since) if since.elapsed() >= Duration::from_secs(1) => {
-                tracing::debug!("re-arming send overrun handling due to timeout");
+                tracing::trace!("re-arming send overrun handling due to timeout");
                 self.tx_overrun = SendOverrun::Armed;
                 self.tx_overrun_since = None
             }
@@ -1215,7 +1215,7 @@ where
                                 // Decrease limit.
                                 let current = link.txed_unacked_data.min(link.txed_unacked_data_limit);
                                 link.txed_unacked_data_limit = current * 95 / 100;
-                                tracing::debug!(
+                                tracing::trace!(
                                     "decreasing unacked limit of link {id} to {} bytes due to ping",
                                     link.txed_unacked_data_limit
                                 );
@@ -1281,7 +1281,7 @@ where
                             }
                             .max(100);
 
-                        tracing::debug!(
+                        tracing::trace!(
                             "increasing unacked limit of link {id} to {} bytes (done {} times without overrun)",
                             link.txed_unacked_data_limit,
                             link.txed_unacked_data_limit_increased_consecutively
