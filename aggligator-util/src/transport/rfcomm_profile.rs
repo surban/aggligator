@@ -21,7 +21,7 @@ use tokio::{
     time::timeout,
 };
 
-use super::{AcceptedIoBox, AcceptingTransport, ConnectingTransport, IoBox, LinkTag, LinkTagBox};
+use super::{AcceptedStreamBox, AcceptingTransport, ConnectingTransport, IoBox, LinkTag, LinkTagBox, StreamBox};
 use aggligator::{control::Direction, Link};
 
 static NAME: &str = "rfcomm_profile";
@@ -204,7 +204,7 @@ impl ConnectingTransport for RfcommProfileConnector {
         }
     }
 
-    async fn connect(&self, tag: &dyn LinkTag) -> Result<IoBox> {
+    async fn connect(&self, tag: &dyn LinkTag) -> Result<StreamBox> {
         let tag: &RfcommProfileLinkTag = tag.as_any().downcast_ref().unwrap();
         let RfcommProfileLinkTag::Outgoing(remote) = tag else { unreachable!() };
 
@@ -237,7 +237,7 @@ impl ConnectingTransport for RfcommProfileConnector {
         .await??;
 
         let (rh, wh) = stream.into_split();
-        Ok(IoBox::new(rh, wh))
+        Ok(IoBox::new(rh, wh).into())
     }
 
     async fn connected_links(&self, links: &[Link<LinkTagBox>]) {
@@ -254,6 +254,8 @@ impl ConnectingTransport for RfcommProfileConnector {
 }
 
 /// Bluetooth RFCOMM transport using a profile for incoming connection.
+///
+/// This transport is IO-stream based.
 #[derive(Debug)]
 pub struct RfcommProfileAcceptor {
     profile_handle: Mutex<ProfileHandle>,
@@ -301,7 +303,7 @@ impl AcceptingTransport for RfcommProfileAcceptor {
         NAME
     }
 
-    async fn listen(&self, tx: mpsc::Sender<AcceptedIoBox>) -> Result<()> {
+    async fn listen(&self, tx: mpsc::Sender<AcceptedStreamBox>) -> Result<()> {
         let mut hndl = self.profile_handle.lock().await;
 
         while let Some(req) = hndl.next().await {
@@ -314,7 +316,7 @@ impl AcceptingTransport for RfcommProfileAcceptor {
             let tag = RfcommProfileLinkTag::incoming(local, remote);
 
             let (rh, wh) = stream.into_split();
-            let _ = tx.send(AcceptedIoBox::new(rh, wh, tag)).await;
+            let _ = tx.send(AcceptedStreamBox::new(IoBox::new(rh, wh).into(), tag)).await;
         }
 
         Err(Error::new(ErrorKind::BrokenPipe, "profile event stream terminated".to_string()))

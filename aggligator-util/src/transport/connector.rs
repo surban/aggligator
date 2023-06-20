@@ -1,6 +1,5 @@
 //! Link connector.
 
-use aggligator::control::DisconnectReason;
 use async_trait::async_trait;
 use futures::{
     future::{self, BoxFuture},
@@ -21,8 +20,8 @@ use tokio::{
     time::sleep,
 };
 
-use super::{BoxControl, BoxLink, BoxLinkError, IoBox, LinkTag, LinkTagBox};
-use aggligator::{connect, Cfg, IoRxBox, IoTxBox, Link, Outgoing, Task};
+use super::{BoxControl, BoxLink, BoxLinkError, BoxTask, LinkTag, LinkTagBox, StreamBox, TxRxBox};
+use aggligator::{connect, control::DisconnectReason, Cfg, Link, Outgoing};
 
 /// A transport for connecting to remote endpoints.
 #[async_trait]
@@ -37,7 +36,7 @@ pub trait ConnectingTransport: Send + Sync + 'static {
     async fn link_tags(&self, tx: watch::Sender<HashSet<LinkTagBox>>) -> Result<()>;
 
     /// Connects a link tag.
-    async fn connect(&self, tag: &dyn LinkTag) -> Result<IoBox>;
+    async fn connect(&self, tag: &dyn LinkTag) -> Result<StreamBox>;
 
     /// Checks whether a new link can be added given existing links.
     async fn link_filter(&self, _new: &Link<LinkTagBox>, _existing: &[Link<LinkTagBox>]) -> bool {
@@ -58,8 +57,8 @@ pub trait ConnectingWrapper: Send + Sync + fmt::Debug + 'static {
     /// Name of the wrapper.
     fn name(&self) -> &str;
 
-    /// Wraps the outgoing IO stream.
-    async fn wrap(&self, io: IoBox) -> Result<IoBox>;
+    /// Wraps the outgoing stream.
+    async fn wrap(&self, io: StreamBox) -> Result<StreamBox>;
 }
 
 type BoxConnectingWrapper = Box<dyn ConnectingWrapper>;
@@ -73,7 +72,7 @@ struct TransportPack {
 /// Builds a customized [`Connector`].
 #[derive(Debug)]
 pub struct ConnectorBuilder {
-    task: Task<IoTxBox, IoRxBox, LinkTagBox>,
+    task: BoxTask,
     outgoing: Outgoing,
     control: BoxControl,
     reconnect_delay: Duration,
@@ -88,7 +87,7 @@ impl ConnectorBuilder {
     }
 
     /// Accesses the connection manager task.
-    pub fn task(&mut self) -> &mut Task<IoTxBox, IoRxBox, LinkTagBox> {
+    pub fn task(&mut self) -> &mut BoxTask {
         &mut self.task
     }
 
@@ -392,8 +391,8 @@ impl Connector {
                     let connect_task = async {
                         // Establish transport connection.
                         tracing::debug!("establishing transport connection for tag {tag}");
-                        let mut io_box = match transport.connect(&*tag).await {
-                            Ok(io_box) => io_box,
+                        let mut stream_box = match transport.connect(&*tag).await {
+                            Ok(stream_box) => stream_box,
                             Err(err) => {
                                 tracing::debug!("connecting transport for tag {tag} failed: {err}");
                                 let _ = link_error_tx.send(BoxLinkError::outgoing(conn_id, &tag, err));
@@ -407,8 +406,8 @@ impl Connector {
                             let name = wrapper.name();
                             tracing::debug!("wrapping tag {tag} in {name}");
 
-                            match wrapper.wrap(io_box).await {
-                                Ok(wrapped) => io_box = wrapped,
+                            match wrapper.wrap(stream_box).await {
+                                Ok(wrapped) => stream_box = wrapped,
                                 Err(err) => {
                                     tracing::debug!("wrapping tag {tag} in {name} failed: {err}");
                                     let _ = link_error_tx.send(BoxLinkError::outgoing(conn_id, &tag, err));
@@ -420,8 +419,8 @@ impl Connector {
 
                         // Add link to aggregated connection.
                         tracing::debug!("adding link for tag {tag} to connection");
-                        let IoBox { read, write } = io_box;
-                        let link = match control.add_io(read, write, tag.clone(), &tag.user_data()).await {
+                        let TxRxBox { tx, rx } = stream_box.into_tx_rx();
+                        let link = match control.add(tx, rx, tag.clone(), &tag.user_data()).await {
                             Ok(link) => link,
                             Err(err) => {
                                 tracing::debug!("adding link for tag {tag} to connection failed: {err}");

@@ -19,7 +19,7 @@ use tokio::{
     time::sleep,
 };
 
-use super::{AcceptedIoBox, AcceptingTransport, ConnectingTransport, IoBox, LinkTag, LinkTagBox};
+use super::{AcceptedStreamBox, AcceptingTransport, ConnectingTransport, IoBox, LinkTag, LinkTagBox, StreamBox};
 use aggligator::{control::Direction, Link};
 
 static NAME: &str = "tcp";
@@ -131,6 +131,8 @@ fn local_interfaces() -> Result<Vec<NetworkInterface>> {
 }
 
 /// TCP transport for outgoing connections.
+///
+/// This transport is IO-stream based.
 #[derive(Debug, Clone)]
 pub struct TcpConnector {
     hosts: Vec<String>,
@@ -292,7 +294,7 @@ impl ConnectingTransport for TcpConnector {
         }
     }
 
-    async fn connect(&self, tag: &dyn LinkTag) -> Result<IoBox> {
+    async fn connect(&self, tag: &dyn LinkTag) -> Result<StreamBox> {
         let tag: &TcpLinkTag = tag.as_any().downcast_ref().unwrap();
 
         let socket = match tag.remote.ip() {
@@ -306,7 +308,7 @@ impl ConnectingTransport for TcpConnector {
         let _ = stream.set_nodelay(true);
 
         let (rh, wh) = stream.into_split();
-        Ok(IoBox::new(rh, wh))
+        Ok(IoBox::new(rh, wh).into())
     }
 
     async fn link_filter(&self, new: &Link<LinkTagBox>, existing: &[Link<LinkTagBox>]) -> bool {
@@ -342,6 +344,8 @@ impl ConnectingTransport for TcpConnector {
 }
 
 /// TCP transport for incoming connections.
+///
+/// This transport is IO-stream based.
 #[derive(Debug)]
 pub struct TcpAcceptor {
     listeners: Vec<TcpListener>,
@@ -435,7 +439,7 @@ impl AcceptingTransport for TcpAcceptor {
         NAME
     }
 
-    async fn listen(&self, tx: mpsc::Sender<AcceptedIoBox>) -> Result<()> {
+    async fn listen(&self, tx: mpsc::Sender<AcceptedStreamBox>) -> Result<()> {
         loop {
             // Accept incoming connection.
             let (res, _, _) =
@@ -479,7 +483,7 @@ impl AcceptingTransport for TcpAcceptor {
             let _ = socket.set_nodelay(true);
             let (rh, wh) = socket.into_split();
 
-            let _ = tx.send(AcceptedIoBox::new(rh, wh, tag)).await;
+            let _ = tx.send(AcceptedStreamBox::new(IoBox::new(rh, wh).into(), tag)).await;
         }
     }
 }

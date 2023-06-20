@@ -45,6 +45,7 @@ tokio = { version = "1.21", features = ["rt", "rt-multi-thread"] }
 tracing = "0.1"
 network-interface = "0.1.4"
 async-trait = "0.1"
+bytes = "1"
 
 bluer = { version = "0.15.7", default-features = false, optional = true }
 rustls = { version = "0.20", optional = true }

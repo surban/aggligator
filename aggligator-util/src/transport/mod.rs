@@ -52,6 +52,8 @@
 //! }
 //!
 
+use bytes::Bytes;
+use futures::{Sink, SinkExt, Stream, StreamExt};
 use std::{
     any::Any,
     cmp::Ordering,
@@ -59,6 +61,7 @@ use std::{
     fmt,
     fmt::{Debug, Display},
     hash::{Hash, Hasher},
+    io,
     io::Result,
     pin::Pin,
     sync::Arc,
@@ -185,6 +188,101 @@ impl Clone for LinkTagBox {
     }
 }
 
+/// A stream, either packet-based or IO-based.
+pub enum StreamBox {
+    /// Packet-based stream.
+    TxRx(TxRxBox),
+    /// IO-based stream.
+    Io(IoBox),
+}
+
+impl StreamBox {
+    /// Make stream packet-based.
+    ///
+    /// A packet-based stream is unaffacted.
+    /// An IO-based stream is wrapped in the integrity codec.
+    pub fn into_tx_rx(self) -> TxRxBox {
+        match self {
+            Self::TxRx(tx_rx) => tx_rx,
+            Self::Io(IoBox { read, write }) => {
+                let tx = IoTxBox::new(write);
+                let rx = IoRxBox::new(read);
+                TxRxBox::new(tx, rx)
+            }
+        }
+    }
+}
+
+impl From<TxRxBox> for StreamBox {
+    fn from(value: TxRxBox) -> Self {
+        Self::TxRx(value)
+    }
+}
+
+impl From<IoBox> for StreamBox {
+    fn from(value: IoBox) -> Self {
+        Self::Io(value)
+    }
+}
+
+type TxBox = Pin<Box<dyn Sink<Bytes, Error = io::Error> + Send + Sync + 'static>>;
+type RxBox = Pin<Box<dyn Stream<Item = Result<Bytes>> + Send + Sync + 'static>>;
+
+/// A boxed packet-based stream.
+pub struct TxRxBox {
+    /// Sender.
+    pub tx: TxBox,
+    /// Receiver.
+    pub rx: RxBox,
+}
+
+impl TxRxBox {
+    /// Creates a new instance.
+    pub fn new(
+        tx: impl Sink<Bytes, Error = io::Error> + Send + Sync + 'static,
+        rx: impl Stream<Item = Result<Bytes>> + Send + Sync + 'static,
+    ) -> Self {
+        Self { tx: Box::pin(tx), rx: Box::pin(rx) }
+    }
+
+    /// Splits this into boxed transmitter and receiver.
+    pub fn into_split(self) -> (TxBox, RxBox) {
+        let Self { tx, rx } = self;
+        (tx, rx)
+    }
+}
+
+impl Sink<Bytes> for TxRxBox {
+    type Error = io::Error;
+
+    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {
+        self.get_mut().tx.poll_ready_unpin(cx)
+    }
+
+    fn start_send(self: Pin<&mut Self>, item: Bytes) -> Result<()> {
+        self.get_mut().tx.start_send_unpin(item)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {
+        self.get_mut().tx.poll_flush_unpin(cx)
+    }
+
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {
+        self.get_mut().tx.poll_close_unpin(cx)
+    }
+}
+
+impl Stream for TxRxBox {
+    type Item = Result<Bytes>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        self.get_mut().rx.poll_next_unpin(cx)
+    }
+}
+
+type ReadBox = Pin<Box<dyn AsyncRead + Send + Sync + 'static>>;
+type WriteBox = Pin<Box<dyn AsyncWrite + Send + Sync + 'static>>;
+
 /// A boxed IO stream.
 pub struct IoBox {
     /// Reader.
@@ -228,12 +326,10 @@ impl AsyncWrite for IoBox {
     }
 }
 
-type ReadBox = Pin<Box<dyn AsyncRead + Send + Sync + 'static>>;
-type WriteBox = Pin<Box<dyn AsyncWrite + Send + Sync + 'static>>;
-type BoxControl = Control<IoTxBox, IoRxBox, LinkTagBox>;
-type BoxServer = Server<IoTxBox, IoRxBox, LinkTagBox>;
-type BoxListener = Listener<IoTxBox, IoRxBox, LinkTagBox>;
-type BoxTask = Task<IoTxBox, IoRxBox, LinkTagBox>;
+type BoxControl = Control<TxBox, RxBox, LinkTagBox>;
+type BoxServer = Server<TxBox, RxBox, LinkTagBox>;
+type BoxListener = Listener<TxBox, RxBox, LinkTagBox>;
+type BoxTask = Task<TxBox, RxBox, LinkTagBox>;
 type BoxLink = Link<LinkTagBox>;
 type BoxLinkError = LinkError<LinkTagBox>;
 

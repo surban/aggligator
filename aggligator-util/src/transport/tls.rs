@@ -6,14 +6,19 @@ use std::{io::Result, sync::Arc};
 use tokio::io::split;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
-use super::{AcceptingWrapper, ConnectingWrapper, IoBox};
+use super::{AcceptingWrapper, ConnectingWrapper, IoBox, StreamBox};
 
 static NAME: &str = "tls";
 
 /// TLS outgoing connection wrapper.
 ///
+/// Only IO-based streams are supported.
+///
 /// Pass this to [`Connector::wrapped`](super::Connector::wrapped) to apply TLS
 /// encryption to each outgoing link.
+///
+/// # Panics
+/// Panics if a packet-based stream is supplied.
 #[derive(Debug)]
 #[must_use = "you must pass this wrapper to the connector"]
 pub struct TlsClient {
@@ -38,15 +43,21 @@ impl ConnectingWrapper for TlsClient {
         NAME
     }
 
-    async fn wrap(&self, io: IoBox) -> Result<IoBox> {
+    async fn wrap(&self, stream: StreamBox) -> Result<StreamBox> {
+        let StreamBox::Io(io) = stream else { panic!("TlsClient only supports IO-based streams") };
         let connector = TlsConnector::from(self.client_cfg.clone());
         let tls = connector.connect(self.server_name.clone(), io).await?;
         let (rh, wh) = split(tls);
-        Ok(IoBox::new(rh, wh))
+        Ok(IoBox::new(rh, wh).into())
     }
 }
 
 /// TLS incoming connection wrapper.
+///
+/// Only IO-based streams are supported.
+///
+/// # Panics
+/// Panics if a packet-based stream is supplied.
 #[derive(Debug)]
 #[must_use = "you must pass this wrapper to the acceptor"]
 pub struct TlsServer {
@@ -69,10 +80,11 @@ impl AcceptingWrapper for TlsServer {
         NAME
     }
 
-    async fn wrap(&self, io: IoBox) -> Result<IoBox> {
+    async fn wrap(&self, stream: StreamBox) -> Result<StreamBox> {
+        let StreamBox::Io(io) = stream else { panic!("TlsServer only supports IO-based streams") };
         let acceptor = TlsAcceptor::from(self.server_cfg.clone());
         let tls = acceptor.accept(io).await?;
         let (rh, wh) = split(tls);
-        Ok(IoBox::new(rh, wh))
+        Ok(IoBox::new(rh, wh).into())
     }
 }

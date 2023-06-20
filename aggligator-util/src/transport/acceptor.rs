@@ -3,38 +3,35 @@
 use async_trait::async_trait;
 use futures::{future, future::BoxFuture, pin_mut, stream::FuturesUnordered, FutureExt, StreamExt};
 use std::{
-    fmt::{self},
+    fmt,
     future::IntoFuture,
     io::{Error, ErrorKind, Result},
     sync::{Arc, Weak},
     time::Duration,
 };
 use tokio::{
-    io::{AsyncRead, AsyncWrite},
     sync::{broadcast, mpsc, oneshot, watch, Mutex, RwLock},
     time::{sleep_until, Instant},
 };
 
 use super::{
-    BoxControl, BoxLink, BoxLinkError, BoxListener, BoxServer, BoxTask, IoBox, LinkError, LinkTag, LinkTagBox,
+    BoxControl, BoxLink, BoxLinkError, BoxListener, BoxServer, BoxTask, LinkError, LinkTag, LinkTagBox,
+    StreamBox, TxRxBox,
 };
 use aggligator::{alc::Channel, Cfg, Server};
 
-/// An accepted incoming IO stream.
-pub struct AcceptedIoBox {
-    /// IO stream.
-    pub io: IoBox,
+/// An accepted incoming stream.
+pub struct AcceptedStreamBox {
+    /// Stream.
+    pub stream: StreamBox,
     /// Link tag.
     pub tag: LinkTagBox,
 }
 
-impl AcceptedIoBox {
+impl AcceptedStreamBox {
     /// Creates a new instance.
-    pub fn new(
-        read: impl AsyncRead + Send + Sync + 'static, write: impl AsyncWrite + Send + Sync + 'static,
-        tag: impl LinkTag,
-    ) -> Self {
-        Self { io: IoBox::new(read, write), tag: Box::new(tag) }
+    pub fn new(stream: StreamBox, tag: impl LinkTag) -> Self {
+        Self { stream, tag: Box::new(tag) }
     }
 }
 
@@ -48,7 +45,7 @@ pub trait AcceptingTransport: Send + Sync + 'static {
     ///
     /// This functions listens for incoming connections, accepts them and
     /// sends the read stream, write stream and link tag over the provided channel.
-    async fn listen(&self, tx: mpsc::Sender<AcceptedIoBox>) -> Result<()>;
+    async fn listen(&self, tx: mpsc::Sender<AcceptedStreamBox>) -> Result<()>;
 
     /// Checks whether a new link can be added given existing links.
     async fn link_filter(&self, _new: &BoxLink, _existing: &[BoxLink]) -> bool {
@@ -67,8 +64,8 @@ pub trait AcceptingWrapper: Send + Sync + fmt::Debug + 'static {
     /// Name of the wrapper.
     fn name(&self) -> &str;
 
-    /// Wraps the incoming IO stream.
-    async fn wrap(&self, io: IoBox) -> Result<IoBox>;
+    /// Wraps the incoming stream.
+    async fn wrap(&self, io: StreamBox) -> Result<StreamBox>;
 }
 
 type BoxAcceptingWrapper = Box<dyn AcceptingWrapper>;
@@ -337,7 +334,7 @@ impl Acceptor {
 
         let res = loop {
             // Accept incoming transport connection.
-            let AcceptedIoBox { io: mut io_box, tag } = tokio::select! {
+            let AcceptedStreamBox { stream: mut stream_box, tag } = tokio::select! {
                 Some(accepted) = rx.recv() => accepted,
                 Some(()) = accepting_tasks.next() => continue,
                 res = &mut listener => break res,
@@ -359,8 +356,8 @@ impl Acceptor {
                     let name = wrapper.name();
                     tracing::debug!("wrapping tag {tag} in {name}");
 
-                    match wrapper.wrap(io_box).await {
-                        Ok(wrapped) => io_box = wrapped,
+                    match wrapper.wrap(stream_box).await {
+                        Ok(wrapped) => stream_box = wrapped,
                         Err(err) => {
                             tracing::debug!("wrapping tag {tag} in {name} failed: {err}");
                             let _ = link_error_tx.send(BoxLinkError::incoming(&tag, err));
@@ -372,8 +369,8 @@ impl Acceptor {
                 // Add link to aggregated connection.
                 tracing::debug!("adding link for tag {tag} to connection");
                 let user_data = tag.user_data();
-                let IoBox { read, write } = io_box;
-                let link = match server.add_incoming_io(read, write, tag.clone(), &user_data).await {
+                let TxRxBox { tx, rx } = stream_box.into_tx_rx();
+                let link = match server.add_incoming(tx, rx, tag.clone(), &user_data).await {
                     Ok(link) => link,
                     Err(err) => {
                         tracing::debug!("adding link for tag {tag} to connection failed: {err}");

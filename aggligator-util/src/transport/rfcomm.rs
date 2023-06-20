@@ -13,7 +13,7 @@ use std::{
 };
 use tokio::sync::{mpsc, watch};
 
-use super::{AcceptedIoBox, AcceptingTransport, ConnectingTransport, IoBox, LinkTag, LinkTagBox};
+use super::{AcceptedStreamBox, AcceptingTransport, ConnectingTransport, IoBox, LinkTag, LinkTagBox, StreamBox};
 use aggligator::control::Direction;
 
 static NAME: &str = "rfcomm";
@@ -78,6 +78,8 @@ impl LinkTag for RfcommLinkTag {
 }
 
 /// Bluetooth RFCOMM transport for outgoing connections.
+///
+/// This transport is IO-stream based.
 #[derive(Debug, Clone)]
 pub struct RfcommConnector {
     local: SocketAddr,
@@ -110,7 +112,7 @@ impl ConnectingTransport for RfcommConnector {
         future::pending().await
     }
 
-    async fn connect(&self, tag: &dyn LinkTag) -> Result<IoBox> {
+    async fn connect(&self, tag: &dyn LinkTag) -> Result<StreamBox> {
         let tag: &RfcommLinkTag = tag.as_any().downcast_ref().unwrap();
 
         let socket = Socket::new()?;
@@ -118,11 +120,13 @@ impl ConnectingTransport for RfcommConnector {
         let stream = socket.connect(tag.remote).await?;
 
         let (rh, wh) = stream.into_split();
-        Ok(IoBox::new(rh, wh))
+        Ok(IoBox::new(rh, wh).into())
     }
 }
 
 /// Bluetooth RFCOMM transport for incoming connection.
+///
+/// This transport is IO-stream based.
 #[derive(Debug)]
 pub struct RfcommAcceptor {
     listener: Listener,
@@ -149,7 +153,7 @@ impl AcceptingTransport for RfcommAcceptor {
         NAME
     }
 
-    async fn listen(&self, tx: mpsc::Sender<AcceptedIoBox>) -> Result<()> {
+    async fn listen(&self, tx: mpsc::Sender<AcceptedStreamBox>) -> Result<()> {
         loop {
             let (socket, remote) = self.listener.accept().await?;
             let local = socket.as_ref().local_addr()?;
@@ -158,7 +162,7 @@ impl AcceptingTransport for RfcommAcceptor {
             let tag = RfcommLinkTag::new(local, remote, Direction::Incoming);
 
             let (rh, wh) = socket.into_split();
-            let _ = tx.send(AcceptedIoBox::new(rh, wh, tag)).await;
+            let _ = tx.send(AcceptedStreamBox::new(IoBox::new(rh, wh).into(), tag)).await;
         }
     }
 }
