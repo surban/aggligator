@@ -382,7 +382,7 @@ where
         toggle_link_block = None;
         if poll(interval)? {
             match read()? {
-                Event::Key(KeyEvent { code: KeyCode::Char(c), .. }) if ('0'..='9').contains(&c) => {
+                Event::Key(KeyEvent { code: KeyCode::Char(c), .. }) if c.is_ascii_digit() => {
                     let n = c.to_digit(10).unwrap();
                     if disabled_tags_tx.is_some() {
                         if let Some(tag) = tags.and_then(|tags| tags.get(n as usize).cloned()) {
