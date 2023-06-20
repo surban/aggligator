@@ -219,12 +219,17 @@ impl TcpConnector {
         interfaces
             .iter()
             .cloned()
-            .filter_map(|iface| match &iface.addr {
-                Some(addr) if addr.ip().is_unspecified() => None,
-                Some(addr) if addr.ip().is_loopback() != target.ip().is_loopback() => None,
-                Some(addr) if addr.ip().is_ipv4() && target.is_ipv4() => Some(iface.name.as_bytes().to_vec()),
-                Some(addr) if addr.ip().is_ipv6() && target.is_ipv6() => Some(iface.name.as_bytes().to_vec()),
-                _ => None,
+            .filter_map(|iface| {
+                iface
+                    .addr
+                    .iter()
+                    .any(|addr| {
+                        !addr.ip().is_unspecified()
+                            && addr.ip().is_loopback() == target.ip().is_loopback()
+                            && addr.ip().is_ipv4() == target.is_ipv4()
+                            && addr.ip().is_ipv6() == target.is_ipv6()
+                    })
+                    .then(|| iface.name.as_bytes().to_vec())
             })
             .collect()
     }
@@ -415,7 +420,7 @@ impl TcpAcceptor {
     }
 
     fn listen(interface: &NetworkInterface, port: u16) -> Result<TcpListener> {
-        let addr = SocketAddr::new(interface.addr.ok_or(ErrorKind::NotFound)?.ip(), port);
+        let addr = SocketAddr::new(interface.addr.first().ok_or(ErrorKind::NotFound)?.ip(), port);
 
         let socket = match addr.ip() {
             IpAddr::V4(_) => TcpSocket::new_v4()?,
@@ -466,8 +471,8 @@ impl AcceptingTransport for TcpAcceptor {
                 .find_map(|interface| {
                     interface
                         .addr
-                        .map(|addr| addr.ip() == local.ip())
-                        .unwrap_or_default()
+                        .iter()
+                        .any(|addr| addr.ip() == local.ip())
                         .then_some(interface.name.into_bytes())
                 })
             else {

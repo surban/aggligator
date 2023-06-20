@@ -386,7 +386,7 @@ pub struct RawServerCli {
 
 impl RawServerCli {
     fn listen(interface: &NetworkInterface, port: u16) -> Result<TcpListener> {
-        let addr = SocketAddr::new(interface.addr.context("interface has no IP")?.ip(), port);
+        let addr = SocketAddr::new(interface.addr.first().context("interface has no IP")?.ip(), port);
 
         let socket = match addr.ip() {
             IpAddr::V4(_) => TcpSocket::new_v4()?,
