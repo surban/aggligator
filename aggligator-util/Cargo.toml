@@ -21,6 +21,7 @@ websocket = ["tcp", "axum", "tungstenite", "tokio-tungstenite", "url"]
 cli = [
     "tcp",
     "tls",
+    "websocket",
     "speed",
     "monitor",
     "dump",
@@ -32,6 +33,7 @@ cli = [
     "serde_json",
     "rustls-pemfile",
     "rustls/dangerous_configuration",
+    "axum-server",
 ]
 raw-speed-cli = ["cli"]
 speed = ["rand", "rand_xoshiro"]
@@ -69,6 +71,7 @@ tokio-tungstenite = { version = "0.19", features = [
     "rustls-tls-webpki-roots",
 ], optional = true }
 url = { version = "2", optional = true }
+axum-server = { version = "0.5", optional = true }
 
 [[bin]]
 name = "agg-speed"
