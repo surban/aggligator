@@ -114,17 +114,6 @@ impl fmt::Debug for WebSocketConnector {
     }
 }
 
-// Question is whether we should support multiple host addresses.
-// Would be nice, but is it required?
-// Also how would this all work with SSL?
-// Means we would have resolver issues, etc.
-// Then better give the server multiple names, etc.
-
-// TODO:
-// - resolve host names in URL?
-// - is there a URL data type for parsing
-// - connect from every of our IPs
-
 impl fmt::Display for WebSocketConnector {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let urls: Vec<_> = self.urls.iter().map(|url| url.to_string()).collect();
@@ -139,11 +128,16 @@ impl fmt::Display for WebSocketConnector {
 impl WebSocketConnector {
     /// Create a new WebSocket transport for outgoing connections.
     ///
-    /// `urls` contains one or more WebSocket URLS of the target.
-    pub async fn new(urls: impl IntoIterator<Item = String>) -> Result<Self> {
+    /// `urls` contains one or more WebSocket URLs of the target.
+    ///
+    /// It is checked at creation that at least one URL can be resolved to an IP address.
+    ///
+    /// Host name resolution is retried periodically, thus DNS updates will be taken
+    /// into account without the need to recreate this transport.
+    pub async fn new(urls: impl IntoIterator<Item = impl AsRef<str>>) -> Result<Self> {
         let urls = urls
             .into_iter()
-            .map(|url| url.parse::<Url>())
+            .map(|url| url.as_ref().parse::<Url>())
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|err| Error::new(ErrorKind::InvalidInput, err))?;
 
@@ -159,13 +153,21 @@ impl WebSocketConnector {
             }
         }
 
-        Ok(Self {
+        let this = Self {
             urls,
             ip_version: IpVersion::Both,
             resolve_interval: Duration::from_secs(10),
             connector: None,
             web_socket_config: None,
-        })
+        };
+
+        let addrs = this.resolve().await;
+        if addrs.values().all(|addrs| addrs.is_empty()) {
+            return Err(Error::new(ErrorKind::NotFound, "cannot resolve IP address of any URL"));
+        }
+        tracing::info!("URLs resolve to: {:?}", &addrs);
+
+        Ok(this)
     }
 
     /// Sets the IP version used for connecting.
