@@ -193,6 +193,11 @@ impl Acceptor {
         AcceptingTransportHandle { name, result_rx, remove_tx }
     }
 
+    /// Returns whether no transports are present.
+    pub fn is_empty(&self) -> bool {
+        !*self.transports_present_rx.borrow()
+    }
+
     /// Waits for an incoming connection and accepts it.
     ///
     /// Returns the aggregated link channel and control handle.
