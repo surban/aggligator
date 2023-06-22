@@ -30,7 +30,7 @@
 //!
 //! It provides the following modules:
 //!   * functions for establishing a connection consisting of [aggregated TCP links](net),
-//!   * [transport implementations](transport) for TCP and Bluetooth RFCOMM sockets,
+//!   * [transport implementations](transport) for TCP, Bluetooth RFCOMM sockets and WebSockets,
 //!   * optional TLS link authentication and encryption,
 //!   * a text-based, interactive [connection and link montor](monitor),
 //!   * a [speed test](speed).

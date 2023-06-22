@@ -17,6 +17,7 @@ tcp = ["tokio/net"]
 tls = ["rustls", "tokio-rustls"]
 rfcomm = ["bluer/rfcomm"]
 rfcomm-profile = ["bluer/rfcomm", "bluer/bluetoothd"]
+websocket = ["tcp", "axum", "tungstenite", "tokio-tungstenite", "url"]
 cli = [
     "tcp",
     "tls",
@@ -62,6 +63,12 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
     "env-filter",
     "fmt",
 ], optional = true }
+axum = { version = "0.6", features = ["ws"], optional = true }
+tungstenite = { version = "0.19", optional = true }
+tokio-tungstenite = { version = "0.19", features = [
+    "rustls-tls-webpki-roots",
+], optional = true }
+url = { version = "2", optional = true }
 
 [[bin]]
 name = "agg-speed"

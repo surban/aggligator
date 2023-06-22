@@ -348,3 +348,7 @@ pub mod rfcomm;
 #[cfg(feature = "rfcomm-profile")]
 #[cfg_attr(docsrs, doc(cfg(feature = "rfcomm-profile")))]
 pub mod rfcomm_profile;
+
+#[cfg(feature = "websocket")]
+#[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
+pub mod websocket;
