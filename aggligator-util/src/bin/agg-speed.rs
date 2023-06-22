@@ -1,6 +1,5 @@
 //! Aggligator speed test.
 
-use aggligator_util::transport::websocket::{WebSocketAcceptor, WebSocketConnector};
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use crossterm::{style::Stylize, tty::IsTty};
@@ -32,6 +31,7 @@ use aggligator_util::{
     transport::{
         tcp::{IpVersion, TcpAcceptor, TcpConnector},
         tls::{TlsClient, TlsServer},
+        websocket::{WebSocketAcceptor, WebSocketConnector},
         AcceptorBuilder, ConnectorBuilder, LinkTagBox,
     },
 };
@@ -484,7 +484,10 @@ impl ServerCli {
         ports.push(format!("WebSocket {}", self.websocket));
         let websocket_addr = SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), self.websocket);
         tokio::spawn(async move {
-            if let Err(err) = axum_server::bind(websocket_addr).serve(router.into_make_service()).await {
+            if let Err(err) = axum_server::bind(websocket_addr)
+                .serve(router.into_make_service_with_connect_info::<SocketAddr>())
+                .await
+            {
                 eprintln!("Cannot listen on WebSocket {}: {err}", websocket_addr);
             }
         });

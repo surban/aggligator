@@ -207,9 +207,6 @@ impl WebSocketConnector {
     }
 }
 
-// Well we need to resolve that thingy anyway.
-// So do it then.
-
 #[async_trait]
 impl ConnectingTransport for WebSocketConnector {
     fn name(&self) -> &str {
@@ -409,17 +406,25 @@ impl WebSocketAcceptorBuilder {
 }
 
 impl WebSocketAcceptorBuilder {
-    /// Creates a axum router that accepts a WebSocket connection at the specified `path`.
+    /// Creates a Axum router that accepts a WebSocket connection at the specified `path`.
+    ///
+    /// The router must be converted into a service with connection info,
+    /// see [`axum::Router::into_make_service_with_connect_info`] with
+    /// connection info type [`SocketAddr`].
     pub fn router(&self, path: &str) -> Router {
         self.custom_router(path, SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0), [])
     }
 
-    /// Creates a axum router that accepts a WebSocket connection at the specified `path` with custom options.
+    /// Creates a Axum router that accepts a WebSocket connection at the specified `path` with custom options.
     ///
     /// `local_addr` specifies to local address the axum server is listening on.
     /// This is used for link filtering if the server is listening on multiple IP addresses.
     ///
     /// `protocols` specifies the known WebSocket protocols to advertise to a connecting client.
+    ///
+    /// The router must be converted into a service with connection info,
+    /// see [`axum::Router::into_make_service_with_connect_info`] with
+    /// connection info type [`SocketAddr`].
     pub fn custom_router(
         &self, path: &str, local_addr: SocketAddr, protocols: impl IntoIterator<Item = Cow<'static, str>>,
     ) -> Router {
