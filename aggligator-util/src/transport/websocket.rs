@@ -13,7 +13,6 @@ use bytes::Bytes;
 use futures::{SinkExt, StreamExt, TryStreamExt};
 use std::{
     any::Any,
-    borrow::Cow,
     cmp::Ordering,
     collections::{HashMap, HashSet},
     fmt,
@@ -412,7 +411,8 @@ impl WebSocketAcceptorBuilder {
     /// see [`axum::Router::into_make_service_with_connect_info`] with
     /// connection info type [`SocketAddr`].
     pub fn router(&self, path: &str) -> Router {
-        self.custom_router(path, SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0), [])
+        let protocols: [String; 0] = [];
+        self.custom_router(path, SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0), protocols)
     }
 
     /// Creates a Axum router that accepts a WebSocket connection at the specified `path` with custom options.
@@ -426,9 +426,9 @@ impl WebSocketAcceptorBuilder {
     /// see [`axum::Router::into_make_service_with_connect_info`] with
     /// connection info type [`SocketAddr`].
     pub fn custom_router(
-        &self, path: &str, local_addr: SocketAddr, protocols: impl IntoIterator<Item = Cow<'static, str>>,
+        &self, path: &str, local_addr: SocketAddr, protocols: impl IntoIterator<Item = impl AsRef<str>>,
     ) -> Router {
-        let protocols: Vec<_> = protocols.into_iter().collect();
+        let protocols: Vec<_> = protocols.into_iter().map(|p| p.as_ref().to_string()).collect();
         let tx = self.tx.clone();
 
         Router::new().route(
