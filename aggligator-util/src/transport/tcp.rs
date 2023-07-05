@@ -390,7 +390,9 @@ impl AcceptingTransport for TcpAcceptor {
 
             // Find local interface.
             let Some(interface) = local_interface_for_ip(local.ip())? else {
-                tracing::warn!("Interface for incoming connection from {remote} to {local} not found, rejecting.");
+                tracing::warn!(
+                    "Interface for incoming connection from {remote} to {local} not found, rejecting."
+                );
                 continue;
             };
 

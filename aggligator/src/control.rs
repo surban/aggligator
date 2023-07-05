@@ -308,9 +308,11 @@ where
                 public_key: server_public_key,
                 server_id,
                 cfg,
-                user_data: remote_user_data
+                user_data: remote_user_data,
             } = LinkMsg::recv(&mut rx).await?
-                else { return Err::<_, AddLinkError>(protocol_err!("expected Welcome message").into()) };
+            else {
+                return Err::<_, AddLinkError>(protocol_err!("expected Welcome message").into());
+            };
 
             let shared_secret = client_secret.diffie_hellman(&server_public_key);
 

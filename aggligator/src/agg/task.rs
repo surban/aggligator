@@ -1412,7 +1412,7 @@ where
 
         // Extract message and link used for sending.
         let mut status = packet.status.borrow_mut();
-        let SentReliableStatus::ResendQueued {msg: reliable_msg} = &*status else {
+        let SentReliableStatus::ResendQueued { msg: reliable_msg } = &*status else {
             unreachable!("message was not queued for resending")
         };
 
@@ -1815,7 +1815,7 @@ where
 
     /// Sends statistics data.
     fn send_stats(&mut self) {
-        let Some (interval) = self.cfg.stats_intervals.iter().min() else { return };
+        let Some(interval) = self.cfg.stats_intervals.iter().min() else { return };
         if self.stats_last_sent.elapsed() >= *interval {
             self.stats_last_sent = Instant::now();
 

@@ -423,9 +423,12 @@ where
                     server_id,
                     connection_id: encrypted_conn_id,
                     existing_connection,
-                    user_data: remote_user_data, cfg
+                    user_data: remote_user_data,
+                    cfg,
                 } = LinkMsg::recv(&mut rx).await?
-                    else { return Err::<_, IncomingError>(protocol_err!("expected Connect message").into()) };
+                else {
+                    return Err::<_, IncomingError>(protocol_err!("expected Connect message").into());
+                };
 
                 let shared_secret = server_secret.diffie_hellman(&client_public_key);
                 let conn_id = encrypted_conn_id.decrypt(&shared_secret);
