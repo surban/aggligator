@@ -19,10 +19,10 @@ jobs:
           submodules: recursive
       - name: Install dependencies
         run: sudo apt-get update && sudo apt install libdbus-1-dev pkg-config
-      - name: Install Rust 1.65
-        run: rustup set profile default && rustup default 1.65.0
+      - name: Install Rust 1.65 and 1.69
+        run: rustup set profile default && rustup default 1.65.0 && rustup toolchain install 1.69
       - name: Check code formatting
-        run: cargo fmt -- --check
+        run: cargo +1.69 fmt -- --check
       - name: Build
         run: cargo build --examples --bins --all-features --quiet
       - name: Build documentation
