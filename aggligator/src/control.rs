@@ -300,7 +300,7 @@ where
 
         // Perform protocol handshake.
         let (remote_cfg, roundtrip, remote_user_data) = timeout(self.cfg.link_ping_timeout, async {
-            let client_secret = EphemeralSecret::new(rand_core::OsRng);
+            let client_secret = EphemeralSecret::random_from_rng(rand_core::OsRng);
             let client_public_key = PublicKey::from(&client_secret);
 
             let LinkMsg::Welcome {

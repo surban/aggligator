@@ -403,7 +403,7 @@ where
         // Perform protocol handshake.
         let (remote_server_id, conn_id, existing, remote_cfg, roundtrip, remote_user_data) =
             timeout(cfg.link_ping_timeout, async {
-                let server_secret = EphemeralSecret::new(rand_core::OsRng);
+                let server_secret = EphemeralSecret::random_from_rng(rand_core::OsRng);
                 let server_public_key = PublicKey::from(&server_secret);
 
                 let start = Instant::now();
