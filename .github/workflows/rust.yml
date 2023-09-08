@@ -11,18 +11,18 @@ env:
 
 jobs:
   build:
+    name: Build with latest stable Rust
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v3
         with:
           submodules: recursive
       - name: Install dependencies
         run: sudo apt-get update && sudo apt install libdbus-1-dev pkg-config
-      - name: Install Rust 1.65 and 1.69
-        run: rustup set profile default && rustup default 1.65.0 && rustup toolchain install 1.69
+      - name: Install latest stable Rust
+        run: rustup set profile default && rustup default stable && rustup update
       - name: Check code formatting
-        run: cargo +1.69 fmt -- --check
+        run: cargo fmt -- --check
       - name: Build
         run: cargo build --examples --bins --all-features --quiet
       - name: Build documentation
@@ -39,3 +39,25 @@ jobs:
           RUST_LOG=info cargo run --quiet --release --bin agg-speed -- server --tls --no-monitor --oneshot &
           sleep 1
           RUST_LOG=info cargo run --quiet --release --bin agg-speed -- client --tls --no-monitor --time 15 --tcp localhost
+      - name: Security vulnerability audit
+        run: |
+          cargo install --quiet cargo-audit
+          cargo audit --quiet
+
+  build-msrv:
+    name: Build with minimum supported Rust versions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: recursive
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt install libdbus-1-dev pkg-config
+      - name: Install Rust 1.65.0
+        run: rustup toolchain install 1.65.0
+      - name: Install Rust 1.70.0
+        run: rustup toolchain install 1.70.0
+      - name: Build aggligator with Rust 1.65.0
+        run: cargo +1.65.0 build --manifest-path aggligator/Cargo.toml --all-features --quiet
+      - name: Build aggligator and aggligator-util with Rust 1.70.0
+        run: cargo +1.70.0 build --examples --bins --all-features --quiet
