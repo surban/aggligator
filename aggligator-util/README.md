@@ -40,6 +40,10 @@ Run the following command to install the command line tools:
 
     cargo install aggligator-util
 
+## Minimum supported Rust version
+
+The minimum supported Rust version (MSRV) is 1.70.
+
 ## License
 
 Aggligator is licensed under the [Apache 2.0 license].
