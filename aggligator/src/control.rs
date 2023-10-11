@@ -180,7 +180,7 @@ impl<TX, RX, TAG> Eq for Control<TX, RX, TAG> {}
 
 impl<TX, RX, TAG> PartialOrd for Control<TX, RX, TAG> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.conn_id.partial_cmp(&other.conn_id)
+        Some(self.cmp(other))
     }
 }
 
@@ -486,7 +486,7 @@ impl<TAG> Eq for Link<TAG> {}
 
 impl<TAG> PartialOrd for Link<TAG> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        (&self.conn_id, &self.link_id).partial_cmp(&(&other.conn_id, &other.link_id))
+        Some(self.cmp(other))
     }
 }
 
