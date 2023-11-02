@@ -31,7 +31,7 @@ pub trait ConnectingTransport: Send + Sync + 'static {
 
     /// Discovers link tags for connecting.
     ///
-    /// Each link tag returned by this function will be passed to the [`connect`](Self::connect)
+    /// Each link tag returned by this function will be passed to the [`connect`](Self::connect())
     /// function to establish a link.
     async fn link_tags(&self, tx: watch::Sender<HashSet<LinkTagBox>>) -> Result<()>;
 
