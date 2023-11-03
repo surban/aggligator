@@ -349,6 +349,10 @@ pub mod rfcomm;
 #[cfg_attr(docsrs, doc(cfg(feature = "rfcomm-profile")))]
 pub mod rfcomm_profile;
 
+#[cfg(any(feature = "usb-host", feature = "usb-device"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "usb-host", feature = "usb-device"))))]
+pub mod usb;
+
 #[cfg(feature = "websocket")]
 #[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
 pub mod websocket;

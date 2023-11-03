@@ -47,6 +47,21 @@ const DUMP_BUFFER: usize = 8192;
 const WEBSOCKET_PORT: u16 = 8080;
 const WEBSOCKET_PATH: &str = "/agg-speed";
 
+#[cfg(any(feature = "usb-host", feature = "usb-device"))]
+mod usb {
+    pub const VID: u16 = u16::MAX - 1;
+    pub const PID: u16 = u16::MAX - 1;
+    pub const MANUFACTURER: &str = env!("CARGO_PKG_NAME");
+    pub const PRODUCT: &str = env!("CARGO_BIN_NAME");
+    pub const CLASS: u8 = 255;
+    pub const SUB_CLASS: u8 = 255;
+    pub const PROTOCOL: u8 = 255;
+    pub const INTERFACE_CLASS: u8 = 255;
+    pub const INTERFACE_SUB_CLASS: u8 = 230;
+    pub const INTERFACE_PROTOCOL: u8 = 231;
+    pub const INTERFACE_NAME: &str = "speed test";
+}
+
 #[cfg(feature = "rfcomm")]
 const RFCOMM_CHANNEL: u8 = 20;
 #[cfg(feature = "rfcomm-profile")]
@@ -196,6 +211,10 @@ pub struct ClientCli {
     #[cfg(feature = "rfcomm-profile")]
     #[arg(long)]
     rfcomm_profile: Option<bluer::Address>,
+    /// USB device serial number (equals hostname of speed test device).
+    #[cfg(feature = "usb-host")]
+    #[arg(long)]
+    usb: Option<String>,
 }
 
 #[cfg(feature = "rfcomm")]
@@ -254,6 +273,30 @@ impl ClientCli {
                 .context("RFCOMM profile connector failed")?;
             targets.push(addr.to_string());
             connector.add(rfcomm_profile_connector);
+        }
+
+        #[cfg(feature = "usb-host")]
+        if let Some(serial) = &self.usb {
+            let filter_serial = serial.clone();
+            let filter = move |dev: &aggligator_util::transport::usb::DeviceInfo,
+                               iface: &aggligator_util::transport::usb::InterfaceInfo| {
+                dev.vendor_id == usb::VID
+                    && dev.product_id == usb::PID
+                    && dev.manufacturer == usb::MANUFACTURER
+                    && dev.product == usb::PRODUCT
+                    && dev.serial_number == filter_serial
+                    && dev.class_code == usb::CLASS
+                    && dev.sub_class_code == usb::SUB_CLASS
+                    && dev.protocol_code == usb::PROTOCOL
+                    && iface.class_code == usb::INTERFACE_CLASS
+                    && iface.sub_class_code == usb::INTERFACE_SUB_CLASS
+                    && iface.protocol_code == usb::INTERFACE_PROTOCOL
+                    && iface.description == usb::INTERFACE_NAME
+            };
+            let usb_connector =
+                aggligator_util::transport::usb::UsbConnector::new(filter).context("cannot initialize USB")?;
+            targets.push(format!("USB {serial}"));
+            connector.add(usb_connector);
         }
 
         if !self.websocket.is_empty() {
@@ -422,6 +465,10 @@ pub struct ServerCli {
     #[cfg(feature = "rfcomm")]
     #[arg(long, default_value_t = RFCOMM_CHANNEL)]
     rfcomm: u8,
+    /// Listen on USB device controller (UDC).
+    #[cfg(feature = "usb-device")]
+    #[arg(long)]
+    usb: bool,
     /// WebSocket (HTTP) port to listen on.
     #[arg(long, default_value_t = WEBSOCKET_PORT)]
     websocket: u16,
@@ -478,6 +525,51 @@ impl ServerCli {
             }
             Err(err) => eprintln!("Cannot listen on RFCOMM profile {RFCOMM_UUID}: {err}"),
         }
+
+        #[cfg(feature = "usb-device")]
+        let _usb_reg = if self.usb {
+            fn register_usb(
+                serial: &str,
+            ) -> Result<(usb_gadget::RegGadget, upc::device::UpcFunction, std::ffi::OsString)> {
+                let udc = usb_gadget::default_udc()?;
+                let udc_name = udc.name().to_os_string();
+
+                let (upc, func_hnd) = upc::device::UpcFunction::new(
+                    upc::device::InterfaceId::new(upc::Class::new(
+                        usb::INTERFACE_CLASS,
+                        usb::INTERFACE_SUB_CLASS,
+                        usb::INTERFACE_PROTOCOL,
+                    ))
+                    .with_name(usb::INTERFACE_NAME),
+                );
+
+                let reg = usb_gadget::Gadget::new(
+                    usb_gadget::Class::new(usb::CLASS, usb::SUB_CLASS, usb::PROTOCOL),
+                    usb_gadget::Id::new(usb::VID, usb::PID),
+                    usb_gadget::Strings::new(usb::MANUFACTURER, usb::PRODUCT, serial),
+                )
+                .with_os_descriptor(usb_gadget::OsDescriptor::microsoft())
+                .with_config(usb_gadget::Config::new("config").with_function(func_hnd))
+                .bind(&udc)?;
+
+                Ok((reg, upc, udc_name))
+            }
+
+            let serial = gethostname::gethostname().to_string_lossy().to_string();
+            match register_usb(&serial) {
+                Ok((usb_reg, upc, udc_name)) => {
+                    acceptor.add(aggligator_util::transport::usb::UsbAcceptor::new(upc, &udc_name));
+                    ports.push(format!("UDC {} ({serial})", udc_name.to_string_lossy()));
+                    Some(usb_reg)
+                }
+                Err(err) => {
+                    eprintln!("Cannot listen on USB: {err}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         let (wsa, router) = WebSocketAcceptor::new(WEBSOCKET_PATH);
         acceptor.add(wsa);

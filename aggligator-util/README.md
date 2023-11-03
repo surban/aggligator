@@ -29,6 +29,8 @@ The following crate features are available:
   * `tcp` - TCP transport,
   * `rfcomm` - Bluetooth RFCOMM transport (Linux-only),
   * `rfcomm-profile` - Bluetooth RFCOMM transport using profiles for connecting (Linux-only),
+  * `usb-host` - host-side USB transport,
+  * `usb-device` - device-side USB transport,
   * `websocket` - WebSocket transport,
   * `monitor` — enables the text-based, interactive connection and link monitor,
   * `speed` — enables speed test functions,

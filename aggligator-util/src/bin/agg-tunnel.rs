@@ -43,6 +43,21 @@ const TCP_PORT: u16 = 5800;
 const FLUSH_DELAY: Option<Duration> = Some(Duration::from_millis(10));
 const DUMP_BUFFER: usize = 8192;
 
+#[cfg(any(feature = "usb-host", feature = "usb-device"))]
+mod usb {
+    pub const VID: u16 = u16::MAX - 2;
+    pub const PID: u16 = u16::MAX - 2;
+    pub const MANUFACTURER: &str = env!("CARGO_PKG_NAME");
+    pub const PRODUCT: &str = env!("CARGO_BIN_NAME");
+    pub const CLASS: u8 = 255;
+    pub const SUB_CLASS: u8 = 255;
+    pub const PROTOCOL: u8 = 255;
+    pub const INTERFACE_CLASS: u8 = 255;
+    pub const INTERFACE_SUB_CLASS: u8 = 240;
+    pub const INTERFACE_PROTOCOL: u8 = 1;
+    pub const DEFAULT_INTERFACE_NAME: &str = "agg-tunnel";
+}
+
 /// Forward TCP ports through a connection of aggregated links.
 ///
 /// This uses Aggligator to combine multiple TCP links into one connection,
@@ -124,6 +139,16 @@ pub struct ClientCli {
     #[cfg(feature = "rfcomm")]
     #[arg(long)]
     rfcomm: Option<bluer::rfcomm::SocketAddr>,
+    /// USB device serial number (equals hostname of speed test device).
+    ///
+    /// Use - to match any device.
+    #[cfg(feature = "usb-host")]
+    #[arg(long)]
+    usb: Option<String>,
+    /// USB interface name.
+    #[cfg(feature = "usb-host")]
+    #[arg(long, default_value=usb::DEFAULT_INTERFACE_NAME)]
+    usb_interface_name: String,
 }
 
 impl ClientCli {
@@ -167,6 +192,46 @@ impl ClientCli {
             None => None,
         };
 
+        #[cfg(feature = "usb-host")]
+        let usb_connector = {
+            if let Some(serial) = &self.usb {
+                targets.push(format!("USB {serial}"));
+            }
+
+            let usb = self.usb.clone();
+            move || match &usb {
+                Some(serial) => {
+                    let filter_serial = serial.clone();
+                    let filter_interface_name = self.usb_interface_name.clone();
+                    let filter =
+                        move |dev: &aggligator_util::transport::usb::DeviceInfo,
+                              iface: &aggligator_util::transport::usb::InterfaceInfo| {
+                            dev.vendor_id == usb::VID
+                                && dev.product_id == usb::PID
+                                && dev.manufacturer == usb::MANUFACTURER
+                                && dev.product == usb::PRODUCT
+                                && (dev.serial_number == filter_serial || filter_serial == "-")
+                                && dev.class_code == usb::CLASS
+                                && dev.sub_class_code == usb::SUB_CLASS
+                                && dev.protocol_code == usb::PROTOCOL
+                                && iface.class_code == usb::INTERFACE_CLASS
+                                && iface.sub_class_code == usb::INTERFACE_SUB_CLASS
+                                && iface.protocol_code == usb::INTERFACE_PROTOCOL
+                                && iface.description == filter_interface_name
+                        };
+
+                    match aggligator_util::transport::usb::UsbConnector::new(filter) {
+                        Ok(c) => Some(c),
+                        Err(err) => {
+                            eprintln!("cannot use USB target: {err}");
+                            None
+                        }
+                    }
+                }
+                None => None,
+            }
+        };
+
         if targets.is_empty() {
             bail!("No connection transports.");
         }
@@ -195,6 +260,8 @@ impl ClientCli {
             let tcp_connector = tcp_connector.clone();
             #[cfg(feature = "rfcomm")]
             let rfcomm_connector = rfcomm_connector.clone();
+            #[cfg(feature = "usb-host")]
+            let usb_connector = usb_connector.clone();
             let dump = dump.clone();
             port_tasks.push(async move {
                 loop {
@@ -213,6 +280,10 @@ impl ClientCli {
                     }
                     #[cfg(feature = "rfcomm")]
                     if let Some(c) = rfcomm_connector.clone() {
+                        connector.add(c);
+                    }
+                    #[cfg(feature = "usb-host")]
+                    if let Some(c) = usb_connector() {
                         connector.add(c);
                     }
                     let control = connector.control();
@@ -317,6 +388,14 @@ pub struct ServerCli {
     #[cfg(feature = "rfcomm")]
     #[arg(long)]
     rfcomm: Option<u8>,
+    /// Listen on USB device controller (UDC).
+    #[cfg(feature = "usb-device")]
+    #[arg(long)]
+    usb: bool,
+    /// USB interface name.
+    #[cfg(feature = "usb-host")]
+    #[arg(long, default_value=usb::DEFAULT_INTERFACE_NAME)]
+    usb_interface_name: String,
 }
 
 impl ServerCli {
@@ -370,6 +449,51 @@ impl ServerCli {
                 Err(err) => eprintln!("Cannot listen on RFCOMM channel {ch}: {err}"),
             }
         }
+
+        #[cfg(feature = "usb-device")]
+        let _usb_reg = if self.usb {
+            fn register_usb(
+                serial: &str, interface_name: &str,
+            ) -> Result<(usb_gadget::RegGadget, upc::device::UpcFunction, std::ffi::OsString)> {
+                let udc = usb_gadget::default_udc()?;
+                let udc_name = udc.name().to_os_string();
+
+                let (upc, func_hnd) = upc::device::UpcFunction::new(
+                    upc::device::InterfaceId::new(upc::Class::new(
+                        usb::INTERFACE_CLASS,
+                        usb::INTERFACE_SUB_CLASS,
+                        usb::INTERFACE_PROTOCOL,
+                    ))
+                    .with_name(interface_name),
+                );
+
+                let reg = usb_gadget::Gadget::new(
+                    usb_gadget::Class::new(usb::CLASS, usb::SUB_CLASS, usb::PROTOCOL),
+                    usb_gadget::Id::new(usb::VID, usb::PID),
+                    usb_gadget::Strings::new(usb::MANUFACTURER, usb::PRODUCT, serial),
+                )
+                .with_os_descriptor(usb_gadget::OsDescriptor::microsoft())
+                .with_config(usb_gadget::Config::new("config").with_function(func_hnd))
+                .bind(&udc)?;
+
+                Ok((reg, upc, udc_name))
+            }
+
+            let serial = gethostname::gethostname().to_string_lossy().to_string();
+            match register_usb(&serial, &self.usb_interface_name) {
+                Ok((usb_reg, upc, udc_name)) => {
+                    acceptor.add(aggligator_util::transport::usb::UsbAcceptor::new(upc, &udc_name));
+                    server_ports.push(format!("UDC {} ({serial})", udc_name.to_string_lossy()));
+                    Some(usb_reg)
+                }
+                Err(err) => {
+                    eprintln!("Cannot listen on USB: {err}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         if server_ports.is_empty() {
             bail!("No listening transports.");
