@@ -29,10 +29,13 @@ mod host {
         time::sleep,
     };
 
-    use super::super::{ConnectingTransport, LinkTag, LinkTagBox, StreamBox, TxRxBox};
+    use super::{
+        super::{ConnectingTransport, LinkTag, LinkTagBox, StreamBox, TxRxBox},
+        NAME, TIMEOUT,
+    };
     use aggligator::control::Direction;
 
-    use super::{NAME, TIMEOUT};
+    const PROBE_INTERVAL: Duration = Duration::from_secs(3);
 
     /// Link tag for outgoing USB link.
     #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -249,7 +252,7 @@ mod host {
                                 tags.extend(dev_tags.into_iter().map(|tag| Box::new(tag) as Box<dyn LinkTag>))
                             }
                             Err(err) => {
-                                tracing::warn!(
+                                tracing::trace!(
                                     "cannot probe device {}-{}: {err}",
                                     dev.bus_number(),
                                     dev.address()
@@ -270,16 +273,14 @@ mod host {
 
                 match &mut changed_rx {
                     Some(changed_rx) => {
-                        if changed_rx.changed().await.is_err() {
-                            break;
+                        tokio::select! {
+                            Ok(()) = changed_rx.changed() => tracing::debug!("USB devices changed"),
+                            () = sleep(PROBE_INTERVAL) => (),
                         }
-                        tracing::debug!("USB devices changed");
                     }
-                    None => sleep(Duration::from_secs(3)).await,
+                    None => sleep(PROBE_INTERVAL).await,
                 }
             }
-
-            Ok(())
         }
 
         async fn connect(&self, tag: &dyn LinkTag) -> Result<StreamBox> {
