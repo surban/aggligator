@@ -9,6 +9,7 @@ use aggligator::cfg::Cfg;
 /// Initializes logging for command line utilities.
 pub fn init_log() {
     tracing_subscriber::registry().with(fmt::layer()).with(EnvFilter::from_default_env()).init();
+    tracing_log::LogTracer::init().unwrap();
 }
 
 /// Prints the default Aggligator configuration.

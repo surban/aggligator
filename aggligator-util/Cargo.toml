@@ -29,6 +29,7 @@ cli = [
     "dump",
     "clap",
     "tracing-subscriber",
+    "tracing-log",
     "anyhow",
     "crossterm",
     "serde",
@@ -68,6 +69,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
     "env-filter",
     "fmt",
 ], optional = true }
+tracing-log = { version = "0.2", optional = true }
 axum = { version = "0.6", features = ["ws"], optional = true }
 tungstenite = { version = "0.20", optional = true }
 tokio-tungstenite = { version = "0.20", features = [
