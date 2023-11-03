@@ -437,7 +437,7 @@ where
             })
             .await??;
 
-        tracing::debug!(%server_id, %conn_id, %existing, "handling incoming link");
+        tracing::debug!(?server_id, ?conn_id, ?existing, "handling incoming link");
 
         enum Connection<TX, RX, TAG> {
             Existing {
@@ -511,7 +511,7 @@ where
                     let link = Link::from(&link_int);
                     link_tx_permit.send(link_int);
 
-                    tracing::debug!("link joins existing connection {conn_id}");
+                    tracing::debug!("link joins existing connection {conn_id:?}");
                     Ok(link)
                 }
                 Err(_) => {
@@ -551,7 +551,7 @@ where
                     links: Vec::new(),
                 });
 
-                tracing::debug!("link starts new connection {conn_id}");
+                tracing::debug!("link starts new connection {conn_id:?}");
                 Ok(link)
             }
 

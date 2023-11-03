@@ -238,7 +238,7 @@ impl Connector {
 
     /// Task for handling all transports.
     #[allow(clippy::too_many_arguments)]
-    #[tracing::instrument(level="debug", skip_all, fields(id=%control.id()))]
+    #[tracing::instrument(level="debug", skip_all, fields(id=?control.id()))]
     async fn task(
         control: BoxControl, active_transports: Arc<RwLock<Vec<Weak<dyn ConnectingTransport>>>>,
         mut transport_rx: mpsc::UnboundedReceiver<TransportPack>, tags_tx: watch::Sender<HashSet<LinkTagBox>>,
@@ -323,7 +323,7 @@ impl Connector {
     }
 
     /// Task for handling a transport.
-    #[tracing::instrument(level="debug", skip_all, fields(id=%control.id(), transport=transport_pack.transport.name()))]
+    #[tracing::instrument(level="debug", skip_all, fields(transport=transport_pack.transport.name()))]
     async fn transport_task(
         transport_pack: TransportPack, control: BoxControl, tags_fw_tx: watch::Sender<HashSet<LinkTagBox>>,
         mut disabled_tags_rx: watch::Receiver<HashSet<LinkTagBox>>,

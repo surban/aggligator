@@ -311,7 +311,7 @@ pub struct Task<TX, RX, TAG> {
 
 impl<TX, RX, TAG> fmt::Debug for Task<TX, RX, TAG> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("Task").field("id", &self.conn_id).field("direction", &self.direction).finish()
+        write!(f, "Task({}{:?})", self.direction.arrow(), &self.conn_id)
     }
 }
 

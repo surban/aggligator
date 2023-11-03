@@ -128,6 +128,18 @@ impl fmt::Display for Direction {
     }
 }
 
+impl Direction {
+    /// Arrow symbol for direction.
+    ///
+    /// `<-` for incoming and `->` for outgoing.
+    pub const fn arrow(&self) -> &'static str {
+        match self {
+            Self::Incoming => "<-",
+            Self::Outgoing => "->",
+        }
+    }
+}
+
 /// A handle for controlling and monitoring a connection consisting of aggregated links.
 ///
 /// Clones of this handle refer to the same underlying connection.

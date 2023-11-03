@@ -10,13 +10,19 @@ use std::{fmt, num::NonZeroU128, sync::Arc};
 use tokio::sync::mpsc;
 use x25519_dalek::SharedSecret;
 
+fn debug_id(id: u128) -> String {
+    let mut s = format!("{id:016x}");
+    s.truncate(6);
+    s
+}
+
 /// Connection identifier.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ConnId(pub u128);
 
 impl fmt::Debug for ConnId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:016x}", self.0)
+        write!(f, "{}", debug_id(self.0))
     }
 }
 
@@ -39,7 +45,7 @@ pub(crate) struct EncryptedConnId(pub u128);
 
 impl fmt::Debug for EncryptedConnId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "*{:016x}*", self.0)
+        write!(f, "*{}*", debug_id(self.0))
     }
 }
 
@@ -74,7 +80,7 @@ impl fmt::Display for OwnedConnId {
 
 impl fmt::Debug for OwnedConnId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", &self.0.id)
+        write!(f, "{:?}", &self.0.id)
     }
 }
 
@@ -109,7 +115,7 @@ pub struct LinkId(pub u128);
 
 impl fmt::Debug for LinkId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:016x}", self.0)
+        write!(f, "{}", debug_id(self.0))
     }
 }
 
@@ -132,7 +138,7 @@ pub struct ServerId(pub NonZeroU128);
 
 impl fmt::Debug for ServerId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:016x}", self.0)
+        write!(f, "{}", debug_id(self.0.get()))
     }
 }
 

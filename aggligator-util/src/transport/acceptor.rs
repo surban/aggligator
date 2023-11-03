@@ -273,7 +273,7 @@ impl Acceptor {
         // Run server task.
         tokio::spawn(task.run());
 
-        tracing::debug!("accepted incoming connected {}", control.id());
+        tracing::debug!("accepted incoming connection {:?}", control.id());
         Ok((channel, control))
     }
 
@@ -283,6 +283,7 @@ impl Acceptor {
     }
 
     /// Task managing all listening transports.
+    #[tracing::instrument(level="debug", skip_all, fields(id=?server.id()))]
     async fn task(
         server: BoxServer, active_transports: Arc<RwLock<Vec<Weak<dyn AcceptingTransport>>>>,
         mut transport_rx: mpsc::UnboundedReceiver<AcceptingTransportPack>,
@@ -337,7 +338,7 @@ impl Acceptor {
     }
 
     /// Task managing a listening transport.
-    #[tracing::instrument(level="debug", skip_all, fields(id=%server.id(), transport=transport.transport.name()))]
+    #[tracing::instrument(level="debug", skip_all, fields(transport=transport.transport.name()))]
     async fn transport_task(
         server: BoxServer, transport: AcceptingTransportPack, link_error_tx: broadcast::Sender<BoxLinkError>,
         wrappers: Arc<Vec<BoxAcceptingWrapper>>,
@@ -413,6 +414,10 @@ impl Acceptor {
             };
             accepting_tasks.push(task);
         };
+
+        if let Err(err) = &res {
+            tracing::warn!("transport failed: {err}");
+        }
 
         let _ = result_tx.send(res);
     }
