@@ -9,7 +9,7 @@ This crate provides utility functions and command line tools for working with th
 
 It provides the following functionality:
   * functions for establishing a connection consisting of aggregated TCP,
-    Bluetooth RFCOMM links and WebSocket links,
+    Bluetooth RFCOMM links, USB and WebSocket links,
   * optional TLS link authentication and encryption,
   * a text-based, interactive connection and link montor,
   * a speed test.
@@ -45,6 +45,7 @@ Run the following command to install the command line tools:
 ## Minimum supported Rust version
 
 The minimum supported Rust version (MSRV) is 1.70.
+With device-side USB transport enabled the MSRV is 1.73.
 
 ## License
 

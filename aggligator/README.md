@@ -12,7 +12,7 @@ of all links. Additionally it provides resiliency against failure of individual
 links and allows adding and removing of links on-the-fly.
 
 It serves the same purpose as [Multipath TCP] and [SCTP] but works over existing,
-widely adopted protocols such as TCP, HTTPS, TLS and WebSockets and is completely
+widely adopted protocols such as TCP, HTTPS, TLS, USB and WebSockets and is completely
 implemented in user space without the need for any support from the operating system.
 
 Aggligator is written in 100% safe [Rust] and builds upon the [Tokio]

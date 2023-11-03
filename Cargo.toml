@@ -1,3 +1,6 @@
 [workspace]
 members = ["aggligator", "aggligator-util"]
 resolver = "2"
+
+# [patch.crates-io]
+# upc = { path = "../upc" }
