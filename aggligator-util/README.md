@@ -24,14 +24,21 @@ Both tools display a text-based, interactive connection and link monitor.
 
 ## Features
 
-The following crate features are available:
+The following crate features enable transports:
 
   * `tcp` - TCP transport,
   * `rfcomm` - Bluetooth RFCOMM transport (Linux-only),
   * `rfcomm-profile` - Bluetooth RFCOMM transport using profiles for connecting (Linux-only),
   * `usb-host` - host-side USB transport,
   * `usb-device` - device-side USB transport,
-  * `websocket` - WebSocket transport,
+  * `websocket` - WebSocket transport.
+
+The following crate features enable link wrappers:
+
+  * `tls` - TLS encryption.
+
+The following crate features enable additional functionality:
+
   * `monitor` — enables the text-based, interactive connection and link monitor,
   * `speed` — enables speed test functions,
   * `dump` — enables saving of analysis data to disk.
