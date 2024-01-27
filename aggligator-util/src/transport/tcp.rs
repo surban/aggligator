@@ -482,7 +482,7 @@ pub(crate) fn bind_socket_to_interface(socket: &TcpSocket, interface: &[u8], rem
     {
         for ifn in local_interfaces()? {
             if ifn.name.as_bytes() == interface {
-                let Some(addr) = ifn.addr else { continue };
+                let Some(addr) = ifn.addr.first() else { continue };
                 match (addr.ip(), remote) {
                     (IpAddr::V4(_), IpAddr::V4(_)) => (),
                     (IpAddr::V6(_), IpAddr::V6(_)) => (),
