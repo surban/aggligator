@@ -138,23 +138,24 @@ impl RawClientCli {
         {
             let mut bound = false;
 
-            for ifn in ifaces {
+            'ifaces: for ifn in ifaces {
                 if ifn.name.as_bytes() == iface {
-                    let Some(addr) = ifn.addr else { continue };
-                    match (addr.ip(), target.ip()) {
-                        (IpAddr::V4(_), IpAddr::V4(_)) => (),
-                        (IpAddr::V6(_), IpAddr::V6(_)) => (),
-                        _ => continue,
-                    }
+                    for addr in &ifn.addr {
+                        match (addr.ip(), target.ip()) {
+                            (IpAddr::V4(_), IpAddr::V4(_)) => (),
+                            (IpAddr::V6(_), IpAddr::V6(_)) => (),
+                            _ => continue,
+                        }
 
-                    if addr.ip().is_loopback() != target.ip().is_loopback() {
-                        continue;
-                    }
+                        if addr.ip().is_loopback() != target.ip().is_loopback() {
+                            continue;
+                        }
 
-                    tracing::debug!("binding to {addr:?} on interface {}", &ifn.name);
-                    socket.bind(SocketAddr::new(addr.ip(), 0))?;
-                    bound = true;
-                    break;
+                        tracing::debug!("binding to {addr:?} on interface {}", &ifn.name);
+                        socket.bind(SocketAddr::new(addr.ip(), 0))?;
+                        bound = true;
+                        break 'ifaces;
+                    }
                 }
             }
 
