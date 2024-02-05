@@ -2,7 +2,8 @@
 
 use async_trait::async_trait;
 use futures::{future, FutureExt};
-use network_interface::{NetworkInterface, NetworkInterfaceConfig};
+use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
+use socket2::SockRef;
 use std::{
     any::Any,
     cmp::Ordering,
@@ -348,7 +349,11 @@ impl TcpAcceptor {
         let mut listeners = Vec::new();
 
         for addr in addrs {
-            listeners.push(TcpListener::bind(addr).await?);
+            let listener = TcpListener::bind(addr).await?;
+            if addr.is_ipv6() {
+                let _ = SockRef::from(&listener).set_only_v6(false);
+            }
+            listeners.push(listener);
         }
 
         Self::from_listeners(listeners)
@@ -377,10 +382,12 @@ impl TcpAcceptor {
         let mut listeners = Vec::new();
 
         for iface in local_interfaces()? {
-            match Self::listen(&iface, port) {
-                Ok(listener) => listeners.push(listener),
-                Err(err) => {
-                    tracing::warn!("cannot listen on {}: {err}", &iface.name);
+            for version in [IpVersion::IPv6, IpVersion::IPv4] {
+                match Self::listen(&iface, port, version) {
+                    Ok(listener) => listeners.push(listener),
+                    Err(err) => {
+                        tracing::warn!("cannot listen on {version:?} {}: {err}", &iface.name);
+                    }
                 }
             }
         }
@@ -388,13 +395,26 @@ impl TcpAcceptor {
         Self::from_listeners(listeners)
     }
 
-    fn listen(interface: &NetworkInterface, port: u16) -> Result<TcpListener> {
-        let addr = SocketAddr::new(interface.addr.first().ok_or(ErrorKind::NotFound)?.ip(), port);
+    fn listen(interface: &NetworkInterface, port: u16, ip_version: IpVersion) -> Result<TcpListener> {
+        let ip = interface
+            .addr
+            .iter()
+            .find_map(|addr| match addr {
+                Addr::V4(ip) if ip_version != IpVersion::IPv6 => Some(IpAddr::V4(ip.ip)),
+                Addr::V6(ip) if ip_version != IpVersion::IPv4 => Some(IpAddr::V6(ip.ip)),
+                _ => None,
+            })
+            .ok_or(ErrorKind::NotFound)?;
+        let addr = SocketAddr::new(ip, port);
 
         let socket = match addr.ip() {
             IpAddr::V4(_) => TcpSocket::new_v4()?,
             IpAddr::V6(_) => TcpSocket::new_v6()?,
         };
+
+        if addr.is_ipv6() {
+            let _ = SockRef::from(&socket).set_only_v6(false);
+        }
 
         socket.bind(addr)?;
 
