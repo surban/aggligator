@@ -25,11 +25,11 @@ use tokio::{
 
 use aggligator::{cfg::Cfg, dump::dump_to_json_line_file};
 use aggligator_util::{
-    cli::{init_log, load_cfg, print_default_cfg},
+    cli::{init_log, load_cfg, parse_tcp_link_filter, print_default_cfg},
     monitor::{format_speed, interactive_monitor},
     speed::{speed_test, INTERVAL},
     transport::{
-        tcp::{IpVersion, TcpAcceptor, TcpConnector},
+        tcp::{IpVersion, TcpAcceptor, TcpConnector, TcpLinkFilter},
         tls::{TlsClient, TlsServer},
         websocket::{WebSocketAcceptor, WebSocketConnector},
         AcceptorBuilder, ConnectorBuilder, LinkTagBox,
@@ -198,6 +198,15 @@ pub struct ClientCli {
     /// TCP server name or IP addresses and port number.
     #[arg(long)]
     tcp: Vec<String>,
+    /// TCP link filter.
+    ///
+    /// none: no link filtering.
+    ///
+    /// interface-interface: one link for each pair of local and remote interface.
+    ///
+    /// interface-ip: one link for each pair of local interface and remote IP address.
+    #[arg(long, value_parser = parse_tcp_link_filter, default_value = "interface-interface")]
+    tcp_link_filter: TcpLinkFilter,
     /// WebSocket hosts or URLs.
     ///
     /// Default server port number is 8080 and path is /agg-speed.
@@ -255,6 +264,7 @@ impl ClientCli {
             let mut tcp_connector =
                 TcpConnector::new(self.tcp.clone(), TCP_PORT).await.context("cannot resolve TCP target")?;
             tcp_connector.set_ip_version(ip_version);
+            tcp_connector.set_link_filter(self.tcp_link_filter);
             targets.push(tcp_connector.to_string());
             connector.add(tcp_connector);
         }

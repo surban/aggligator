@@ -28,10 +28,10 @@ use aggligator::{
     dump::dump_to_json_line_file,
 };
 use aggligator_util::{
-    cli::{init_log, load_cfg, print_default_cfg},
+    cli::{init_log, load_cfg, parse_tcp_link_filter, print_default_cfg},
     monitor::{interactive_monitor, watch_tags},
     transport::{
-        tcp::{IpVersion, TcpAcceptor, TcpConnector},
+        tcp::{IpVersion, TcpAcceptor, TcpConnector, TcpLinkFilter},
         AcceptorBuilder, ConnectingTransport, ConnectorBuilder, LinkTagBox,
     },
 };
@@ -135,6 +135,15 @@ pub struct ClientCli {
     /// TCP server name or IP addresses and port number.
     #[arg(long)]
     tcp: Vec<String>,
+    /// TCP link filter.
+    ///
+    /// none: no link filtering.
+    ///
+    /// interface-interface: one link for each pair of local and remote interface.
+    ///
+    /// interface-ip: one link for each pair of local interface and remote IP address.
+    #[arg(long, value_parser = parse_tcp_link_filter, default_value = "interface-interface")]
+    tcp_link_filter: TcpLinkFilter,
     /// Bluetooth RFCOMM server address.
     #[cfg(feature = "rfcomm")]
     #[arg(long)]
@@ -168,6 +177,7 @@ impl ClientCli {
             match TcpConnector::new(self.tcp.clone(), TCP_PORT).await {
                 Ok(mut tcp) => {
                     tcp.set_ip_version(IpVersion::from_only(self.ipv4, self.ipv6)?);
+                    tcp.set_link_filter(self.tcp_link_filter);
                     targets.push(tcp.to_string());
                     watch_conn.push(Box::new(tcp.clone()));
                     Some(tcp)

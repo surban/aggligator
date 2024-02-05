@@ -145,7 +145,7 @@ pub enum TcpLinkFilter {
     /// Filter based on local interface and remote IP address.
     ///
     /// One link for each pair of local interface and remote IP address is established.
-    Ip,
+    InterfaceIp,
 }
 
 /// TCP transport for outgoing connections.
@@ -299,7 +299,9 @@ impl ConnectingTransport for TcpConnector {
                 TcpLinkFilter::InterfaceInterface => {
                     tag.interface == new_tag.interface && link.remote_user_data() == new.remote_user_data()
                 }
-                TcpLinkFilter::Ip => tag.interface == new_tag.interface && tag.remote.ip() == new_tag.remote.ip(),
+                TcpLinkFilter::InterfaceIp => {
+                    tag.interface == new_tag.interface && tag.remote.ip() == new_tag.remote.ip()
+                }
             }
         }) {
             Some(other) => {
