@@ -130,6 +130,24 @@ pub(crate) fn local_interfaces() -> Result<Vec<NetworkInterface>> {
         .collect())
 }
 
+/// TCP link filter method.
+///
+/// Controls which links are established between the local and remote endpoint.
+#[derive(Default, Debug, Clone, Copy)]
+pub enum TcpLinkFilter {
+    /// No link filtering.
+    None,
+    /// Filter based on local interface and remote interface.
+    ///
+    /// One link for each pair of local interface and remote interface is established.
+    #[default]
+    InterfaceInterface,
+    /// Filter based on local interface and remote IP address.
+    ///
+    /// One link for each pair of local interface and remote IP address is established.
+    Ip,
+}
+
 /// TCP transport for outgoing connections.
 ///
 /// This transport is IO-stream based.
@@ -138,6 +156,7 @@ pub struct TcpConnector {
     hosts: Vec<String>,
     ip_version: IpVersion,
     resolve_interval: Duration,
+    link_filter: TcpLinkFilter,
 }
 
 impl fmt::Display for TcpConnector {
@@ -173,7 +192,12 @@ impl TcpConnector {
             }
         }
 
-        let this = Self { hosts, ip_version: IpVersion::Both, resolve_interval: Duration::from_secs(10) };
+        let this = Self {
+            hosts,
+            ip_version: IpVersion::Both,
+            resolve_interval: Duration::from_secs(10),
+            link_filter: TcpLinkFilter::default(),
+        };
 
         let addrs = this.resolve().await;
         if addrs.is_empty() {
@@ -192,6 +216,11 @@ impl TcpConnector {
     /// Sets the interval for re-resolving the hostname and checking for changed network interfaces.
     pub fn set_resolve_interval(&mut self, resolve_interval: Duration) {
         self.resolve_interval = resolve_interval;
+    }
+
+    /// Sets the link filter method.
+    pub fn set_link_filter(&mut self, link_filter: TcpLinkFilter) {
+        self.link_filter = link_filter;
     }
 
     /// Resolve target to socket addresses.
@@ -265,7 +294,13 @@ impl ConnectingTransport for TcpConnector {
 
         match existing.iter().find(|link| {
             let Some(tag) = link.tag().as_any().downcast_ref::<TcpLinkTag>() else { return false };
-            tag.interface == new_tag.interface && link.remote_user_data() == new.remote_user_data()
+            match self.link_filter {
+                TcpLinkFilter::None => false,
+                TcpLinkFilter::InterfaceInterface => {
+                    tag.interface == new_tag.interface && link.remote_user_data() == new.remote_user_data()
+                }
+                TcpLinkFilter::Ip => tag.interface == new_tag.interface && tag.remote.ip() == new_tag.remote.ip(),
+            }
         }) {
             Some(other) => {
                 let other_tag = other.tag().as_any().downcast_ref::<TcpLinkTag>().unwrap();
