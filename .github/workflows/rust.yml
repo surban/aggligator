@@ -54,7 +54,7 @@ jobs:
       - name: Install latest stable Rust
         run: rustup set profile default && rustup default stable && rustup update
       - name: Build
-        run: cargo build --all-features --all-targets --quiet
+        run: cargo build --features tcp,tls,websocket,cli,raw-speed-cli,speed,monitor,dump --all-targets --quiet
       - name: Run tests (debug)
         run: cargo test --quiet
 
