@@ -3,11 +3,12 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use crossterm::{style::Stylize, tty::IsTty};
-use futures::future;
+use futures::{future, FutureExt};
+use socket2::SockRef;
 use std::{
     collections::{HashMap, HashSet},
     io::stdout,
-    net::{IpAddr, Ipv6Addr, SocketAddr},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     path::PathBuf,
     process::exit,
     sync::Arc,
@@ -165,8 +166,6 @@ impl ClientCli {
         let no_monitor = self.no_monitor || !stdout().is_tty();
         let once = self.once;
 
-        let listen_addr = IpAddr::from(if self.global { Ipv6Addr::UNSPECIFIED } else { Ipv6Addr::LOCALHOST });
-
         let ports: Vec<_> =
             self.port.clone().into_iter().map(|(s, c)| if s == 0 { (c, c) } else { (s, c) }).collect();
 
@@ -259,9 +258,21 @@ impl ClientCli {
 
         let mut port_tasks = Vec::new();
         for (server_port, client_port) in ports {
-            let listener = TcpListener::bind(SocketAddr::new(listen_addr, client_port))
-                .await
-                .context(format!("cannot bind to local port {client_port}"))?;
+            let listeners = if self.global {
+                let listener = TcpListener::bind(SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), client_port))
+                    .await
+                    .context(format!("cannot bind to local port {client_port}"))?;
+                let _ = SockRef::from(&listener).set_only_v6(false);
+                vec![listener]
+            } else {
+                let listener_v4 = TcpListener::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), client_port))
+                    .await
+                    .context(format!("cannot bind to local IPv4 port {client_port}"))?;
+                let listener_v6 = TcpListener::bind(SocketAddr::new(Ipv6Addr::LOCALHOST.into(), client_port))
+                    .await
+                    .context(format!("cannot bind to local IPv6 port {client_port}"))?;
+                vec![listener_v4, listener_v6]
+            };
 
             let control_tx = control_tx.clone();
             let tag_err_tx = tag_err_tx.clone();
@@ -275,7 +286,8 @@ impl ClientCli {
             let dump = dump.clone();
             port_tasks.push(async move {
                 loop {
-                    let (socket, src) = listener.accept().await?;
+                    let (socket, src) =
+                        future::select_all(listeners.iter().map(|l| l.accept().boxed())).await.0?;
 
                     let mut builder = ConnectorBuilder::new(port_cfg.clone());
                     if let Some(dump) = dump.clone() {
