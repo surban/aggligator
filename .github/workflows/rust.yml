@@ -44,6 +44,20 @@ jobs:
           cargo install --quiet cargo-audit
           cargo audit --quiet
 
+  build-windows:
+    name: Build with latest stable Rust on Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: recursive
+      - name: Install latest stable Rust
+        run: rustup set profile default && rustup default stable && rustup update
+      - name: Build
+        run: cargo build --all-features --all-targets --quiet
+      - name: Run tests (debug)
+        run: cargo test --quiet
+
   build-msrv:
     name: Build with minimum supported Rust versions
     runs-on: ubuntu-latest
