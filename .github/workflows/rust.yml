@@ -71,11 +71,11 @@ jobs:
         run: rustup toolchain install 1.65.0
       - name: Install Rust 1.70.0
         run: rustup toolchain install 1.70.0
-      - name: Install Rust 1.73.0
-        run: rustup toolchain install 1.73.0
+      - name: Install Rust 1.75.0
+        run: rustup toolchain install 1.75.0
       - name: Build aggligator with Rust 1.65.0
         run: cargo +1.65.0 build --manifest-path aggligator/Cargo.toml --all-features --all-targets --quiet
-      - name: Build aggligator and aggligator-util without USB with Rust 1.70.0
-        run: cargo +1.70.0 build --features tcp,tls,rfcomm,rfcomm-profile,websocket,cli,raw-speed-cli,speed,monitor,dump --all-targets --quiet
-      - name: Build aggligator and aggligator-util with Rust 1.73.0
-        run: cargo +1.73.0 build --all-features --all-targets --quiet
+      - name: Build aggligator and aggligator-util without USB and Bluetooth with Rust 1.70.0
+        run: cargo +1.70.0 build --features tcp,tls,websocket,cli,raw-speed-cli,speed,monitor,dump --all-targets --quiet
+      - name: Build aggligator and aggligator-util with Rust 1.75.0
+        run: cargo +1.75.0 build --all-features --all-targets --quiet

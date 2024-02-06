@@ -53,6 +53,7 @@ Run the following command to install the command line tools:
 
 The minimum supported Rust version (MSRV) is 1.70.
 With device-side USB transport enabled the MSRV is 1.73.
+With Bluetooth transport enabled the MSRV is 1.75.
 
 ## License
 
