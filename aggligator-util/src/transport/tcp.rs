@@ -349,11 +349,16 @@ impl TcpAcceptor {
         let mut listeners = Vec::new();
 
         for addr in addrs {
-            let listener = TcpListener::bind(addr).await?;
-            if addr.is_ipv6() {
-                let _ = SockRef::from(&listener).set_only_v6(false);
-            }
-            listeners.push(listener);
+            let socket = match addr {
+                SocketAddr::V4(_) => TcpSocket::new_v4()?,
+                SocketAddr::V6(_) => {
+                    let socket = TcpSocket::new_v6()?;
+                    let _ = SockRef::from(&socket).set_only_v6(false);
+                    socket
+                }
+            };
+            socket.bind(addr)?;
+            listeners.push(socket.listen(16)?);
         }
 
         Self::from_listeners(listeners)

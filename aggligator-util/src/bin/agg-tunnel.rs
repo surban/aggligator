@@ -16,7 +16,7 @@ use std::{
 };
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
+    net::{TcpListener, TcpSocket, TcpStream},
     select,
     sync::{broadcast, mpsc, oneshot, watch},
     task::block_in_place,
@@ -259,11 +259,12 @@ impl ClientCli {
         let mut port_tasks = Vec::new();
         for (server_port, client_port) in ports {
             let listeners = if self.global {
-                let listener = TcpListener::bind(SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), client_port))
-                    .await
+                let socket = TcpSocket::new_v6()?;
+                let _ = SockRef::from(&socket).set_only_v6(false);
+                socket
+                    .bind(SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), client_port))
                     .context(format!("cannot bind to local port {client_port}"))?;
-                let _ = SockRef::from(&listener).set_only_v6(false);
-                vec![listener]
+                vec![socket.listen(16)?]
             } else {
                 let listener_v4 = TcpListener::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), client_port))
                     .await
