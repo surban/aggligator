@@ -71,9 +71,18 @@ async fn multi_link_test(
         }
 
         println!("server: accepting incoming connection");
-        let (task, ch, control) = incoming.accept();
+        let (task, ch, mut control) = incoming.accept();
         let task = tokio::spawn(task.into_future());
         assert!(!control.is_terminated());
+
+        println!("server: waiting for links");
+        timeout(Duration::from_secs(1), async {
+            while control.links().len() < added_links.len() {
+                control.links_changed().await;
+            }
+        })
+        .await
+        .unwrap();
 
         let links = control.links();
         assert_eq!(links.len(), added_links.len());
