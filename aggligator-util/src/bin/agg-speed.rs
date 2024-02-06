@@ -4,10 +4,11 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use crossterm::{style::Stylize, tty::IsTty};
 use rustls::{
-    client::{ServerCertVerified, ServerCertVerifier},
-    Certificate, ClientConfig, PrivateKey, RootCertStore, ServerConfig, ServerName,
+    client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+    pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime},
+    ClientConfig, DigitallySignedStruct, RootCertStore, ServerConfig, SignatureScheme,
 };
-use rustls_pemfile::{certs, pkcs8_private_keys};
+use rustls_pemfile::{certs, private_key};
 use serde::Serialize;
 use std::{
     collections::HashSet,
@@ -71,45 +72,72 @@ static TLS_CERT_PEM: &[u8] = include_bytes!("agg-speed-cert.pem");
 static TLS_KEY_PEM: &[u8] = include_bytes!("agg-speed-key.pem");
 static TLS_SERVER_NAME: &str = "aggligator.rs";
 
-fn tls_cert() -> Certificate {
+fn tls_cert() -> CertificateDer<'static> {
     let mut reader = BufReader::new(TLS_CERT_PEM);
-    Certificate(certs(&mut reader).unwrap().pop().unwrap())
+    let mut certs = certs(&mut reader);
+    certs.next().unwrap().unwrap()
 }
 
-fn tls_key() -> PrivateKey {
+fn tls_key() -> PrivateKeyDer<'static> {
     let mut reader = BufReader::new(TLS_KEY_PEM);
-    PrivateKey(pkcs8_private_keys(&mut reader).unwrap().pop().unwrap())
+    private_key(&mut reader).unwrap().unwrap()
 }
 
 /// Accepts every TLS server certificate.
 ///
 /// For speed test only! Do not use in production code!
+#[derive(Debug)]
 struct TlsNullVerifier;
 
 impl ServerCertVerifier for TlsNullVerifier {
     fn verify_server_cert(
-        &self, _end_entity: &Certificate, _intermediates: &[Certificate], _server_name: &ServerName,
-        _scts: &mut dyn Iterator<Item = &[u8]>, _ocsp_response: &[u8], _now: std::time::SystemTime,
-    ) -> Result<ServerCertVerified, rustls::Error> {
+        &self, _end_entity: &CertificateDer<'_>, _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>, _ocsp_response: &[u8], _now: UnixTime,
+    ) -> std::result::Result<ServerCertVerified, rustls::Error> {
         Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self, _message: &[u8], _cert: &CertificateDer<'_>, _dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self, _message: &[u8], _cert: &CertificateDer<'_>, _dss: &DigitallySignedStruct,
+    ) -> std::result::Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        vec![
+            SignatureScheme::RSA_PKCS1_SHA1,
+            SignatureScheme::ECDSA_SHA1_Legacy,
+            SignatureScheme::RSA_PKCS1_SHA256,
+            SignatureScheme::ECDSA_NISTP256_SHA256,
+            SignatureScheme::RSA_PKCS1_SHA384,
+            SignatureScheme::ECDSA_NISTP384_SHA384,
+            SignatureScheme::RSA_PKCS1_SHA512,
+            SignatureScheme::ECDSA_NISTP521_SHA512,
+            SignatureScheme::RSA_PSS_SHA256,
+            SignatureScheme::RSA_PSS_SHA384,
+            SignatureScheme::RSA_PSS_SHA512,
+            SignatureScheme::ED25519,
+            SignatureScheme::ED448,
+        ]
     }
 }
 
 fn tls_client_config() -> ClientConfig {
     let mut root_store = RootCertStore::empty();
-    root_store.add(&tls_cert()).unwrap();
-    let mut cfg =
-        ClientConfig::builder().with_safe_defaults().with_root_certificates(root_store).with_no_client_auth();
+    root_store.add(tls_cert()).unwrap();
+    let mut cfg = ClientConfig::builder().with_root_certificates(root_store).with_no_client_auth();
     cfg.dangerous().set_certificate_verifier(Arc::new(TlsNullVerifier));
     cfg
 }
 
 fn tls_server_config() -> ServerConfig {
-    ServerConfig::builder()
-        .with_safe_defaults()
-        .with_no_client_auth()
-        .with_single_cert(vec![tls_cert()], tls_key())
-        .unwrap()
+    ServerConfig::builder().with_no_client_auth().with_single_cert(vec![tls_cert()], tls_key()).unwrap()
 }
 
 /// Run speed test using a connection consisting of aggregated TCP links.

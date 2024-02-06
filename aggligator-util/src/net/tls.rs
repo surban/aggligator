@@ -1,7 +1,7 @@
 //! TLS connection functions.
 
 use futures::Future;
-use rustls::{ClientConfig, ServerConfig, ServerName};
+use rustls::{pki_types::ServerName, ClientConfig, ServerConfig};
 use std::{io::Result, net::SocketAddr, sync::Arc};
 
 use crate::transport::{
@@ -68,7 +68,7 @@ use aggligator::alc::Stream;
 /// ```
 pub async fn tls_connect(
     target: impl IntoIterator<Item = String>, default_port: u16, tls_client_cfg: Arc<ClientConfig>,
-    server_name: ServerName,
+    server_name: ServerName<'static>,
 ) -> Result<Stream> {
     let mut connector = Connector::wrapped(TlsClient::new(tls_client_cfg, server_name));
     connector.add(TcpConnector::new(target, default_port).await?);

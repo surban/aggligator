@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use axum::{
-    body::boxed,
+    body::Body,
     extract::{ConnectInfo, WebSocketUpgrade},
     http::StatusCode,
     response::Response,
@@ -440,7 +440,7 @@ impl WebSocketAcceptorBuilder {
                     }),
                     Err(_) => Response::builder()
                         .status(StatusCode::SERVICE_UNAVAILABLE)
-                        .body(boxed("WebSocketAcceptor was dropped".to_string()))
+                        .body(Body::from("WebSocketAcceptor was dropped"))
                         .unwrap(),
                 }
             }),

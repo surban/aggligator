@@ -1,7 +1,7 @@
 //! TLS wrapper.
 
 use async_trait::async_trait;
-use rustls::{ClientConfig, ServerConfig, ServerName};
+use rustls::{pki_types::ServerName, ClientConfig, ServerConfig};
 use std::{io::Result, sync::Arc};
 use tokio::io::split;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
@@ -22,7 +22,7 @@ static NAME: &str = "tls";
 #[derive(Debug)]
 #[must_use = "you must pass this wrapper to the connector"]
 pub struct TlsClient {
-    server_name: ServerName,
+    server_name: ServerName<'static>,
     client_cfg: Arc<ClientConfig>,
 }
 
@@ -32,7 +32,7 @@ impl TlsClient {
     /// The identity of the server is verified using TLS against `server_name`.
     /// The outgoing link is encrypted using TLS with the configuration specified
     /// in `client_cfg`.
-    pub fn new(client_cfg: Arc<ClientConfig>, server_name: ServerName) -> Self {
+    pub fn new(client_cfg: Arc<ClientConfig>, server_name: ServerName<'static>) -> Self {
         Self { server_name, client_cfg }
     }
 }
