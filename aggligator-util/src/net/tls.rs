@@ -38,7 +38,7 @@ use aggligator::alc::Stream;
 /// ```no_run
 /// use std::sync::Arc;
 /// use aggligator_util::net::tls_connect;
-/// use rustls::{ClientConfig, RootCertStore, ServerName};
+/// use rustls::{ClientConfig, RootCertStore, pki_types::ServerName};
 ///
 /// #[tokio::main]
 /// async fn main() -> std::io::Result<()> {
@@ -49,7 +49,6 @@ use aggligator::alc::Stream;
 ///
 ///     let tls_cfg = Arc::new(
 ///         ClientConfig::builder()
-///             .with_safe_defaults()
 ///             .with_root_certificates(root_store)
 ///             .with_no_client_auth()
 ///     );
@@ -104,7 +103,6 @@ pub async fn tls_connect(
 ///
 ///     let tls_cfg = Arc::new(
 ///         ServerConfig::builder()
-///             .with_safe_defaults()
 ///             .with_no_client_auth()
 ///             .with_single_cert(tls_certs, tls_key)
 ///             .unwrap()
