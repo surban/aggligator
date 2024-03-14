@@ -9,7 +9,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    task::Poll,
+    task::{Context, Poll},
     time::Duration,
 };
 use tokio::{
@@ -308,16 +308,15 @@ where
                         Err(err) => break LinkIntEvent::TxError(err),
                     }
                 } else {
-                    match poll_fn(|cx| {
+                    let tx_ready = |cx: &mut Context| {
                         let res = self.tx.poll_ready_unpin(cx);
                         match &res {
                             Poll::Pending => self.tx_pending = true,
                             Poll::Ready(_) => self.tx_pending = false,
                         }
                         res
-                    })
-                    .await
-                    {
+                    };
+                    match poll_fn(tx_ready).await {
                         Ok(()) => match self.tx_data.take() {
                             Some(data) => {
                                 self.tx_flushed = false;
