@@ -15,12 +15,14 @@ It provides the following functionality:
   * a speed test.
 
 The following command line tools are included:
-  * `agg-speed` — performs a speed test over a connection of aggregated TCP links,
-  * `agg-tunnel` — forwards arbitrary TCP ports over a connection of aggregated TCP links.
+  * [`agg-speed`] — performs a speed test over a connection of aggregated TCP links,
+  * [`agg-tunnel`] — forwards arbitrary TCP ports over a connection of aggregated TCP links.
 
 Both tools display a text-based, interactive connection and link monitor.
 
 [Aggligator link aggregator]: https://crates.io/crates/aggligator
+[`agg-speed`]: ../docs/agg-speed.md
+[`agg-tunnel`]: ../docs/agg-tunnel.md
 
 ## Features
 

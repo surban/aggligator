@@ -1,7 +1,7 @@
 //! Tunnel TCP connections in aggregated connections.
 
 use anyhow::{bail, Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use crossterm::{style::Stylize, tty::IsTty};
 use futures::{future, FutureExt};
 use socket2::SockRef;
@@ -64,7 +64,7 @@ mod usb {
 /// This uses Aggligator to combine multiple TCP links into one connection,
 /// providing the combined speed and resilience to individual link faults.
 #[derive(Parser)]
-#[command(author, version)]
+#[command(name = "agg-tunnel", author, version)]
 pub struct TunnelCli {
     /// Configuration file.
     #[arg(long)]
@@ -85,6 +85,12 @@ enum Commands {
     Server(ServerCli),
     /// Shows the default configuration.
     ShowCfg,
+    /// Generate manual pages for this tool in current directory.
+    #[command(hide = true)]
+    ManPages,
+    /// Generate markdown page for this tool.
+    #[command(hide = true)]
+    Markdown,
 }
 
 #[tokio::main]
@@ -99,6 +105,8 @@ async fn main() -> Result<()> {
         Commands::Client(client) => client.run(cfg, dump).await?,
         Commands::Server(server) => server.run(cfg, dump).await?,
         Commands::ShowCfg => print_default_cfg(),
+        Commands::ManPages => clap_mangen::generate_to(TunnelCli::command(), ".")?,
+        Commands::Markdown => println!("{}", clap_markdown::help_markdown::<TunnelCli>()),
     }
 
     Ok(())
