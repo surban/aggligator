@@ -56,7 +56,7 @@ jobs:
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Install dependencies
-        run: winget install -e --id NASM.NASM
+        run: winget install -e --id NASM.NASM --disable-interactivity --accept-source-agreements
       - name: Install latest stable Rust
         run: rustup set profile default && rustup default stable && rustup update
       - name: Build
