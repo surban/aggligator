@@ -140,6 +140,13 @@ fn tls_server_config() -> ServerConfig {
     ServerConfig::builder().with_no_client_auth().with_single_cert(vec![tls_cert()], tls_key()).unwrap()
 }
 
+fn debug_warning() -> String {
+    match cfg!(debug_assertions) {
+        true => "⚠ debug build: speeds will be slow ⚠\n".red().to_string(),
+        false => String::new(),
+    }
+}
+
 /// Run speed test using a connection consisting of aggregated TCP links.
 ///
 /// This uses Aggligator to combine multiple TCP links into one connection,
@@ -181,6 +188,10 @@ async fn main() -> Result<()> {
     let cli = SpeedCli::parse();
     let cfg = load_cfg(&cli.cfg)?;
     let dump = cli.dump.clone();
+
+    if cfg!(debug_assertions) {
+        eprintln!("{}", debug_warning());
+    }
 
     match cli.command {
         Commands::Client(client) => client.run(cfg, dump).await?,
@@ -402,7 +413,7 @@ impl ClientCli {
                         "Downstream: ".grey(),
                         format_speed(recv)
                     );
-                    let header = format!("{}\r\n\r\n{}", title.clone().white().bold(), speed);
+                    let header = format!("{}\r\n\r\n{}{}", title.clone().white().bold(), speed, debug_warning());
 
                     if header_tx.send(header).is_err() {
                         break;
@@ -669,7 +680,7 @@ impl ServerCli {
         } else {
             let task = tokio::spawn(task);
 
-            let header_rx = watch::channel(format!("{title}\r\n").white().bold().to_string()).1;
+            let header_rx = watch::channel(format!("{}\r\n{}", title.white().bold(), debug_warning())).1;
             block_in_place(|| interactive_monitor(header_rx, control_rx, 1, None, Some(tag_error_rx), None))?;
 
             task.abort();
