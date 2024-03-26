@@ -51,6 +51,8 @@ jobs:
       - uses: actions/checkout@v3
         with:
           submodules: recursive
+      - name: Install dependencies
+        run: winget install -e --id NASM.NASM
       - name: Install latest stable Rust
         run: rustup set profile default && rustup default stable && rustup update
       - name: Build
