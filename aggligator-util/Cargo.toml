@@ -1,6 +1,6 @@
 [package]
 name = "aggligator-util"
-version = "0.13.2"
+version = "0.14.0"
 edition = "2021"
 rust-version = "1.70"
 authors = ["Sebastian Urban <surban@surban.net>"]
@@ -57,9 +57,9 @@ async-trait = "0.1"
 bytes = "1"
 
 bluer = { version = "0.17", default-features = false, optional = true }
-rustls = { version = "0.22", optional = true }
+rustls = { version = "0.23", optional = true }
 rustls-pemfile = { version = "2.0", optional = true }
-tokio-rustls = { version = "0.25", optional = true }
+tokio-rustls = { version = "0.26", optional = true }
 rand = { version = "0.8", optional = true }
 rand_xoshiro = { version = "0.6", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
