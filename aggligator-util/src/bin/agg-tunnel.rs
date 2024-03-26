@@ -621,6 +621,7 @@ async fn forward(mut read: impl AsyncRead + Unpin, mut write: impl AsyncWrite + 
     loop {
         let mut buf = vec![0; 65_536];
 
+        #[allow(clippy::unused_io_amount)] // workaround for clippy bug, IO amount is handled
         let n = match FLUSH_DELAY {
             Some(delay) => select! {
                 res = read.read(&mut buf) => res?,
