@@ -21,6 +21,7 @@ mod host {
         fmt,
         hash::{Hash, Hasher},
         io::{Error, ErrorKind, Result},
+        sync::Arc,
         time::Duration,
     };
     use tokio::{
@@ -297,7 +298,8 @@ mod host {
             }
             let Some(dev) = dev else { return Err(Error::new(ErrorKind::NotFound, "USB device gone")) };
 
-            let (tx, rx) = upc::host::connect(&dev, tag.interface, &[]).await?;
+            let hnd = Arc::new(dev.open().map_err(|err| Error::new(ErrorKind::Other, err))?);
+            let (tx, rx) = upc::host::connect(hnd, tag.interface, &[]).await?;
 
             Ok(TxRxBox::new(tx.into_sink(), rx.into_stream().map_ok(|p| p.freeze())).into())
         }
