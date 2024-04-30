@@ -48,15 +48,10 @@ jobs:
     name: Build with latest stable Rust on Windows
     runs-on: windows-latest
     steps:
+      - uses: ilammy/setup-nasm@v1
       - uses: actions/checkout@v3
         with:
           submodules: recursive
-      - name: Install winget
-        uses: Cyberboss/install-winget@v1
-        with:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install dependencies
-        run: winget install -e --id NASM.NASM --disable-interactivity --accept-source-agreements
       - name: Install latest stable Rust
         run: rustup set profile default && rustup default stable && rustup update
       - name: Build
