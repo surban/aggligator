@@ -284,7 +284,7 @@ where
         // Publish unconfirmed status.
         self.unconfirmed_tx.send_if_modified(|m| {
             if *m != self.unconfirmed {
-                *m = self.unconfirmed.clone();
+                m.clone_from(&self.unconfirmed);
                 true
             } else {
                 false
