@@ -400,7 +400,7 @@ impl Acceptor {
 
                 // Disconnect link when transport is removed.
                 struct DisconnectLink<'a>(&'a BoxLink);
-                impl<'a> Drop for DisconnectLink<'a> {
+                impl Drop for DisconnectLink<'_> {
                     fn drop(&mut self) {
                         self.0.start_disconnect();
                     }
