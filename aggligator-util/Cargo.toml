@@ -13,7 +13,7 @@ repository = "https://github.com/surban/aggligator"
 
 [features]
 default = ["cli", "tls", "tcp"]
-tcp = ["tokio/net", "socket2"]
+tcp = ["tokio/net", "socket2", "network-interface"]
 tls = ["rustls", "tokio-rustls"]
 rfcomm = ["bluer/rfcomm"]
 rfcomm-profile = ["bluer/rfcomm", "bluer/bluetoothd"]
@@ -40,8 +40,9 @@ cli = [
     "axum-server",
     "gethostname",
     "socket2",
+    "tokio/rt-multi-thread",
 ]
-raw-speed-cli = ["cli"]
+raw-speed-cli = ["cli", "network-interface", "tokio/rt-multi-thread"]
 speed = ["rand", "rand_xoshiro"]
 monitor = ["crossterm"]
 dump = ["aggligator/dump"]
@@ -50,9 +51,8 @@ dump = ["aggligator/dump"]
 aggligator = { version = "0.8.3", path = "../aggligator" }
 
 futures = "0.3"
-tokio = { version = "1.21", features = ["rt", "rt-multi-thread"] }
+tokio = { version = "1.21", features = ["rt"] }
 tracing = "0.1"
-network-interface = "2"
 async-trait = "0.1"
 bytes = "1"
 
@@ -86,6 +86,7 @@ usb-gadget = { version = "0.7", optional = true }
 rusb = { version = "0.9", optional = true }
 gethostname = { version = "0.5", optional = true }
 socket2 = { version = "0.5", optional = true }
+network-interface = { version = "2", optional = true }
 
 [[bin]]
 name = "agg-speed"
