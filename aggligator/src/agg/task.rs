@@ -22,15 +22,14 @@ use std::{
 use tokio::{
     select,
     sync::{mpsc, oneshot, watch},
-    time::{interval, sleep_until, timeout, Instant},
 };
-use tokio_stream::wrappers::IntervalStream;
 
 use crate::{
     agg::link_int::{DisconnectInitiator, LinkInt, LinkIntEvent, LinkTest},
     alc::{RecvError, SendError},
     cfg::{Cfg, ExchangedCfg, LinkPing},
     control::{Direction, DisconnectReason, Link, NotWorkingReason, Stats},
+    exec::time::{interval_stream, sleep_until, timeout, Instant},
     id::{ConnId, LinkId, OwnedConnId},
     msg::{LinkMsg, RefusedReason, ReliableMsg},
     peekable_mpsc::{PeekableReceiver, RecvIfError},
@@ -392,8 +391,7 @@ where
         tracing::debug!("link aggregator task starting");
         self.start_time = Instant::now();
 
-        let mut stat_timers =
-            stream::select_all(self.cfg.stats_intervals.iter().map(|t| IntervalStream::new(interval(*t))));
+        let mut stat_timers = stream::select_all(self.cfg.stats_intervals.iter().map(|t| interval_stream(*t)));
 
         let mut fast_rng = SplitMix64::seed_from_u64(1);
 

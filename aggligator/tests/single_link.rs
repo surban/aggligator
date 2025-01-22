@@ -6,13 +6,17 @@ use std::{
     num::{NonZeroU32, NonZeroUsize},
     time::Duration,
 };
-use tokio::time::timeout;
+
+#[cfg(feature = "js")]
+use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::test_data::send_and_verify;
 use aggligator::{
     alc::{RecvError, SendError},
     cfg::Cfg,
     connect::{connect, Server},
+    exec,
+    exec::time::timeout,
 };
 
 mod test_channel;
@@ -45,7 +49,7 @@ async fn single_link_test(
 
         println!("server: accepting incoming connection");
         let (task, ch, control) = incoming.accept();
-        let task = tokio::spawn(task.into_future());
+        let task = exec::spawn(task.into_future());
         assert!(!control.is_terminated());
 
         let links = control.links();
@@ -71,14 +75,14 @@ async fn single_link_test(
                     if i % interval == 0 {
                         println!("pausing link a");
                         let ctrl = link_a_control.clone();
-                        tokio::spawn(async move { ctrl.pause_for(dur).await });
+                        exec::spawn(async move { ctrl.pause_for(dur).await });
                     }
                 }
                 if let Some(when) = fail_link {
                     if i == when {
                         println!("failing link a");
                         let ctrl = link_a_control.clone();
-                        tokio::spawn(async move { ctrl.disconnect().await });
+                        exec::spawn(async move { ctrl.disconnect().await });
                     }
                 }
             },
@@ -134,7 +138,7 @@ async fn single_link_test(
     let client_task = async move {
         println!("client: starting outgoing link");
         let (task, outgoing, mut control) = connect(cfg);
-        let task = tokio::spawn(task.into_future());
+        let task = exec::spawn(task.into_future());
 
         println!("client: adding outgoing link");
         control.add(link_a_tx, link_b_rx, "outgoing", &[]).await.unwrap();
@@ -176,14 +180,14 @@ async fn single_link_test(
                     if i % interval == 0 {
                         println!("pausing link b");
                         let ctrl = link_b_control.clone();
-                        tokio::spawn(async move { ctrl.pause_for(dur).await });
+                        exec::spawn(async move { ctrl.pause_for(dur).await });
                     }
                 }
                 if let Some(when) = fail_link {
                     if i == when {
                         println!("failing link b");
                         let ctrl = link_b_control.clone();
-                        tokio::spawn(async move { ctrl.disconnect().await });
+                        exec::spawn(async move { ctrl.disconnect().await });
                     }
                 }
             },
@@ -241,7 +245,8 @@ async fn single_link_test(
     join!(server_task, client_task);
 }
 
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "multi_thread")))]
+#[cfg_attr(feature = "js", wasm_bindgen_test)]
 async fn termination() {
     let ch_cfg = test_channel::Cfg { speed: 0, latency: None, ..Default::default() };
     let alc_cfg = Cfg { ..Default::default() };
@@ -249,7 +254,8 @@ async fn termination() {
     single_link_test(ch_cfg, alc_cfg, 16384, 10, 0, None, None).await;
 }
 
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "multi_thread")))]
+#[cfg_attr(feature = "js", wasm_bindgen_test)]
 async fn unlimited_multi_thread() {
     let ch_cfg = test_channel::Cfg { speed: 0, latency: None, ..Default::default() };
     let alc_cfg = Cfg { ..Default::default() };
@@ -257,7 +263,8 @@ async fn unlimited_multi_thread() {
     single_link_test(ch_cfg, alc_cfg, 16384, 10000, 10_000_000, None, None).await;
 }
 
-#[test_log::test(tokio::test(flavor = "current_thread"))]
+#[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "current_thread")))]
+#[cfg_attr(feature = "js", wasm_bindgen_test)]
 async fn unlimited_current_thread() {
     let ch_cfg = test_channel::Cfg { speed: 0, latency: None, ..Default::default() };
     let alc_cfg = Cfg { ..Default::default() };
@@ -265,7 +272,8 @@ async fn unlimited_current_thread() {
     single_link_test(ch_cfg, alc_cfg, 16384, 10000, 10_000_000, None, None).await;
 }
 
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "multi_thread")))]
+#[cfg_attr(feature = "js", wasm_bindgen_test)]
 async fn very_high_latency() {
     let ch_cfg = test_channel::Cfg {
         speed: 10_000_000,
@@ -286,7 +294,8 @@ async fn very_high_latency() {
     single_link_test(ch_cfg, alc_cfg, 16384, 1000, 1_000_000, None, None).await;
 }
 
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "multi_thread")))]
+#[cfg_attr(feature = "js", wasm_bindgen_test)]
 async fn one_mb_per_s() {
     let ch_cfg = test_channel::Cfg {
         speed: 1_000_000,
@@ -303,7 +312,8 @@ async fn one_mb_per_s() {
     single_link_test(ch_cfg, alc_cfg, 16384, 1000, 500_000, None, None).await;
 }
 
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "multi_thread")))]
+#[cfg_attr(feature = "js", wasm_bindgen_test)]
 async fn ten_mb_per_s() {
     let ch_cfg = test_channel::Cfg {
         speed: 10_000_000,
@@ -320,7 +330,8 @@ async fn ten_mb_per_s() {
     single_link_test(ch_cfg, alc_cfg, 16384, 10000, 5_000_000, None, None).await;
 }
 
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "multi_thread")))]
+#[cfg_attr(feature = "js", wasm_bindgen_test)]
 async fn paused_link() {
     let ch_cfg = test_channel::Cfg {
         speed: 1_000_000,
@@ -333,7 +344,8 @@ async fn paused_link() {
     single_link_test(ch_cfg, alc_cfg, 16384, 300, 0, Some((100, Duration::from_secs(3))), None).await;
 }
 
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "multi_thread")))]
+#[cfg_attr(feature = "js", wasm_bindgen_test)]
 async fn timed_out_link() {
     let ch_cfg = test_channel::Cfg {
         speed: 1_000_000,
@@ -355,7 +367,8 @@ async fn timed_out_link() {
     single_link_test(ch_cfg, alc_cfg, 16384, 300, 0, Some((100, Duration::from_secs(10000))), Some(1000)).await;
 }
 
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "multi_thread")))]
+#[cfg_attr(feature = "js", wasm_bindgen_test)]
 async fn failed_link() {
     let ch_cfg = test_channel::Cfg {
         speed: 1_000_000,

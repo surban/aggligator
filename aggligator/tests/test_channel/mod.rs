@@ -13,12 +13,14 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use tokio::{
-    sync::{mpsc, oneshot, Semaphore},
-    time::{sleep, sleep_until, Instant},
-};
+use tokio::sync::{mpsc, oneshot, Semaphore};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::{PollSemaphore, PollSender};
+
+use aggligator::{
+    exec,
+    exec::time::{sleep, sleep_until, Instant},
+};
 
 /// Test channel configuration.
 #[derive(Clone, Debug)]
@@ -90,7 +92,7 @@ pub fn channel(mut cfg: Cfg) -> (Sender, Receiver, Control) {
     let (control_tx, control_rx) = mpsc::channel(1);
     let control = Control { tx: control_tx };
 
-    tokio::spawn(async move {
+    exec::spawn(async move {
         let mut control_rx_opt = Some(control_rx);
         let mut sleep_need = Duration::ZERO;
         loop {

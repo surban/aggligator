@@ -21,7 +21,6 @@ use std::{
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{mpsc, oneshot},
-    time::{error::Elapsed, timeout, Instant},
 };
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
@@ -30,6 +29,7 @@ use crate::{
     alc::Channel,
     cfg::{Cfg, ExchangedCfg},
     control::{Control, Direction, Link},
+    exec::time::{error::Elapsed, timeout, Instant},
     id::{ConnId, OwnedConnId, ServerId},
     io::{IoRx, IoTx},
     msg::{LinkMsg, RefusedReason},

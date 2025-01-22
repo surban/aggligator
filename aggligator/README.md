@@ -29,9 +29,18 @@ asynchronous runtime.
 The following optional crate features are available:
 
   * `dump` — enables saving of analysis data to disk, mainly useful for debugging 
-    connection performance issues; also enables [Serde] support on some data types.
+    connection performance issues; also enables [Serde] support on some data types,
+  * `js`  — enables support for execution in a JavaScript runtime environment (web browser).
 
 [Serde]: https://serde.rs/
+
+### JavaScript and web support
+
+Aggligator supports compiling to the WebAssembly targets `wasm32-unknown-unknown`,
+`wasm32-wasip1` and `wasm32-wasip1-threads`. If you are targeting a JavaScript
+runtime environment (like a web browser) you must enable the `js` crate feature.
+This will enable JavaScript promises support and spawn tasks onto the browser's
+native event queue.
 
 ## Working with TCP links, TLS encryption and examples
 
@@ -66,7 +75,7 @@ automatically re-established.
 
 ## Minimum supported Rust version
 
-The minimum supported Rust version (MSRV) is 1.75.
+The minimum supported Rust version (MSRV) is 1.80.
 
 ## License
 

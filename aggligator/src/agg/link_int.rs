@@ -15,12 +15,12 @@ use std::{
 use tokio::{
     select,
     sync::{mpsc, watch},
-    time::{sleep_until, Instant},
 };
 
 use crate::{
     cfg::{Cfg, ExchangedCfg},
     control::{Direction, DisconnectReason, Link, LinkIntervalStats, LinkStats, NotWorkingReason},
+    exec::time::{sleep_until, Instant},
     id::{ConnId, LinkId},
     msg::LinkMsg,
     seq::Seq,

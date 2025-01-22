@@ -16,13 +16,13 @@ use std::{
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{mpsc, watch, Mutex},
-    time::{error::Elapsed, timeout, Instant},
 };
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
 use crate::{
     agg::link_int::LinkInt,
     cfg::Cfg,
+    exec::time::{error::Elapsed, timeout, Instant},
     id::{ConnId, EncryptedConnId, LinkId, ServerId},
     io::{IoRx, IoTx},
     msg::{LinkMsg, RefusedReason},

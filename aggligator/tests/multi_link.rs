@@ -1,6 +1,5 @@
 //! Multi-link tests.
 
-use aggligator::control::DisconnectReason;
 use futures::{future, join};
 use std::{
     future::IntoFuture,
@@ -8,13 +7,18 @@ use std::{
     num::{NonZeroU32, NonZeroUsize},
     time::Duration,
 };
-use tokio::time::{sleep, timeout};
+
+#[cfg(feature = "js")]
+use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::test_data::send_and_verify;
 use aggligator::{
     alc::{RecvError, SendError},
     cfg::{Cfg, LinkPing},
     connect::{connect, Server},
+    control::DisconnectReason,
+    exec,
+    exec::time::{sleep, timeout},
 };
 
 mod test_channel;
@@ -72,7 +76,7 @@ async fn multi_link_test(
 
         println!("server: accepting incoming connection");
         let (task, ch, mut control) = incoming.accept();
-        let task = tokio::spawn(task.into_future());
+        let task = exec::spawn(task.into_future());
         assert!(!control.is_terminated());
 
         println!("server: waiting for links");
@@ -113,7 +117,7 @@ async fn multi_link_test(
                         if i == when {
                             println!("pausing link a {n}");
                             let ctrl = a_controls[n].clone();
-                            tokio::spawn(async move {
+                            exec::spawn(async move {
                                 let _ = ctrl.pause_for(dur).await;
                                 println!("unpausing link a {n}");
                             });
@@ -123,7 +127,7 @@ async fn multi_link_test(
                         if i == when {
                             println!("failing link a {n}");
                             let ctrl = a_controls[n].clone();
-                            tokio::spawn(async move { ctrl.disconnect().await });
+                            exec::spawn(async move { ctrl.disconnect().await });
                         }
                     }
                     if let Some((when, dur)) = desc.block {
@@ -132,7 +136,7 @@ async fn multi_link_test(
                             let link = added_links[n].clone();
                             link.set_blocked(true);
                             assert!(link.is_blocked());
-                            tokio::spawn(async move {
+                            exec::spawn(async move {
                                 sleep(dur).await;
                                 println!("unblocking link a {n}");
                                 link.set_blocked(false);
@@ -205,7 +209,7 @@ async fn multi_link_test(
     let client_task = async move {
         println!("client: starting outgoing link");
         let (task, outgoing, mut control) = connect(cfg);
-        let task = tokio::spawn(task.into_future());
+        let task = exec::spawn(task.into_future());
 
         let mut added_links_tasks = Vec::new();
         for (n, (rx, tx)) in client_links.into_iter().enumerate() {
@@ -256,7 +260,7 @@ async fn multi_link_test(
                         if i == when {
                             println!("pausing link b {n}");
                             let ctrl = b_controls[n].clone();
-                            tokio::spawn(async move {
+                            exec::spawn(async move {
                                 let _ = ctrl.pause_for(dur).await;
                                 println!("unpausing link b {n}");
                             });
@@ -266,7 +270,7 @@ async fn multi_link_test(
                         if i == when {
                             println!("failing link b {n}");
                             let ctrl = b_controls[n].clone();
-                            tokio::spawn(async move { ctrl.disconnect().await });
+                            exec::spawn(async move { ctrl.disconnect().await });
                         }
                     }
                 }
@@ -330,7 +334,8 @@ async fn multi_link_test(
     join!(server_task, client_task);
 }
 
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "multi_thread")))]
+#[cfg_attr(feature = "js", wasm_bindgen_test)]
 async fn five_x_unlimited_multi_thread() {
     let link_desc = LinkDesc {
         cfg: test_channel::Cfg { speed: 0, latency: None, ..Default::default() },
@@ -342,7 +347,8 @@ async fn five_x_unlimited_multi_thread() {
     multi_link_test(&link_descs, alc_cfg, 16384, 10000, 10_000_000, false).await;
 }
 
-#[test_log::test(tokio::test(flavor = "current_thread"))]
+#[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "current_thread")))]
+#[cfg_attr(feature = "js", wasm_bindgen_test)]
 async fn five_x_unlimited_current_thread() {
     let link_desc = LinkDesc {
         cfg: test_channel::Cfg { speed: 0, latency: None, ..Default::default() },
@@ -354,7 +360,8 @@ async fn five_x_unlimited_current_thread() {
     multi_link_test(&link_descs, alc_cfg, 16384, 10000, 10_000_000, false).await;
 }
 
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "multi_thread")))]
+#[cfg_attr(feature = "js", wasm_bindgen_test)]
 async fn five_x_very_high_latency() {
     let link_desc = LinkDesc {
         cfg: test_channel::Cfg {
@@ -381,7 +388,8 @@ async fn five_x_very_high_latency() {
     multi_link_test(&link_descs, alc_cfg, 16384, 30000, 4_000_000, false).await;
 }
 
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "multi_thread")))]
+#[cfg_attr(feature = "js", wasm_bindgen_test)]
 async fn five_x_blocked() {
     let link_desc = LinkDesc {
         cfg: test_channel::Cfg { speed: 0, latency: None, ..Default::default() },
@@ -400,7 +408,8 @@ async fn five_x_blocked() {
     multi_link_test(&link_descs, alc_cfg, 16384, 10000, 10_000_000, false).await;
 }
 
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "multi_thread")))]
+#[cfg_attr(feature = "js", wasm_bindgen_test)]
 async fn ten_x_hundert_kb_per_s() {
     let link_desc = LinkDesc {
         cfg: test_channel::Cfg {
@@ -418,7 +427,8 @@ async fn ten_x_hundert_kb_per_s() {
     multi_link_test(&link_descs, alc_cfg, 16384, 100, 500_000, false).await;
 }
 
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "multi_thread")))]
+#[cfg_attr(feature = "js", wasm_bindgen_test)]
 async fn ten_x_paused_link() {
     let link_desc = LinkDesc {
         cfg: test_channel::Cfg {
@@ -439,7 +449,8 @@ async fn ten_x_paused_link() {
     multi_link_test(&link_descs, alc_cfg, 16384, 10_000, 3_000_000, false).await;
 }
 
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "multi_thread")))]
+#[cfg_attr(feature = "js", wasm_bindgen_test)]
 async fn ten_x_failed_link() {
     let link_desc = LinkDesc {
         cfg: test_channel::Cfg {
@@ -470,7 +481,8 @@ async fn ten_x_failed_link() {
         .unwrap();
 }
 
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "multi_thread")))]
+#[cfg_attr(feature = "js", wasm_bindgen_test)]
 async fn ten_x_all_failed_link() {
     let link_desc = LinkDesc {
         cfg: test_channel::Cfg {
@@ -499,7 +511,8 @@ async fn ten_x_all_failed_link() {
     multi_link_test(&link_descs, alc_cfg, 16384, 2_000, 0, true).await;
 }
 
-#[test_log::test(tokio::test(flavor = "multi_thread"))]
+#[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "multi_thread")))]
+#[cfg_attr(feature = "js", wasm_bindgen_test)]
 async fn ten_x_link_timeout() {
     let link_desc = LinkDesc {
         cfg: test_channel::Cfg {
