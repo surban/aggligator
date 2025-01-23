@@ -18,7 +18,7 @@ crossterm = { workspace = true }
 futures = { workspace = true }
 rand = { workspace = true }
 rand_xoshiro = { workspace = true }
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["io-util", "sync"] }
 tracing = { workspace = true }
 
 [package.metadata.docs.rs]
