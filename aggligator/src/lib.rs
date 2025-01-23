@@ -83,7 +83,7 @@
 //! **[aggligator-util]** crate.
 //!
 //! [aggligator-transport-tcp]: https://docs.rs/aggligator-transport-tcp
-//! [aggligator-util]: https://docs.rs/aggligator-util
+//! [aggligator-util]: https://crates.io/crates/aggligator-util
 //!
 
 #[cfg(target_pointer_width = "16")]
