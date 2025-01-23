@@ -1,6 +1,6 @@
 [package]
 name = "aggligator"
-version = "0.9.0"
+version = "0.9.1"
 description = "Aggregates multiple links (TCP or similar) into one connection having their combined bandwidth and provides resiliency against failure of individual links."
 categories = ["asynchronous", "network-programming"]
 keywords = ["aggligator", "multi-link", "multipath", "connection", "resilient"]
@@ -68,5 +68,5 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 wasm-bindgen-test = { workspace = true }
 
 [package.metadata.docs.rs]
-all-features = true
+features = ["dump"]
 rustdoc-args = ["--cfg", "docsrs"]
