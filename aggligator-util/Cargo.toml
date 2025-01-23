@@ -4,11 +4,11 @@ version = "0.18.0"
 description = "Aggligator command line utilities"
 categories = ["network-programming", "command-line-utilities"]
 keywords = ["aggligator", "multipath", "multiplex", "tcp", "mptcp"]
+readme = "README.md"
 edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
-readme.workspace = true
 repository.workspace = true
 
 [features]
