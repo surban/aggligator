@@ -275,16 +275,16 @@ impl ConnectingTransport for WebSocketConnector {
         let (ws_tx, ws_rx) = web_socket.split();
         let ws_tx = Box::pin(
             ws_tx
-                .with(|data: Bytes| async move {
-                    Ok::<_, tungstenite::Error>(tungstenite::Message::Binary(data.into()))
-                })
+                .with(
+                    |data: Bytes| async move { Ok::<_, tungstenite::Error>(tungstenite::Message::Binary(data)) },
+                )
                 .sink_map_err(|err| Error::new(ErrorKind::Other, err)),
         );
         let ws_rx = Box::pin(
             ws_rx
                 .try_filter_map(|msg: tungstenite::Message| async move {
                     if let tungstenite::Message::Binary(data) = msg {
-                        Ok(Some(data.into()))
+                        Ok(Some(data))
                     } else {
                         Ok(None)
                     }
@@ -504,18 +504,19 @@ impl AcceptingTransport for WebSocketAcceptor {
 
             // Adapt WebSocket IO.
             let (ws_tx, ws_rx) = web_socket.split();
-            let ws_tx = Box::pin(
-                ws_tx
-                    .with(|data: Bytes| async move {
-                        Ok::<_, axum::Error>(axum::extract::ws::Message::Binary(data.into()))
-                    })
-                    .sink_map_err(|err| Error::new(ErrorKind::Other, err)),
-            );
+            let ws_tx =
+                Box::pin(
+                    ws_tx
+                        .with(|data: Bytes| async move {
+                            Ok::<_, axum::Error>(axum::extract::ws::Message::Binary(data))
+                        })
+                        .sink_map_err(|err| Error::new(ErrorKind::Other, err)),
+                );
             let ws_rx = Box::pin(
                 ws_rx
                     .try_filter_map(|msg: axum::extract::ws::Message| async move {
                         if let axum::extract::ws::Message::Binary(data) = msg {
-                            Ok(Some(data.into()))
+                            Ok(Some(data))
                         } else {
                             Ok(None)
                         }
