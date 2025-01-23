@@ -2,14 +2,20 @@
 //!
 //! This module provides automatic link management for an Aggligator connection.
 //!
+//! Crates that provide Aggligator support for common transports, such as TCP or WebSocket,
+//! can be found under the
+//! [`aggligator-transport` keyword on crates.io](https://crates.io/search?q=aggligator-transport).
+//!
 //! # Establishing outgoing connections
 //!
 //! The following example shows how to use a [`Connector`] to establish outgoing connections
 //! using the TCP transport to connect to `server` on port 5900.
 //!
-//! ```no_run
-//! use aggligator_util::transport::Connector;
-//! use aggligator_util::transport::tcp::TcpConnector;
+//! You must depend on the `aggligator_transport_tcp` crate for this example to work.
+//!
+//! ```ignore
+//! use aggligator::Connector;
+//! use aggligator_transport_tcp::TcpConnector;
 //!
 //! #[tokio::main]
 //! async fn main() -> std::io::Result<()> {
@@ -29,10 +35,12 @@
 //! The following example shows how to use an [`Acceptor`] to listen for incoming connections
 //! using the TCP transport on port 5900.
 //!
-//! ```no_run
+//! You must depend on the `aggligator_transport_tcp` crate for this example to work.
+//!
+//! ```ignore
 //! use std::net::{Ipv6Addr, SocketAddr};
-//! use aggligator_util::transport::Acceptor;
-//! use aggligator_util::transport::tcp::TcpAcceptor;
+//! use aggligator::Acceptor;
+//! use aggligator_transport_tcp::TcpAcceptor;
 //!
 //! #[tokio::main]
 //! async fn main() -> std::io::Result<()> {

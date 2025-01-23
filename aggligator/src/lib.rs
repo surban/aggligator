@@ -20,7 +20,7 @@
 //! implemented in user space without the need for any support from the operating system.
 //!
 //! Aggligator is written in 100% safe Rust and builds upon the [Tokio](tokio)
-//! asynchronous runtime.
+//! asynchronous runtime. It works on all major native platform as well as WebAssembly.
 //!
 //! [TCP]: https://en.wikipedia.org/wiki/Transmission_Control_Protocol
 //! [Multipath TCP]: https://en.wikipedia.org/wiki/Multipath_TCP
@@ -75,9 +75,12 @@
 //! and establish outgoing connections. This is agnostic of the underlying protocol.
 //!
 //! Useful functions for working with TCP-based links, encryption and authentication using TLS,
-//! a visualizing link monitor and a completely worked out example are provided in the
+//! can be found in the **[aggligator-transport-tcp]** crate.
+//!
+//! Command line utilites, that also serve as fully worked out examples, are provided in the
 //! **[aggligator-util]** crate.
 //!
+//! [aggligator-transport-tcp]: https://docs.rs/aggligator-transport-tcp/latest/aggligator-transport-tcp/
 //! [aggligator-util]: https://docs.rs/aggligator-util/latest/aggligator_util/
 //!
 
@@ -117,4 +120,4 @@ pub(crate) use protocol_err;
 pub use cfg::Cfg;
 pub use connect::{connect, Incoming, Listener, Outgoing, Server};
 pub use control::{Control, Link};
-pub use io::{IoRxBox, IoTxBox};
+pub use transport::{Acceptor, Connector};

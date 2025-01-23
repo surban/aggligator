@@ -13,8 +13,8 @@ runner = "wasmtime -S inherit-env"
 
 [target.wasm32-wasip1-threads]
 # for pure WASI environment:
-# runner = "wasmtime -S threads -S inherit-env"
+runner = "wasmtime -S threads -S inherit-env"
 
 # for WASI on the web (`js` feature enabled):
-runner = "wasm-bindgen-test-runner"
-rustflags = ["-Z", "wasi-exec-model=reactor"]
+# runner = "wasm-bindgen-test-runner"
+# rustflags = ["-Z", "wasi-exec-model=reactor"]

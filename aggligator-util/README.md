@@ -1,18 +1,10 @@
-# Utilities for working with Aggligator
+# Aggligator command line tools
 
 [![crates.io page](https://img.shields.io/crates/v/aggligator-util)](https://crates.io/crates/aggligator-util)
 [![docs.rs page](https://docs.rs/aggligator-util/badge.svg)](https://docs.rs/aggligator-util)
 [![Apache 2.0 license](https://img.shields.io/crates/l/aggligator-util)](https://raw.githubusercontent.com/surban/aggligator/master/LICENSE)
 
-This crate provides utility functions and command line tools for working with the
-[Aggligator link aggregator].
-
-It provides the following functionality:
-  * functions for establishing a connection consisting of aggregated TCP,
-    Bluetooth RFCOMM links, USB and WebSocket links,
-  * optional TLS link authentication and encryption,
-  * a text-based, interactive connection and link montor,
-  * a speed test.
+This crate provides command line tools for working with the [Aggligator link aggregator].
 
 The following command line tools are included:
   * [`agg-speed`] — performs a speed test over a connection of aggregated TCP links,
@@ -26,34 +18,17 @@ Both tools display a text-based, interactive connection and link monitor.
 
 ## Features
 
-The following crate features enable transports:
+The following crate features enable optional transports:
 
-  * `tcp` - TCP transport,
-  * `rfcomm` - Bluetooth RFCOMM transport (Linux-only),
-  * `rfcomm-profile` - Bluetooth RFCOMM transport using profiles for connecting (Linux-only),
+  * `bluer` - Bluetooth RFCOMM transport (Linux only),
   * `usb-host` - host-side USB transport,
-  * `usb-device` - device-side USB transport,
-  * `websocket` - WebSocket transport.
-
-The following crate features enable link wrappers:
-
-  * `tls` - TLS encryption.
-
-The following crate features enable additional functionality:
-
-  * `monitor` — enables the text-based, interactive connection and link monitor,
-  * `speed` — enables speed test functions,
-  * `dump` — enables saving of analysis data to disk.
+  * `usb-device` - device-side USB transport (Linux only).
 
 ## Installing the command line tools
 
 Run the following command to install the command line tools:
 
     cargo install aggligator-util
-
-## Minimum supported Rust version
-
-The minimum supported Rust version (MSRV) is 1.75.
 
 ## License
 

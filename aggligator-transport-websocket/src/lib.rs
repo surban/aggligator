@@ -1,3 +1,11 @@
+#![warn(missing_docs)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/surban/aggligator/master/.misc/aggligator.png",
+    html_favicon_url = "https://raw.githubusercontent.com/surban/aggligator/master/.misc/aggligator.png",
+    issue_tracker_base_url = "https://github.com/surban/aggligator/issues/"
+)]
+
 //! [Aggligator](aggligator) transport: WebSocket on a native platform (not web).
 
 use aggligator::io::{StreamBox, TxRxBox};

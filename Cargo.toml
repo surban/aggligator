@@ -46,8 +46,6 @@ wasm-bindgen-test = "0.3.45"
 web-sys = "0.3.72"
 x25519-dalek = "2"
 
-# [patch.crates-io]
-# upc = { path = "../upc" }
 
 # for WASI on the web (wasm32-wasip1-threads target with `js` feature):
 # [patch.crates-io]

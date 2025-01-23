@@ -1,3 +1,11 @@
+#![warn(missing_docs)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/surban/aggligator/master/.misc/aggligator.png",
+    html_favicon_url = "https://raw.githubusercontent.com/surban/aggligator/master/.misc/aggligator.png",
+    issue_tracker_base_url = "https://github.com/surban/aggligator/issues/"
+)]
+
 //! [Aggligator](aggligator) transport wrapper using TLS
 //!
 //! This provides connection security by wrapping Aggligator links
@@ -9,7 +17,7 @@ use std::{io::Result, sync::Arc};
 use tokio::io::split;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
-pub use rustls::{pki_types::ServerName, ClientConfig, ServerConfig};
+pub use rustls::{pki_types::ServerName, ClientConfig, RootCertStore, ServerConfig};
 
 use aggligator::transport::{AcceptingWrapper, ConnectingWrapper};
 

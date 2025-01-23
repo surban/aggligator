@@ -35,7 +35,7 @@ use crate::{TcpAcceptor, TcpConnector};
 /// that can all connect to `server`, or `server` has multiple interfaces
 /// that are registered with their IP addresses in DNS.
 /// ```no_run
-/// use aggligator_util::net::tcp_connect;
+/// use aggligator_transport_tcp::simple::tcp_connect;
 ///
 /// #[tokio::main]
 /// async fn main() -> std::io::Result<()> {
@@ -66,7 +66,7 @@ pub async fn tcp_connect(target: impl IntoIterator<Item = String>, default_port:
 /// in DNS so that clients can discover them and establish multiple links.
 /// ```no_run
 /// use std::net::{Ipv6Addr, SocketAddr};
-/// use aggligator_util::net::tcp_server;
+/// use aggligator_transport_tcp::simple::tcp_server;
 ///
 /// #[tokio::main]
 /// async fn main() -> std::io::Result<()> {
@@ -105,7 +105,7 @@ mod tls {
     };
     use aggligator_wrapper_tls::{TlsClient, TlsServer};
 
-    pub use aggligator_wrapper_tls::{ClientConfig, ServerConfig, ServerName};
+    pub use aggligator_wrapper_tls::{ClientConfig, RootCertStore, ServerConfig, ServerName};
 
     use crate::{TcpAcceptor, TcpConnector};
 
@@ -135,8 +135,8 @@ mod tls {
     /// that are registered with their IP addresses in DNS.
     /// ```no_run
     /// use std::sync::Arc;
-    /// use aggligator_util::net::tls_connect;
-    /// use rustls::{ClientConfig, RootCertStore, pki_types::ServerName};
+    /// use aggligator_transport_tcp::simple::tls_connect;
+    /// use aggligator_transport_tcp::simple::{ClientConfig, RootCertStore, ServerName};
     ///
     /// #[tokio::main]
     /// async fn main() -> std::io::Result<()> {
@@ -191,8 +191,7 @@ mod tls {
     /// ```no_run
     /// use std::net::{Ipv6Addr, SocketAddr};
     /// use std::sync::Arc;
-    /// use aggligator_util::net::tls_server;
-    /// use rustls::ServerConfig;
+    /// use aggligator_transport_tcp::simple::{tls_server, ServerConfig};
     ///
     /// #[tokio::main]
     /// async fn main() -> std::io::Result<()> {

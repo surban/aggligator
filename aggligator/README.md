@@ -16,7 +16,7 @@ widely adopted protocols such as TCP, HTTPS, TLS, USB and WebSockets and is comp
 implemented in user space without the need for any support from the operating system.
 
 Aggligator is written in 100% safe [Rust] and builds upon the [Tokio]
-asynchronous runtime.
+asynchronous runtime. It works on all major native platform as well as WebAssembly.
 
 [TCP]: https://en.wikipedia.org/wiki/Transmission_Control_Protocol
 [Multipath TCP]: https://en.wikipedia.org/wiki/Multipath_TCP
@@ -42,12 +42,30 @@ runtime environment (like a web browser) you must enable the `js` crate feature.
 This will enable JavaScript promises support and spawn tasks onto the browser's
 native event queue.
 
-## Working with TCP links, TLS encryption and examples
+## Companion crates
 
-Useful functions for working with TCP-based links, encryption and authentication using TLS,
-a visualizing link monitor and a completely worked out example are provided in the
-**[aggligator-util]** crate.
+The following [crates provide transports]:
+  * [aggligator-transport-bluer] — transport over Bluetooth on Linux,
+  * [aggligator-transport-tcp] — transport over TCP with optional TLS encryption,
+  * [aggligator-transport-usb] — transport over USB,
+  * [aggligator-transport-websocket] — transport over WebSockets for native platforms.
 
+[crates provide transports]: https://crates.io/search?q=aggligator-transport
+[aggligator-transport-bluer]: https://crates.io/crates/aggligator-transport-bluer
+[aggligator-transport-tcp]: https://crates.io/crates/aggligator-transport-tcp
+[aggligator-transport-usb]: https://crates.io/crates/aggligator-transport-usb
+[aggligator-transport-websocket]: https://crates.io/crates/aggligator-transport-websocket
+
+The following crates provide transport wrappers:
+  * [aggligator-wrapper-tls] — transport wrapper providing TLS security.
+
+[aggligator-wrapper-tls]: https://crates.io/crates/aggligator-wrapper-tls
+
+The following crates provide utility functions and command line tools:
+  * [aggligator-monitor] — interactive text-based link monitor and speed test,
+  * [aggligator-util] — command line utilities including tunneling of TCP connections.
+
+[aggligator-monitor]: https://crates.io/crates/aggligator-monitor
 [aggligator-util]: https://crates.io/crates/aggligator-util
 
 ## Demo
