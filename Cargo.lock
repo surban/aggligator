@@ -49,7 +49,7 @@ dependencies = [
 
 [[package]]
 name = "aggligator-monitor"
-version = "0.9.0"
+version = "0.9.2"
 dependencies = [
  "aggligator",
  "crossterm",
@@ -62,7 +62,7 @@ dependencies = [
 
 [[package]]
 name = "aggligator-transport-bluer"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aggligator",
  "async-trait",
@@ -74,7 +74,7 @@ dependencies = [
 
 [[package]]
 name = "aggligator-transport-tcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aggligator",
  "aggligator-wrapper-tls",
@@ -88,7 +88,7 @@ dependencies = [
 
 [[package]]
 name = "aggligator-transport-usb"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "aggligator",
  "async-trait",
@@ -152,7 +152,7 @@ dependencies = [
 
 [[package]]
 name = "aggligator-wrapper-tls"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aggligator",
  "async-trait",
