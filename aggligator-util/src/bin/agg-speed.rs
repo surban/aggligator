@@ -24,23 +24,28 @@ use tokio::{
     task::block_in_place,
 };
 
-use aggligator::{cfg::Cfg, dump::dump_to_json_line_file};
-use aggligator_util::{
-    cli::{init_log, load_cfg, parse_tcp_link_filter, print_default_cfg},
+use aggligator::{
+    cfg::Cfg,
+    dump::dump_to_json_line_file,
+    exec,
+    transport::{AcceptorBuilder, ConnectorBuilder, LinkTagBox},
+};
+use aggligator_monitor::{
     monitor::{format_speed, interactive_monitor},
     speed::{speed_test, INTERVAL},
-    transport::{
-        tcp::{IpVersion, TcpAcceptor, TcpConnector, TcpLinkFilter},
-        tls::{TlsClient, TlsServer},
-        websocket::{WebSocketAcceptor, WebSocketConnector},
-        AcceptorBuilder, ConnectorBuilder, LinkTagBox,
-    },
 };
+use aggligator_transport_tcp::{IpVersion, TcpAcceptor, TcpConnector, TcpLinkFilter};
+use aggligator_transport_websocket::{WebSocketAcceptor, WebSocketConnector};
+use aggligator_util::{init_log, load_cfg, parse_tcp_link_filter, print_default_cfg};
+use aggligator_wrapper_tls::{TlsClient, TlsServer};
 
-#[cfg(feature = "rfcomm")]
-use aggligator_util::transport::rfcomm::{RfcommAcceptor, RfcommConnector};
-#[cfg(feature = "rfcomm-profile")]
-use aggligator_util::transport::rfcomm_profile::{RfcommProfileAcceptor, RfcommProfileConnector};
+#[cfg(feature = "bluer")]
+use aggligator_transport_bluer::rfcomm::{RfcommAcceptor, RfcommConnector};
+#[cfg(feature = "bluer")]
+use aggligator_transport_bluer::rfcomm_profile::{RfcommProfileAcceptor, RfcommProfileConnector};
+
+#[cfg(feature = "usb-device")]
+use aggligator_transport_usb::{upc, usb_gadget};
 
 const TCP_PORT: u16 = 5700;
 const DUMP_BUFFER: usize = 8192;
@@ -63,10 +68,11 @@ mod usb {
     pub const INTERFACE_NAME: &str = "speed test";
 }
 
-#[cfg(feature = "rfcomm")]
+#[cfg(feature = "bluer")]
 const RFCOMM_CHANNEL: u8 = 20;
-#[cfg(feature = "rfcomm-profile")]
-const RFCOMM_UUID: bluer::Uuid = bluer::Uuid::from_u128(0x7f95058c_c00e_44a9_9003_2ce90d60e2e7);
+#[cfg(feature = "bluer")]
+const RFCOMM_UUID: aggligator_transport_bluer::rfcomm_profile::Uuid =
+    aggligator_transport_bluer::rfcomm_profile::Uuid::from_u128(0x7f95058c_c00e_44a9_9003_2ce90d60e2e7);
 
 static TLS_CERT_PEM: &[u8] = include_bytes!("agg-speed-cert.pem");
 static TLS_KEY_PEM: &[u8] = include_bytes!("agg-speed-key.pem");
@@ -260,25 +266,25 @@ pub struct ClientCli {
     #[arg(long)]
     websocket: Vec<String>,
     /// Bluetooth RFCOMM server address.
-    #[cfg(feature = "rfcomm")]
+    #[cfg(feature = "bluer")]
     #[arg(long, value_parser=parse_rfcomm)]
-    rfcomm: Option<bluer::rfcomm::SocketAddr>,
+    rfcomm: Option<aggligator_transport_bluer::rfcomm::SocketAddr>,
     /// Bluetooth RFCOMM profile server address.
-    #[cfg(feature = "rfcomm-profile")]
+    #[cfg(feature = "bluer")]
     #[arg(long)]
-    rfcomm_profile: Option<bluer::Address>,
+    rfcomm_profile: Option<aggligator_transport_bluer::rfcomm_profile::Address>,
     /// USB device serial number (equals hostname of speed test device).
     #[cfg(feature = "usb-host")]
     #[arg(long)]
     usb: Option<String>,
 }
 
-#[cfg(feature = "rfcomm")]
-fn parse_rfcomm(arg: &str) -> Result<bluer::rfcomm::SocketAddr> {
-    match arg.parse::<bluer::rfcomm::SocketAddr>() {
+#[cfg(feature = "bluer")]
+fn parse_rfcomm(arg: &str) -> Result<aggligator_transport_bluer::rfcomm::SocketAddr> {
+    match arg.parse::<aggligator_transport_bluer::rfcomm::SocketAddr>() {
         Ok(addr) => Ok(addr),
-        Err(err) => match arg.parse::<bluer::Address>() {
-            Ok(addr) => Ok(bluer::rfcomm::SocketAddr::new(addr, RFCOMM_CHANNEL)),
+        Err(err) => match arg.parse::<aggligator_transport_bluer::rfcomm::Address>() {
+            Ok(addr) => Ok(aggligator_transport_bluer::rfcomm::SocketAddr::new(addr, RFCOMM_CHANNEL)),
             Err(_) => Err(err.into()),
         },
     }
@@ -294,7 +300,7 @@ impl ClientCli {
         if let Some(dump) = dump.clone() {
             let (tx, rx) = mpsc::channel(DUMP_BUFFER);
             builder.task().dump(tx);
-            tokio::spawn(dump_to_json_line_file(dump, rx));
+            exec::spawn(dump_to_json_line_file(dump, rx));
         }
         if self.tls {
             builder.wrap(TlsClient::new(
@@ -316,14 +322,14 @@ impl ClientCli {
             connector.add(tcp_connector);
         }
 
-        #[cfg(feature = "rfcomm")]
+        #[cfg(feature = "bluer")]
         if let Some(addr) = self.rfcomm {
             let rfcomm_connector = RfcommConnector::new(addr);
             targets.push(addr.to_string());
             connector.add(rfcomm_connector);
         }
 
-        #[cfg(feature = "rfcomm-profile")]
+        #[cfg(feature = "bluer")]
         if let Some(addr) = self.rfcomm_profile {
             let rfcomm_profile_connector = RfcommProfileConnector::new(addr, RFCOMM_UUID)
                 .await
@@ -335,8 +341,8 @@ impl ClientCli {
         #[cfg(feature = "usb-host")]
         if let Some(serial) = &self.usb {
             let filter_serial = serial.clone();
-            let filter = move |dev: &aggligator_util::transport::usb::DeviceInfo,
-                               iface: &aggligator_util::transport::usb::InterfaceInfo| {
+            let filter = move |dev: &aggligator_transport_usb::DeviceInfo,
+                               iface: &aggligator_transport_usb::InterfaceInfo| {
                 dev.vendor_id == usb::VID
                     && dev.product_id == usb::PID
                     && dev.manufacturer == usb::MANUFACTURER
@@ -351,7 +357,7 @@ impl ClientCli {
                     && iface.description == usb::INTERFACE_NAME
             };
             let usb_connector =
-                aggligator_util::transport::usb::UsbConnector::new(filter).context("cannot initialize USB")?;
+                aggligator_transport_usb::UsbConnector::new(filter).context("cannot initialize USB")?;
             targets.push(format!("USB {serial}"));
             connector.add(usb_connector);
         }
@@ -384,7 +390,7 @@ impl ClientCli {
         let tags_rx = connector.available_tags_watch();
         let tag_err_rx = connector.link_errors();
         let (disabled_tags_tx, mut disabled_tags_rx) = watch::channel(HashSet::new());
-        tokio::spawn(async move {
+        exec::spawn(async move {
             loop {
                 let disabled_tags: HashSet<LinkTagBox> = (*disabled_tags_rx.borrow_and_update()).clone();
                 connector.set_disabled_tags(disabled_tags);
@@ -403,7 +409,7 @@ impl ClientCli {
         drop(control_tx);
 
         if !self.no_monitor {
-            tokio::spawn(async move {
+            exec::spawn(async move {
                 loop {
                     let (send, recv) = *speed_rx.borrow_and_update();
                     let speed = format!(
@@ -451,7 +457,7 @@ impl ClientCli {
             let res = speed_test.await;
             res?
         } else {
-            let task = tokio::spawn(speed_test);
+            let task = exec::spawn(speed_test);
             block_in_place(|| {
                 interactive_monitor(
                     header_rx,
@@ -519,7 +525,7 @@ pub struct ServerCli {
     #[arg(long, default_value_t = TCP_PORT)]
     tcp: u16,
     /// RFCOMM channel number to listen on.
-    #[cfg(feature = "rfcomm")]
+    #[cfg(feature = "bluer")]
     #[arg(long, default_value_t = RFCOMM_CHANNEL)]
     rfcomm: u8,
     /// Listen on USB device controller (UDC).
@@ -542,7 +548,7 @@ impl ServerCli {
             builder.set_task_cfg(move |task| {
                 let (tx, rx) = mpsc::channel(DUMP_BUFFER);
                 task.dump(tx);
-                tokio::spawn(dump_to_json_line_file(dump.clone(), rx));
+                exec::spawn(dump_to_json_line_file(dump.clone(), rx));
             });
         }
         if self.tls {
@@ -565,8 +571,13 @@ impl ServerCli {
             Err(err) => eprintln!("Cannot listen on TCP port {}: {err}", self.tcp),
         }
 
-        #[cfg(feature = "rfcomm")]
-        match RfcommAcceptor::new(bluer::rfcomm::SocketAddr::new(bluer::Address::any(), self.rfcomm)).await {
+        #[cfg(feature = "bluer")]
+        match RfcommAcceptor::new(aggligator_transport_bluer::rfcomm::SocketAddr::new(
+            aggligator_transport_bluer::rfcomm::Address::any(),
+            self.rfcomm,
+        ))
+        .await
+        {
             Ok(rfcomm) => {
                 acceptor.add(rfcomm);
                 ports.push(format!("RFCOMM channel {}", self.rfcomm));
@@ -574,7 +585,7 @@ impl ServerCli {
             Err(err) => eprintln!("Cannot listen on RFCOMM channel {}: {err}", self.rfcomm),
         }
 
-        #[cfg(feature = "rfcomm-profile")]
+        #[cfg(feature = "bluer")]
         match RfcommProfileAcceptor::new(RFCOMM_UUID).await {
             Ok(rfcomm_profile) => {
                 acceptor.add(rfcomm_profile);
@@ -615,7 +626,7 @@ impl ServerCli {
             let serial = gethostname::gethostname().to_string_lossy().to_string();
             match register_usb(&serial) {
                 Ok((usb_reg, upc, udc_name)) => {
-                    acceptor.add(aggligator_util::transport::usb::UsbAcceptor::new(upc, &udc_name));
+                    acceptor.add(aggligator_transport_usb::UsbAcceptor::new(upc, &udc_name));
                     ports.push(format!("UDC {} ({serial})", udc_name.to_string_lossy()));
                     Some(usb_reg)
                 }
@@ -632,7 +643,7 @@ impl ServerCli {
         acceptor.add(wsa);
         ports.push(format!("WebSocket {}", self.websocket));
         let websocket_addr = SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), self.websocket);
-        tokio::spawn(async move {
+        exec::spawn(async move {
             if let Err(err) = axum_server::bind(websocket_addr)
                 .serve(router.into_make_service_with_connect_info::<SocketAddr>())
                 .await
@@ -657,7 +668,7 @@ impl ServerCli {
                 let (ch, control) = acceptor.accept().await?;
                 let _ = control_tx.send((control, String::new()));
 
-                tokio::spawn(async move {
+                exec::spawn(async move {
                     let id = ch.id();
                     let (r, w) = ch.into_stream().into_split();
                     let (speed_tx, _speed_rx) = watch::channel(Default::default());
@@ -678,7 +689,7 @@ impl ServerCli {
         if self.no_monitor {
             task.await?;
         } else {
-            let task = tokio::spawn(task);
+            let task = exec::spawn(task);
 
             let header_rx = watch::channel(format!("{}\r\n{}", title.white().bold(), debug_warning())).1;
             block_in_place(|| interactive_monitor(header_rx, control_rx, 1, None, Some(tag_error_rx), None))?;

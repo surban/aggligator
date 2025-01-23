@@ -1,4 +1,4 @@
-//! WebSocket transport.
+//! [Aggligator](aggligator) transport: WebSocket on a native platform (not web).
 
 use async_trait::async_trait;
 use axum::{
@@ -29,14 +29,15 @@ use tokio::{
 use tokio_tungstenite::{client_async_tls_with_config, tungstenite::protocol::WebSocketConfig, Connector};
 use url::Url;
 
-use super::{
-    tcp::{
-        bind_socket_to_interface, interface_names_for_target, local_interfaces, resolve_hosts, use_proper_ipv4,
-        IpVersion,
+use aggligator::{
+    control::Direction,
+    transport::{
+        AcceptedStreamBox, AcceptingTransport, ConnectingTransport, LinkTag, LinkTagBox, StreamBox, TxRxBox,
     },
-    AcceptedStreamBox, AcceptingTransport, ConnectingTransport, LinkTag, LinkTagBox, StreamBox, TxRxBox,
+    Link,
 };
-use aggligator::{control::Direction, Link};
+use aggligator_transport_tcp::util;
+pub use aggligator_transport_tcp::IpVersion;
 
 static NAME: &str = "websocket";
 
@@ -198,7 +199,7 @@ impl WebSocketConnector {
         for url in &self.urls {
             let host = url.host_str().unwrap();
             let port = url.port_or_known_default().unwrap();
-            let addrs = resolve_hosts(&[format!("{host}:{port}")], self.ip_version).await;
+            let addrs = util::resolve_hosts(&[format!("{host}:{port}")], self.ip_version).await;
             url_addrs.insert(url, addrs);
         }
 
@@ -214,12 +215,12 @@ impl ConnectingTransport for WebSocketConnector {
 
     async fn link_tags(&self, tx: watch::Sender<HashSet<LinkTagBox>>) -> Result<()> {
         loop {
-            let interfaces = local_interfaces()?;
+            let interfaces = util::local_interfaces()?;
 
             let mut tags: HashSet<LinkTagBox> = HashSet::new();
             for (url, addrs) in self.resolve().await {
                 for addr in addrs {
-                    for interface in interface_names_for_target(&interfaces, addr) {
+                    for interface in util::interface_names_for_target(&interfaces, addr) {
                         let tag = OutgoingWebSocketLinkTag {
                             interface,
                             remote: addr,
@@ -252,7 +253,7 @@ impl ConnectingTransport for WebSocketConnector {
             IpAddr::V4(_) => TcpSocket::new_v4(),
             IpAddr::V6(_) => TcpSocket::new_v6(),
         }?;
-        bind_socket_to_interface(&socket, &tag.interface, tag.remote.ip())?;
+        util::bind_socket_to_interface(&socket, &tag.interface, tag.remote.ip())?;
         let stream = socket.connect(tag.remote).await?;
         let _ = stream.set_nodelay(true);
 
@@ -492,7 +493,7 @@ impl AcceptingTransport for WebSocketAcceptor {
 
         while let Some(IncomingWebSocket { local, mut remote, web_socket }) = rx.recv().await {
             let protocol = web_socket.protocol().and_then(|hv| hv.to_str().ok()).map(|s| s.to_string());
-            use_proper_ipv4(&mut remote);
+            util::use_proper_ipv4(&mut remote);
 
             // Adapt WebSocket IO.
             let (ws_tx, ws_rx) = web_socket.split();

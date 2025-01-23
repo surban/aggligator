@@ -257,6 +257,13 @@ mod js_instant {
         pub fn elapsed(&self) -> Duration {
             Instant::now() - *self
         }
+
+        /// Adds the duration to this instant, if the resulting value is representable.
+        pub fn checked_add(&self, duration: Duration) -> Option<Self> {
+            let duration_millis = u64::try_from(duration.as_millis()).ok()?;
+            let millis = self.0.checked_add(duration_millis)?;
+            Some(Self(millis))
+        }
     }
 
     impl Add<Duration> for Instant {

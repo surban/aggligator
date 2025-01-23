@@ -3,8 +3,8 @@
 use async_trait::async_trait;
 use bluer::{
     agent::{Agent, AgentHandle},
-    rfcomm::{Profile, ProfileHandle, ReqError, Role, SocketAddr},
-    Adapter, AdapterEvent, Address, Session, Uuid,
+    rfcomm::{Profile, ProfileHandle, ReqError, Role},
+    Adapter, AdapterEvent, Session,
 };
 use futures::{pin_mut, FutureExt, StreamExt};
 use std::{
@@ -16,13 +16,18 @@ use std::{
     io::{Error, ErrorKind, Result},
     time::Duration,
 };
-use tokio::{
-    sync::{mpsc, watch, Mutex},
-    time::timeout,
-};
+use tokio::sync::{mpsc, watch, Mutex};
 
-use super::{AcceptedStreamBox, AcceptingTransport, ConnectingTransport, IoBox, LinkTag, LinkTagBox, StreamBox};
-use aggligator::{control::Direction, Link};
+pub use bluer::{rfcomm::SocketAddr, Address, Uuid};
+
+use aggligator::{
+    control::Direction,
+    exec::time::timeout,
+    transport::{
+        AcceptedStreamBox, AcceptingTransport, ConnectingTransport, IoBox, LinkTag, LinkTagBox, StreamBox,
+    },
+    Link,
+};
 
 static NAME: &str = "rfcomm_profile";
 

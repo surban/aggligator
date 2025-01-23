@@ -1,4 +1,4 @@
-//! USB transport.
+//! [Aggligator](aggligator) transport: USB
 //!
 //! This uses a [USB packet channel (UPC)](upc) to encapsulate data over a USB connection.
 
@@ -8,8 +8,8 @@ static NAME: &str = "usb";
 
 const TIMEOUT: Duration = Duration::from_secs(1);
 
-#[cfg(feature = "usb-host")]
-#[cfg_attr(docsrs, doc(cfg(feature = "usb-host")))]
+#[cfg(feature = "host")]
+#[cfg_attr(docsrs, doc(cfg(feature = "host")))]
 mod host {
     use async_trait::async_trait;
     use futures::TryStreamExt;
@@ -29,11 +29,12 @@ mod host {
         time::sleep,
     };
 
-    use super::{
-        super::{ConnectingTransport, LinkTag, LinkTagBox, StreamBox, TxRxBox},
-        NAME, TIMEOUT,
+    use aggligator::{
+        control::Direction,
+        transport::{ConnectingTransport, LinkTag, LinkTagBox, StreamBox, TxRxBox},
     };
-    use aggligator::control::Direction;
+
+    use super::{NAME, TIMEOUT};
 
     const PROBE_INTERVAL: Duration = Duration::from_secs(3);
 
@@ -306,12 +307,12 @@ mod host {
     }
 }
 
-#[cfg(feature = "usb-host")]
-#[cfg_attr(docsrs, doc(cfg(feature = "usb-host")))]
+#[cfg(feature = "host")]
+#[cfg_attr(docsrs, doc(cfg(feature = "host")))]
 pub use host::*;
 
-#[cfg(feature = "usb-device")]
-#[cfg_attr(docsrs, doc(cfg(feature = "usb-device")))]
+#[cfg(feature = "device")]
+#[cfg_attr(docsrs, doc(cfg(feature = "device")))]
 mod device {
     use aggligator::control::Direction;
     use async_trait::async_trait;
@@ -327,8 +328,12 @@ mod device {
     use tokio::sync::{mpsc, Mutex};
     use upc::device::UpcFunction;
 
+    use aggligator::transport::{AcceptedStreamBox, AcceptingTransport, LinkTag, LinkTagBox, TxRxBox};
+
     use super::NAME;
-    use crate::transport::{AcceptedStreamBox, AcceptingTransport, LinkTag, LinkTagBox, TxRxBox};
+
+    pub use upc;
+    pub use usb_gadget;
 
     /// Link tag for incoming USB link.
     #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -417,6 +422,6 @@ mod device {
     }
 }
 
-#[cfg(feature = "usb-device")]
-#[cfg_attr(docsrs, doc(cfg(feature = "usb-device")))]
+#[cfg(feature = "device")]
+#[cfg_attr(docsrs, doc(cfg(feature = "device")))]
 pub use device::*;

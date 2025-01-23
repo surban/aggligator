@@ -69,7 +69,7 @@ use std::{
 };
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-use aggligator::{control::Direction, id::ConnId, Control, IoRxBox, IoTxBox, Link, Listener, Server, Task};
+use crate::{control::Direction, id::ConnId, Control, IoRxBox, IoTxBox, Link, Listener, Server, Task};
 
 mod acceptor;
 mod connector;
@@ -332,27 +332,3 @@ type BoxListener = Listener<TxBox, RxBox, LinkTagBox>;
 type BoxTask = Task<TxBox, RxBox, LinkTagBox>;
 type BoxLink = Link<LinkTagBox>;
 type BoxLinkError = LinkError<LinkTagBox>;
-
-#[cfg(feature = "tls")]
-#[cfg_attr(docsrs, doc(cfg(feature = "tls")))]
-pub mod tls;
-
-#[cfg(feature = "tcp")]
-#[cfg_attr(docsrs, doc(cfg(feature = "tcp")))]
-pub mod tcp;
-
-#[cfg(feature = "rfcomm")]
-#[cfg_attr(docsrs, doc(cfg(feature = "rfcomm")))]
-pub mod rfcomm;
-
-#[cfg(feature = "rfcomm-profile")]
-#[cfg_attr(docsrs, doc(cfg(feature = "rfcomm-profile")))]
-pub mod rfcomm_profile;
-
-#[cfg(any(feature = "usb-host", feature = "usb-device"))]
-#[cfg_attr(docsrs, doc(cfg(any(feature = "usb-host", feature = "usb-device"))))]
-pub mod usb;
-
-#[cfg(feature = "websocket")]
-#[cfg_attr(docsrs, doc(cfg(feature = "websocket")))]
-pub mod websocket;

@@ -1,0 +1,32 @@
+[package]
+name = "aggligator-transport-tcp"
+version = "0.1.0"
+description = "Aggligator transport: TCP"
+categories = ["asynchronous", "network-programming"]
+keywords = ["aggligator", "aggligator-transport"]
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+
+[features]
+default = ["tls"]
+tls = ["dep:aggligator-wrapper-tls"]
+
+[dependencies]
+aggligator = { version = "0.9.0", path = "../aggligator" }
+aggligator-wrapper-tls = { version = "0.1.0", path = "../aggligator-wrapper-tls", optional = true }
+
+async-trait = { workspace = true }
+futures = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true, features = ["net"] }
+
+network-interface = "2"
+socket2 = "0.5"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

@@ -15,13 +15,10 @@ use std::{
     sync::{Arc, Weak},
     time::Duration,
 };
-use tokio::{
-    sync::{broadcast, mpsc, oneshot, watch, RwLock},
-    time::sleep,
-};
+use tokio::sync::{broadcast, mpsc, oneshot, watch, RwLock};
 
 use super::{BoxControl, BoxLink, BoxLinkError, BoxTask, LinkTag, LinkTagBox, StreamBox, TxRxBox};
-use aggligator::{connect, control::DisconnectReason, Cfg, Link, Outgoing};
+use crate::{connect, control::DisconnectReason, exec, exec::time::sleep, Cfg, Link, Outgoing};
 
 /// A transport for connecting to remote endpoints.
 #[async_trait]
@@ -123,7 +120,7 @@ impl ConnectorBuilder {
         });
 
         // Run link aggregator task for connection.
-        tokio::spawn(task.run());
+        exec::spawn(task.run());
 
         // Set up channels.
         let (transport_tx, transport_rx) = mpsc::unbounded_channel();
@@ -132,7 +129,7 @@ impl ConnectorBuilder {
         let (disabled_tags_tx, disabled_tags_rx) = watch::channel(HashSet::new());
 
         // Start connector task managing all transports.
-        tokio::spawn(Connector::task(
+        exec::spawn(Connector::task(
             control.clone(),
             active_transports,
             transport_rx,

@@ -1,8 +1,12 @@
-//! TCP transport.
+//! [Aggligator](aggligator) transport: TCP
+//!
+//! #### Simple aggregation of TCP links
+//! Use the [tcp_connect](simple::tcp_connect) and [tcp_server](simple::tcp_server) functions
+//! from the [simple module](simple).
 
 use async_trait::async_trait;
 use futures::{future, FutureExt};
-use network_interface::{Addr, NetworkInterface, NetworkInterfaceConfig};
+use network_interface::Addr;
 use socket2::SockRef;
 use std::{
     any::Any,
@@ -15,13 +19,21 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    net::{lookup_host, TcpListener, TcpSocket},
+    net::{TcpListener, TcpSocket},
     sync::{mpsc, watch},
     time::sleep,
 };
 
-use super::{AcceptedStreamBox, AcceptingTransport, ConnectingTransport, IoBox, LinkTag, LinkTagBox, StreamBox};
-use aggligator::{control::Direction, Link};
+use aggligator::{
+    control::Direction,
+    transport::{
+        AcceptedStreamBox, AcceptingTransport, ConnectingTransport, IoBox, LinkTag, LinkTagBox, StreamBox,
+    },
+    Link,
+};
+
+pub mod simple;
+pub mod util;
 
 static NAME: &str = "tcp";
 
@@ -120,17 +132,6 @@ impl LinkTag for TcpLinkTag {
     }
 }
 
-/// Gets the list of local network interfaces from the operating system.
-///
-/// Filters out interfaces that are most likely useless.
-pub(crate) fn local_interfaces() -> Result<Vec<NetworkInterface>> {
-    Ok(NetworkInterface::show()
-        .map_err(|err| Error::new(ErrorKind::Other, err.to_string()))?
-        .into_iter()
-        .filter(|iface| !iface.name.starts_with("ifb"))
-        .collect())
-}
-
 /// TCP link filter method.
 ///
 /// Controls which links are established between the local and remote endpoint.
@@ -226,7 +227,7 @@ impl TcpConnector {
 
     /// Resolve target to socket addresses.
     async fn resolve(&self) -> Vec<SocketAddr> {
-        resolve_hosts(&self.hosts, self.ip_version).await
+        util::resolve_hosts(&self.hosts, self.ip_version).await
     }
 }
 
@@ -238,11 +239,11 @@ impl ConnectingTransport for TcpConnector {
 
     async fn link_tags(&self, tx: watch::Sender<HashSet<LinkTagBox>>) -> Result<()> {
         loop {
-            let interfaces = local_interfaces()?;
+            let interfaces = util::local_interfaces()?;
 
             let mut tags: HashSet<LinkTagBox> = HashSet::new();
             for addr in self.resolve().await {
-                for iface in interface_names_for_target(&interfaces, addr) {
+                for iface in util::interface_names_for_target(&interfaces, addr) {
                     let tag = TcpLinkTag::new(&iface, addr, Direction::Outgoing);
                     tags.insert(Box::new(tag));
                 }
@@ -269,7 +270,7 @@ impl ConnectingTransport for TcpConnector {
             IpAddr::V6(_) => TcpSocket::new_v6(),
         }?;
 
-        bind_socket_to_interface(&socket, &tag.interface, tag.remote.ip())?;
+        util::bind_socket_to_interface(&socket, &tag.interface, tag.remote.ip())?;
 
         let stream = socket.connect(tag.remote).await?;
         let _ = stream.set_nodelay(true);
@@ -386,7 +387,7 @@ impl TcpAcceptor {
     pub async fn all_interfaces(port: u16) -> Result<Self> {
         let mut listeners = Vec::new();
 
-        for iface in local_interfaces()? {
+        for iface in util::local_interfaces()? {
             for version in [IpVersion::IPv6, IpVersion::IPv4] {
                 match Self::listen(&iface, port, version) {
                     Ok(listener) => listeners.push(listener),
@@ -400,7 +401,7 @@ impl TcpAcceptor {
         Self::from_listeners(listeners)
     }
 
-    fn listen(interface: &NetworkInterface, port: u16, ip_version: IpVersion) -> Result<TcpListener> {
+    fn listen(interface: &util::NetworkInterface, port: u16, ip_version: IpVersion) -> Result<TcpListener> {
         let ip = interface
             .addr
             .iter()
@@ -447,11 +448,11 @@ impl AcceptingTransport for TcpAcceptor {
             let mut local = socket.local_addr()?;
 
             // Use proper IPv4 addresses.
-            use_proper_ipv4(&mut remote);
-            use_proper_ipv4(&mut local);
+            util::use_proper_ipv4(&mut remote);
+            util::use_proper_ipv4(&mut local);
 
             // Find local interface.
-            let Some(interface) = local_interface_for_ip(local.ip())? else {
+            let Some(interface) = util::local_interface_for_ip(local.ip())? else {
                 tracing::warn!(
                     "Interface for incoming connection from {remote} to {local} not found, rejecting."
                 );
@@ -468,100 +469,5 @@ impl AcceptingTransport for TcpAcceptor {
 
             let _ = tx.send(AcceptedStreamBox::new(IoBox::new(rh, wh).into(), tag)).await;
         }
-    }
-}
-
-/// Translate IPv4 address mapped to an IPv6 alias into proper IPv4 address.
-pub(crate) fn use_proper_ipv4(sa: &mut SocketAddr) {
-    if let IpAddr::V6(addr) = sa.ip() {
-        if let Some(addr) = addr.to_ipv4_mapped() {
-            sa.set_ip(addr.into());
-        }
-    }
-}
-
-/// Gets the local interface for the specified IP address.
-pub(crate) fn local_interface_for_ip(ip: IpAddr) -> Result<Option<Vec<u8>>> {
-    let interfaces = local_interfaces()?;
-    let iface = interfaces.into_iter().find_map(|interface| {
-        interface.addr.iter().any(|addr| addr.ip() == ip).then_some(interface.name.into_bytes())
-    });
-    Ok(iface)
-}
-
-/// Resolves the specified hosts to IP addresses.
-pub(crate) async fn resolve_hosts(
-    hosts: impl IntoIterator<Item = impl AsRef<str>>, ip_version: IpVersion,
-) -> Vec<SocketAddr> {
-    let mut all_addrs = HashSet::new();
-
-    for host in hosts {
-        let Ok(addrs) = lookup_host(host.as_ref()).await else { continue };
-        all_addrs.extend(addrs.filter(|addr| {
-            !((addr.is_ipv4() && ip_version.is_only_ipv6()) || (addr.is_ipv6() && ip_version.is_only_ipv4()))
-        }));
-    }
-
-    let mut all_addrs: Vec<_> = all_addrs.into_iter().collect();
-    all_addrs.sort();
-    all_addrs
-}
-
-/// Returns the interface usable for connecting to target.
-///
-/// Filters interfaces out that either have no IP address or only support
-/// an IP protocol version that does not match the target address.
-pub(crate) fn interface_names_for_target(
-    interfaces: &[NetworkInterface], target: SocketAddr,
-) -> HashSet<Vec<u8>> {
-    interfaces
-        .iter()
-        .cloned()
-        .filter_map(|iface| {
-            iface
-                .addr
-                .iter()
-                .any(|addr| {
-                    !addr.ip().is_unspecified()
-                        && addr.ip().is_loopback() == target.ip().is_loopback()
-                        && addr.ip().is_ipv4() == target.is_ipv4()
-                        && addr.ip().is_ipv6() == target.is_ipv6()
-                })
-                .then(|| iface.name.as_bytes().to_vec())
-        })
-        .collect()
-}
-
-/// Binds the socket the the specifed network interface.
-pub(crate) fn bind_socket_to_interface(socket: &TcpSocket, interface: &[u8], remote: IpAddr) -> Result<()> {
-    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-    {
-        let _ = remote;
-        socket.bind_device(Some(interface))
-    }
-
-    #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
-    {
-        for ifn in local_interfaces()? {
-            if ifn.name.as_bytes() == interface {
-                for addr in ifn.addr {
-                    match (addr.ip(), remote) {
-                        (IpAddr::V4(_), IpAddr::V4(_)) => (),
-                        (IpAddr::V6(_), IpAddr::V6(_)) => (),
-                        _ => continue,
-                    }
-
-                    if addr.ip().is_loopback() != remote.is_loopback() {
-                        continue;
-                    }
-
-                    tracing::debug!("binding to {addr:?} on interface {}", &ifn.name);
-                    socket.bind(SocketAddr::new(addr.ip(), 0))?;
-                    return Ok(());
-                }
-            }
-        }
-
-        Err(Error::new(ErrorKind::NotFound, "no IP address for interface"))
     }
 }

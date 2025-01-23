@@ -1,6 +1,6 @@
 //! Speed test.
 
-use futures::future::{self};
+use futures::future;
 use rand::{prelude::*, thread_rng};
 use rand_xoshiro::Xoroshiro128StarStar;
 use std::{
@@ -13,6 +13,8 @@ use tokio::{
     sync::{mpsc, oneshot, watch},
     time::Instant,
 };
+
+use aggligator::exec;
 
 const BUF_SIZE: usize = 8192;
 const MB: f64 = 1_048_576.;
@@ -54,7 +56,7 @@ pub async fn speed_test(
             let (recv_tx, recv_rx) = watch::channel(0.);
             let mut send_rx = Some(send_rx);
             let mut recv_rx = Some(recv_rx);
-            tokio::spawn(async move {
+            exec::spawn(async move {
                 while send_rx.is_some() || recv_rx.is_some() {
                     let send = send_rx.as_mut().map(|rx| *rx.borrow_and_update()).unwrap_or_default();
                     let recv = recv_rx.as_mut().map(|rx| *rx.borrow_and_update()).unwrap_or_default();
@@ -91,7 +93,7 @@ pub async fn speed_test(
     let sender_name = name.to_string();
     let sender_stop_tx = stop_tx.clone();
     let (stop_sender_tx, mut stop_sender_rx) = oneshot::channel();
-    let sender = tokio::spawn(async move {
+    let sender = exec::spawn(async move {
         if !send {
             return Ok((0, Duration::ZERO));
         }
@@ -142,7 +144,7 @@ pub async fn speed_test(
     });
 
     let receiver_name = name.to_string();
-    let receiver = tokio::spawn(async move {
+    let receiver = exec::spawn(async move {
         if !receive {
             return Ok((0, Duration::ZERO));
         }

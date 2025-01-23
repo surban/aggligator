@@ -1,0 +1,31 @@
+[package]
+name = "aggligator-transport-websocket"
+version = "0.1.0"
+description = "Aggligator transport: WebSocket"
+categories = ["asynchronous", "network-programming"]
+keywords = ["aggligator", "aggligator-transport"]
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+
+[dependencies]
+aggligator = { version = "0.9.0", path = "../aggligator" }
+aggligator-transport-tcp = { version = "0.1", path = "../aggligator-transport-tcp" }
+
+async-trait = { workspace = true }
+futures = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true, features = ["net", "sync"] }
+
+axum = { version = "0.7", features = ["ws"] }
+bytes = "1"
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+tungstenite = "0.24"
+url = "2"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

@@ -19,8 +19,9 @@ use std::{
 };
 use tokio::sync::{broadcast, broadcast::error::TryRecvError, watch};
 
-use crate::transport::{ConnectingTransport, LinkError, LinkTagBox};
+use aggligator::transport::{ConnectingTransport, LinkError, LinkTagBox};
 use aggligator::{control::Control, id::ConnId};
+use aggligator::exec;
 
 /// Watches the available tags of the specified transports.
 ///
@@ -39,7 +40,7 @@ pub fn watch_tags(
         transport_tasks.push(async move { transport.link_tags(tx).await });
     }
 
-    tokio::spawn(async move {
+    exec::spawn(async move {
         loop {
             // Remove channels from terminated transports.
             transport_tags.retain(|tt| tt.has_changed().is_ok());

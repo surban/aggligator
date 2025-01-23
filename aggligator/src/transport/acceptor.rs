@@ -9,16 +9,18 @@ use std::{
     sync::{Arc, Weak},
     time::Duration,
 };
-use tokio::{
-    sync::{broadcast, mpsc, oneshot, watch, Mutex, OwnedSemaphorePermit, RwLock, Semaphore},
-    time::{sleep_until, Instant},
-};
+use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex, OwnedSemaphorePermit, RwLock, Semaphore};
 
 use super::{
     BoxControl, BoxLink, BoxLinkError, BoxListener, BoxServer, BoxTask, LinkError, LinkTag, LinkTagBox,
     StreamBox, TxRxBox,
 };
-use aggligator::{alc::Channel, Cfg, Server};
+use crate::{
+    alc::Channel,
+    exec,
+    exec::time::{sleep_until, Instant},
+    Cfg, Server,
+};
 
 /// An accepted incoming stream.
 pub struct AcceptedStreamBox {
@@ -118,7 +120,7 @@ impl AcceptorBuilder {
         let (error_tx, error_rx) = broadcast::channel(1024);
         let listener = Mutex::new(server.listen().unwrap());
 
-        tokio::spawn(Acceptor::task(
+        exec::spawn(Acceptor::task(
             server.clone(),
             active_transports.clone(),
             transport_rx,
@@ -271,7 +273,7 @@ impl Acceptor {
         });
 
         // Run server task.
-        tokio::spawn(task.run());
+        exec::spawn(task.run());
 
         tracing::debug!("accepted incoming connection {:?}", control.id());
         Ok((channel, control))

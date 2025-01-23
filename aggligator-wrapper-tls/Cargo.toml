@@ -1,0 +1,27 @@
+[package]
+name = "aggligator-wrapper-tls"
+version = "0.1.0"
+description = "Aggligator transport wrapper: TLS"
+categories = ["asynchronous", "network-programming"]
+keywords = ["aggligator-transport"]
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+
+[dependencies]
+aggligator = { version = "0.9.0", path = "../aggligator" }
+
+async-trait = { workspace = true }
+futures = { workspace = true }
+tokio = { workspace = true, features = ["io-util"] }
+tracing = { workspace = true }
+
+rustls = "0.23"
+tokio-rustls = "0.26"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
