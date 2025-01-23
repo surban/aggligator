@@ -1,15 +1,15 @@
 [package]
 name = "aggligator"
 version = "0.9.0"
-edition = "2021"
-rust-version = "1.80"
-authors = ["Sebastian Urban <surban@surban.net>"]
 description = "Aggregates multiple links (TCP or similar) into one connection having their combined bandwidth and provides resiliency against failure of individual links."
 categories = ["asynchronous", "network-programming"]
 keywords = ["aggligator", "multi-link", "multipath", "connection", "resilient"]
-license = "Apache-2.0"
 readme = "README.md"
-repository = "https://github.com/surban/aggligator"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [features]
 default = []
