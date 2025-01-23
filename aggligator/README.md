@@ -50,7 +50,7 @@ The following [crates provide transports]:
   * [aggligator-transport-usb] — transport over USB,
   * [aggligator-transport-websocket] — transport over WebSockets for native platforms.
 
-[crates provide transports]: https://crates.io/search?q=aggligator-transport
+[crates provide transports]: https://crates.io/keywords/aggligator-transport
 [aggligator-transport-bluer]: https://crates.io/crates/aggligator-transport-bluer
 [aggligator-transport-tcp]: https://crates.io/crates/aggligator-transport-tcp
 [aggligator-transport-usb]: https://crates.io/crates/aggligator-transport-usb

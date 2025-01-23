@@ -4,7 +4,7 @@
 //!
 //! Crates that provide Aggligator support for common transports, such as TCP or WebSocket,
 //! can be found under the
-//! [`aggligator-transport` keyword on crates.io](https://crates.io/search?q=aggligator-transport).
+//! [`aggligator-transport` keyword on crates.io](https://crates.io/keywords/aggligator-transport).
 //!
 //! # Establishing outgoing connections
 //!
