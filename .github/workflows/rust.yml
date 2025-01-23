@@ -53,9 +53,9 @@ jobs:
       - name: Install latest stable Rust
         run: rustup set profile default && rustup default stable && rustup update
       - name: Build
-        run: cargo build --exclude aggligator-transport-bluer --features usb-host,raw-speed-cli,dump --all-targets --quiet
+        run: cargo build --workspace --exclude aggligator-transport-bluer --features usb-host,raw-speed-cli,dump --all-targets --quiet
       - name: Run tests (debug)
-        run: cargo test --exclude aggligator-transport-bluer --quiet
+        run: cargo test --workspace --exclude aggligator-transport-bluer --quiet
 
   build-msrv:
     name: Build with minimum supported Rust versions
