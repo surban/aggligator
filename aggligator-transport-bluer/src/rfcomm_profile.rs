@@ -1,6 +1,5 @@
 //! Bluetooth RFCOMM transport using profile for connecting.
 
-use aggligator::io::{IoBox, StreamBox};
 use async_trait::async_trait;
 use bluer::{
     agent::{Agent, AgentHandle},
@@ -19,11 +18,13 @@ use std::{
 };
 use tokio::sync::{mpsc, watch, Mutex};
 
+#[doc(no_inline)]
 pub use bluer::{rfcomm::SocketAddr, Address, Uuid};
 
 use aggligator::{
     control::Direction,
     exec::time::timeout,
+    io::{IoBox, StreamBox},
     transport::{AcceptedStreamBox, AcceptingTransport, ConnectingTransport, LinkTag, LinkTagBox},
     Link,
 };

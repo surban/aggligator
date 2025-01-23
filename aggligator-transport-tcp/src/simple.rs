@@ -105,6 +105,7 @@ mod tls {
     };
     use aggligator_wrapper_tls::{TlsClient, TlsServer};
 
+    #[doc(no_inline)]
     pub use aggligator_wrapper_tls::{ClientConfig, RootCertStore, ServerConfig, ServerName};
 
     use crate::{TcpAcceptor, TcpConnector};

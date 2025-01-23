@@ -28,8 +28,10 @@ use std::{
 };
 use tokio::sync::watch;
 
-pub use websocket_web::{Interface, WebSocketBuilder};
 use websocket_web::{WebSocketReceiver, WebSocketSender};
+
+#[doc(no_inline)]
+pub use websocket_web::{Interface, WebSocketBuilder};
 
 use aggligator::{
     control::Direction,

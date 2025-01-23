@@ -8,7 +8,6 @@
 
 //! [Aggligator](aggligator) transport: WebSocket on a native platform (not web).
 
-use aggligator::io::{StreamBox, TxRxBox};
 use async_trait::async_trait;
 use axum::{
     body::Body,
@@ -40,6 +39,7 @@ use url::Url;
 
 use aggligator::{
     control::Direction,
+    io::{StreamBox, TxRxBox},
     transport::{AcceptedStreamBox, AcceptingTransport, ConnectingTransport, LinkTag, LinkTagBox},
     Link,
 };
