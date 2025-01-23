@@ -75,13 +75,15 @@
 //! and establish outgoing connections. This is agnostic of the underlying protocol.
 //!
 //! Useful functions for working with TCP-based links, encryption and authentication using TLS,
-//! can be found in the **[aggligator-transport-tcp]** crate.
+//! can be found in the **[aggligator-transport-tcp]** crate. A
+//! [collection of transports](https://crates.io/keywords/aggligator-transport)
+//! for Aggligator is provided on crates.io.
 //!
 //! Command line utilites, that also serve as fully worked out examples, are provided in the
 //! **[aggligator-util]** crate.
 //!
-//! [aggligator-transport-tcp]: https://docs.rs/aggligator-transport-tcp/latest/aggligator-transport-tcp/
-//! [aggligator-util]: https://docs.rs/aggligator-util/latest/aggligator_util/
+//! [aggligator-transport-tcp]: https://docs.rs/aggligator-transport-tcp
+//! [aggligator-util]: https://docs.rs/aggligator-util
 //!
 
 #[cfg(target_pointer_width = "16")]
