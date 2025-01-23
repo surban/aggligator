@@ -2,9 +2,7 @@ name: Rust
 
 on:
   push:
-    branches: [master]
   pull_request:
-    branches: [master]
 
 env:
   CARGO_TERM_COLOR: always
@@ -24,11 +22,11 @@ jobs:
       - name: Check code formatting
         run: cargo fmt -- --check
       - name: Build
-        run: cargo build --all-features --all-targets --quiet
+        run: cargo build --features bluer,usb-device,usb-host,raw-speed-cli,dump --all-targets --quiet
       - name: Build documentation
         run: cargo doc --no-deps --quiet
       - name: Code analysis
-        run: cargo clippy --all-features --all-targets --quiet
+        run: cargo clippy --features bluer,usb-device,usb-host,raw-speed-cli,dump --all-targets --quiet
       - name: Run tests (debug)
         run: cargo test --quiet
       - name: Run tests (release)
@@ -55,7 +53,7 @@ jobs:
       - name: Install latest stable Rust
         run: rustup set profile default && rustup default stable && rustup update
       - name: Build
-        run: cargo build --features tcp,tls,websocket,cli,raw-speed-cli,speed,monitor,dump --all-targets --quiet
+        run: cargo build --features bluer,usb-device,usb-host,raw-speed-cli,dump --all-targets --quiet
       - name: Run tests (debug)
         run: cargo test --quiet
 
@@ -68,7 +66,7 @@ jobs:
           submodules: recursive
       - name: Install dependencies
         run: sudo apt-get update && sudo apt install libdbus-1-dev pkg-config
-      - name: Install Rust 1.75.0
-        run: rustup toolchain install 1.75.0
-      - name: Build aggligator and aggligator-util with Rust 1.75.0
-        run: cargo +1.75.0 build --all-features --all-targets --quiet
+      - name: Install Rust 1.80.0
+        run: rustup toolchain install 1.80.0
+      - name: Build aggligator and aggligator-util with Rust 1.80.0
+        run: cargo +1.80.0 build --features bluer,usb-device,usb-host,raw-speed-cli,dump --all-targets --quiet
