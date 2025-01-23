@@ -5,6 +5,12 @@ All notable changes to aggligator utilities will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.18.0 - 2025-01-23
+### Changed
+- move transport module from aggligator-util into aggligator crate
+- move each transport from aggligator-util into its own aggligator-transport-* crate
+- move link monitor and speed test into aggligator-monitor crate
+
 ## 0.16.1 - 2024-11-30
 ### Changed
 - cleanup dependencies

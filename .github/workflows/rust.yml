@@ -53,7 +53,7 @@ jobs:
       - name: Install latest stable Rust
         run: rustup set profile default && rustup default stable && rustup update
       - name: Build
-        run: cargo build --features bluer,usb-device,usb-host,raw-speed-cli,dump --all-targets --quiet
+        run: cargo build --features usb-host,raw-speed-cli,dump --all-targets --quiet
       - name: Run tests (debug)
         run: cargo test --quiet
 
