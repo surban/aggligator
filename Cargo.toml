@@ -9,6 +9,7 @@ members = [
     "aggligator-util",
     "aggligator-wrapper-tls",
 ]
+exclude = ["aggligator-transport-websocket-web"]
 resolver = "2"
 
 [workspace.package]

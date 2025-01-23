@@ -1,6 +1,6 @@
 [package]
 name = "aggligator"
-version = "0.9.2"
+version = "0.9.3"
 description = "Aggregates multiple links (TCP or similar) into one connection having their combined bandwidth and provides resiliency against failure of individual links."
 categories = ["asynchronous", "network-programming"]
 keywords = ["aggligator", "multi-link", "multipath", "connection", "resilient"]

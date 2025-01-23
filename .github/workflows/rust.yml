@@ -18,11 +18,13 @@ jobs:
       - name: Install dependencies
         run: sudo apt-get update && sudo apt install libdbus-1-dev pkg-config
       - name: Install latest stable Rust
-        run: rustup set profile default && rustup default stable && rustup update
+        run: rustup set profile default && rustup default stable && rustup update && rustup target add wasm32-unknown-unknown
       - name: Check code formatting
         run: cargo fmt -- --check
       - name: Build
         run: cargo build --features bluer,usb-device,usb-host,raw-speed-cli,dump --all-targets --quiet
+      - name: Build WebAssembly
+        run: cd aggligator-transport-websocket-web && cargo build --quiet
       - name: Build documentation
         run: cargo doc --no-deps --quiet
       - name: Code analysis

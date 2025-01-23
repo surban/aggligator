@@ -1,0 +1,28 @@
+[package]
+name = "aggligator-transport-websocket-web"
+version = "0.1.0"
+description = "Aggligator transport: WebSocket for the web targeting WebAssembly"
+categories = ["asynchronous", "network-programming", "webassembly"]
+keywords = ["aggligator", "aggligator-transport", "websocket"]
+readme = "README.md"
+edition = "2021"
+rust-version = "1.80"
+authors = ["Sebastian Urban <surban@surban.net>"]
+license = "Apache-2.0"
+repository = "https://github.com/surban/aggligator"
+
+[dependencies]
+aggligator = { version = "0.9.3", path = "../aggligator", features = ["js"] }
+
+async-trait = "0.1"
+bytes = "1"
+futures = "0.3"
+tracing = "0.1"
+tokio = { version = "1", features = ["sync"] }
+
+websocket-web = "0.1.3"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+targets = ["wasm32-unknown-unknown"]
