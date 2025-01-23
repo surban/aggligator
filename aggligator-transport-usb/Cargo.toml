@@ -1,6 +1,6 @@
 [package]
 name = "aggligator-transport-usb"
-version = "0.1.0"
+version = "0.2.0"
 description = "Aggligator transport: USB"
 categories = ["asynchronous", "network-programming"]
 keywords = ["aggligator", "aggligator-transport"]
@@ -12,7 +12,7 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["host", "device"]
+default = ["host"]
 host = ["upc/host", "rusb"]
 device = ["upc/device", "usb-gadget"]
 
