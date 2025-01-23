@@ -29,8 +29,10 @@ use tokio::{
     task::block_in_place,
 };
 
-use aggligator::exec::time::{sleep, timeout};
-use aggligator::exec;
+use aggligator::{
+    exec,
+    exec::time::{sleep, timeout},
+};
 use aggligator_monitor::{monitor::format_speed, speed, speed::INTERVAL};
 use aggligator_util::init_log;
 

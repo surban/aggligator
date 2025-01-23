@@ -11,14 +11,12 @@ use std::{
 };
 use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex, OwnedSemaphorePermit, RwLock, Semaphore};
 
-use super::{
-    BoxControl, BoxLink, BoxLinkError, BoxListener, BoxServer, BoxTask, LinkError, LinkTag, LinkTagBox,
-    StreamBox, TxRxBox,
-};
+use super::{BoxControl, BoxLink, BoxLinkError, BoxListener, BoxServer, BoxTask, LinkError, LinkTag, LinkTagBox};
 use crate::{
     alc::Channel,
     exec,
     exec::time::{sleep_until, Instant},
+    io::{StreamBox, TxRxBox},
     Cfg, Server,
 };
 

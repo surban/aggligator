@@ -1,8 +1,9 @@
 //! [Aggligator](aggligator) transport wrapper using TLS
-//! 
+//!
 //! This provides connection security by wrapping Aggligator links
 //! in TLS.
 
+use aggligator::io::{IoBox, StreamBox};
 use async_trait::async_trait;
 use std::{io::Result, sync::Arc};
 use tokio::io::split;
@@ -10,7 +11,7 @@ use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 pub use rustls::{pki_types::ServerName, ClientConfig, ServerConfig};
 
-use aggligator::transport::{AcceptingWrapper, ConnectingWrapper, IoBox, StreamBox};
+use aggligator::transport::{AcceptingWrapper, ConnectingWrapper};
 
 static NAME: &str = "tls";
 

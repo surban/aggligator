@@ -19,9 +19,12 @@ use std::{
 };
 use tokio::sync::{broadcast, broadcast::error::TryRecvError, watch};
 
-use aggligator::transport::{ConnectingTransport, LinkError, LinkTagBox};
-use aggligator::{control::Control, id::ConnId};
-use aggligator::exec;
+use aggligator::{
+    control::Control,
+    exec,
+    id::ConnId,
+    transport::{ConnectingTransport, LinkError, LinkTagBox},
+};
 
 /// Watches the available tags of the specified transports.
 ///

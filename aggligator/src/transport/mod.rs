@@ -52,8 +52,6 @@
 //! }
 //!
 
-use bytes::Bytes;
-use futures::{Sink, SinkExt, Stream, StreamExt};
 use std::{
     any::Any,
     cmp::Ordering,
@@ -61,15 +59,15 @@ use std::{
     fmt,
     fmt::{Debug, Display},
     hash::{Hash, Hasher},
-    io,
-    io::Result,
-    pin::Pin,
     sync::Arc,
-    task::{Context, Poll},
 };
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-use crate::{control::Direction, id::ConnId, Control, IoRxBox, IoTxBox, Link, Listener, Server, Task};
+use crate::{
+    control::Direction,
+    id::ConnId,
+    io::{RxBox, TxBox},
+    Control, Link, Listener, Server, Task,
+};
 
 mod acceptor;
 mod connector;
@@ -185,144 +183,6 @@ pub type LinkTagBox = Box<dyn LinkTag>;
 impl Clone for LinkTagBox {
     fn clone(&self) -> Self {
         self.box_clone()
-    }
-}
-
-/// A stream, either packet-based or IO-based.
-pub enum StreamBox {
-    /// Packet-based stream.
-    TxRx(TxRxBox),
-    /// IO-based stream.
-    Io(IoBox),
-}
-
-impl StreamBox {
-    /// Make stream packet-based.
-    ///
-    /// A packet-based stream is unaffacted.
-    /// An IO-based stream is wrapped in the integrity codec.
-    pub fn into_tx_rx(self) -> TxRxBox {
-        match self {
-            Self::TxRx(tx_rx) => tx_rx,
-            Self::Io(IoBox { read, write }) => {
-                let tx = IoTxBox::new(write);
-                let rx = IoRxBox::new(read);
-                TxRxBox::new(tx, rx)
-            }
-        }
-    }
-}
-
-impl From<TxRxBox> for StreamBox {
-    fn from(value: TxRxBox) -> Self {
-        Self::TxRx(value)
-    }
-}
-
-impl From<IoBox> for StreamBox {
-    fn from(value: IoBox) -> Self {
-        Self::Io(value)
-    }
-}
-
-type TxBox = Pin<Box<dyn Sink<Bytes, Error = io::Error> + Send + Sync + 'static>>;
-type RxBox = Pin<Box<dyn Stream<Item = Result<Bytes>> + Send + Sync + 'static>>;
-
-/// A boxed packet-based stream.
-pub struct TxRxBox {
-    /// Sender.
-    pub tx: TxBox,
-    /// Receiver.
-    pub rx: RxBox,
-}
-
-impl TxRxBox {
-    /// Creates a new instance.
-    pub fn new(
-        tx: impl Sink<Bytes, Error = io::Error> + Send + Sync + 'static,
-        rx: impl Stream<Item = Result<Bytes>> + Send + Sync + 'static,
-    ) -> Self {
-        Self { tx: Box::pin(tx), rx: Box::pin(rx) }
-    }
-
-    /// Splits this into boxed transmitter and receiver.
-    pub fn into_split(self) -> (TxBox, RxBox) {
-        let Self { tx, rx } = self;
-        (tx, rx)
-    }
-}
-
-impl Sink<Bytes> for TxRxBox {
-    type Error = io::Error;
-
-    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {
-        self.get_mut().tx.poll_ready_unpin(cx)
-    }
-
-    fn start_send(self: Pin<&mut Self>, item: Bytes) -> Result<()> {
-        self.get_mut().tx.start_send_unpin(item)
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {
-        self.get_mut().tx.poll_flush_unpin(cx)
-    }
-
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {
-        self.get_mut().tx.poll_close_unpin(cx)
-    }
-}
-
-impl Stream for TxRxBox {
-    type Item = Result<Bytes>;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        self.get_mut().rx.poll_next_unpin(cx)
-    }
-}
-
-type ReadBox = Pin<Box<dyn AsyncRead + Send + Sync + 'static>>;
-type WriteBox = Pin<Box<dyn AsyncWrite + Send + Sync + 'static>>;
-
-/// A boxed IO stream.
-pub struct IoBox {
-    /// Reader.
-    pub read: ReadBox,
-    /// Writer.
-    pub write: WriteBox,
-}
-
-impl IoBox {
-    /// Creates a new instance.
-    pub fn new(
-        read: impl AsyncRead + Send + Sync + 'static, write: impl AsyncWrite + Send + Sync + 'static,
-    ) -> Self {
-        Self { read: Box::pin(read), write: Box::pin(write) }
-    }
-
-    /// Splits this into boxed reader and writer.
-    pub fn into_split(self) -> (ReadBox, WriteBox) {
-        let Self { read, write } = self;
-        (read, write)
-    }
-}
-
-impl AsyncRead for IoBox {
-    fn poll_read(self: Pin<&mut Self>, cx: &mut Context, buf: &mut ReadBuf) -> Poll<Result<()>> {
-        Pin::new(&mut self.get_mut().read).poll_read(cx, buf)
-    }
-}
-
-impl AsyncWrite for IoBox {
-    fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8]) -> Poll<Result<usize>> {
-        Pin::new(&mut self.get_mut().write).poll_write(cx, buf)
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {
-        Pin::new(&mut self.get_mut().write).poll_flush(cx)
-    }
-
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {
-        Pin::new(&mut self.get_mut().write).poll_shutdown(cx)
     }
 }
 

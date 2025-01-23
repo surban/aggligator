@@ -4,6 +4,7 @@
 //! Use the [tcp_connect](simple::tcp_connect) and [tcp_server](simple::tcp_server) functions
 //! from the [simple module](simple).
 
+use aggligator::io::{IoBox, StreamBox};
 use async_trait::async_trait;
 use futures::{future, FutureExt};
 use network_interface::Addr;
@@ -26,9 +27,7 @@ use tokio::{
 
 use aggligator::{
     control::Direction,
-    transport::{
-        AcceptedStreamBox, AcceptingTransport, ConnectingTransport, IoBox, LinkTag, LinkTagBox, StreamBox,
-    },
+    transport::{AcceptedStreamBox, AcceptingTransport, ConnectingTransport, LinkTag, LinkTagBox},
     Link,
 };
 

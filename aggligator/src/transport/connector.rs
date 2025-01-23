@@ -17,8 +17,15 @@ use std::{
 };
 use tokio::sync::{broadcast, mpsc, oneshot, watch, RwLock};
 
-use super::{BoxControl, BoxLink, BoxLinkError, BoxTask, LinkTag, LinkTagBox, StreamBox, TxRxBox};
-use crate::{connect, control::DisconnectReason, exec, exec::time::sleep, Cfg, Link, Outgoing};
+use super::{BoxControl, BoxLink, BoxLinkError, BoxTask, LinkTag, LinkTagBox};
+use crate::{
+    connect,
+    control::DisconnectReason,
+    exec,
+    exec::time::sleep,
+    io::{StreamBox, TxRxBox},
+    Cfg, Link, Outgoing,
+};
 
 /// A transport for connecting to remote endpoints.
 #[async_trait]

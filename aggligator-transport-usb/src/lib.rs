@@ -11,6 +11,7 @@ const TIMEOUT: Duration = Duration::from_secs(1);
 #[cfg(feature = "host")]
 #[cfg_attr(docsrs, doc(cfg(feature = "host")))]
 mod host {
+    use aggligator::io::{StreamBox, TxRxBox};
     use async_trait::async_trait;
     use futures::TryStreamExt;
     use rusb::{Context, Device, Hotplug, HotplugBuilder, Registration, UsbContext};
@@ -31,7 +32,7 @@ mod host {
 
     use aggligator::{
         control::Direction,
-        transport::{ConnectingTransport, LinkTag, LinkTagBox, StreamBox, TxRxBox},
+        transport::{ConnectingTransport, LinkTag, LinkTagBox},
     };
 
     use super::{NAME, TIMEOUT};
@@ -314,7 +315,7 @@ pub use host::*;
 #[cfg(feature = "device")]
 #[cfg_attr(docsrs, doc(cfg(feature = "device")))]
 mod device {
-    use aggligator::control::Direction;
+    use aggligator::{control::Direction, io::TxRxBox};
     use async_trait::async_trait;
     use core::fmt;
     use futures::TryStreamExt;
@@ -328,7 +329,7 @@ mod device {
     use tokio::sync::{mpsc, Mutex};
     use upc::device::UpcFunction;
 
-    use aggligator::transport::{AcceptedStreamBox, AcceptingTransport, LinkTag, LinkTagBox, TxRxBox};
+    use aggligator::transport::{AcceptedStreamBox, AcceptingTransport, LinkTag, LinkTagBox};
 
     use super::NAME;
 

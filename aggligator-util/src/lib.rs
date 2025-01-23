@@ -4,8 +4,8 @@ use anyhow::{bail, Context};
 use std::path::PathBuf;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-use aggligator_transport_tcp::TcpLinkFilter;
 use aggligator::cfg::Cfg;
+use aggligator_transport_tcp::TcpLinkFilter;
 
 /// Initializes logging for command line utilities.
 pub fn init_log() {

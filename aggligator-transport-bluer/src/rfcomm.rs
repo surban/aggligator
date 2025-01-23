@@ -1,5 +1,6 @@
 //! Bluetooth RFCOMM transport.
 
+use aggligator::io::{IoBox, StreamBox};
 use async_trait::async_trait;
 use bluer::rfcomm::{Listener, Socket};
 use futures::future;
@@ -15,9 +16,7 @@ use tokio::sync::{mpsc, watch};
 
 use aggligator::{
     control::Direction,
-    transport::{
-        AcceptedStreamBox, AcceptingTransport, ConnectingTransport, IoBox, LinkTag, LinkTagBox, StreamBox,
-    },
+    transport::{AcceptedStreamBox, AcceptingTransport, ConnectingTransport, LinkTag, LinkTagBox},
 };
 
 pub use bluer::{rfcomm::SocketAddr, Address};

@@ -63,9 +63,7 @@ pub async fn resolve_hosts(
 ///
 /// Filters interfaces out that either have no IP address or only support
 /// an IP protocol version that does not match the target address.
-pub fn interface_names_for_target(
-    interfaces: &[NetworkInterface], target: SocketAddr,
-) -> HashSet<Vec<u8>> {
+pub fn interface_names_for_target(interfaces: &[NetworkInterface], target: SocketAddr) -> HashSet<Vec<u8>> {
     interfaces
         .iter()
         .cloned()
