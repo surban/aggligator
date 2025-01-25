@@ -242,6 +242,12 @@ where
     }
 }
 
+impl<F> Drop for LocalFuture<F> {
+    fn drop(&mut self) {
+        self.thread_guard.check();
+    }
+}
+
 struct WebSocketSink {
     sender: WebSocketSender,
     thread_guard: ThreadGuard,
@@ -280,6 +286,12 @@ impl Sink<Bytes> for WebSocketSink {
     }
 }
 
+impl Drop for WebSocketSink {
+    fn drop(&mut self) {
+        self.thread_guard.check();
+    }
+}
+
 struct WebSocketStream {
     receiver: WebSocketReceiver,
     thread_guard: ThreadGuard,
@@ -303,5 +315,11 @@ impl Stream for WebSocketStream {
         let msg_opt = ready!(self.receiver.poll_next_unpin(cx)?);
         let data_opt = msg_opt.map(|msg| Ok(Bytes::from(msg.to_vec())));
         Poll::Ready(data_opt)
+    }
+}
+
+impl Drop for WebSocketStream {
+    fn drop(&mut self) {
+        self.thread_guard.check();
     }
 }
