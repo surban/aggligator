@@ -2,6 +2,7 @@
 
 #![allow(unsafe_code)]
 
+use futures::{FutureExt, Stream};
 use std::{
     fmt,
     future::{Future, IntoFuture},
@@ -125,7 +126,6 @@ mod js {
     }
 }
 
-use futures::{FutureExt, Stream};
 /// Future for [`sleep`].
 #[cfg(all(target_family = "wasm", not(target_feature = "atomics")))]
 pub use js::JsSleep as Sleep;
