@@ -17,7 +17,7 @@ use tokio::{
     io::{AsyncRead, AsyncWrite},
     sync::{mpsc, watch, Mutex},
 };
-use x25519_dalek::{EphemeralSecret, PublicKey};
+use x25519_dalek::{PublicKey, StaticSecret};
 
 use crate::{
     agg::link_int::LinkInt,
@@ -312,7 +312,8 @@ where
 
         // Perform protocol handshake.
         let (remote_cfg, roundtrip, remote_user_data) = timeout(self.cfg.link_ping_timeout, async {
-            let client_secret = EphemeralSecret::random_from_rng(rand_core::OsRng);
+            let random: [u8; 32] = rand::random();
+            let client_secret = StaticSecret::from(random);
             let client_public_key = PublicKey::from(&client_secret);
 
             let LinkMsg::Welcome {

@@ -5,7 +5,6 @@
 //!
 
 use byteorder::{ByteOrder, BE};
-use rand::{random, rngs::OsRng, Rng};
 use std::{fmt, num::NonZeroU128, sync::Arc};
 use tokio::sync::mpsc;
 use x25519_dalek::SharedSecret;
@@ -35,7 +34,7 @@ impl fmt::Display for ConnId {
 impl ConnId {
     /// Generates a new connection id.
     pub(crate) fn generate() -> Self {
-        Self(OsRng.gen())
+        Self(rand::random())
     }
 }
 
@@ -128,7 +127,7 @@ impl fmt::Display for LinkId {
 impl LinkId {
     /// Generates a new link id.
     pub(crate) fn generate() -> Self {
-        Self(random())
+        Self(rand::random())
     }
 }
 
@@ -151,11 +150,6 @@ impl fmt::Display for ServerId {
 impl ServerId {
     /// Generates a new server id.
     pub(crate) fn generate() -> Self {
-        loop {
-            match random() {
-                0 => (),
-                id => return Self(NonZeroU128::new(id).unwrap()),
-            }
-        }
+        Self(NonZeroU128::new(rand::random_range(1..=u128::MAX)).unwrap())
     }
 }

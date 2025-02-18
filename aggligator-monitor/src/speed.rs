@@ -1,7 +1,7 @@
 //! Speed test.
 
 use futures::future;
-use rand::{prelude::*, thread_rng};
+use rand::prelude::*;
 use rand_xoshiro::Xoroshiro128StarStar;
 use std::{
     io::{Error, ErrorKind, Result},
@@ -98,7 +98,7 @@ pub async fn speed_test(
             return Ok((0, Duration::ZERO));
         }
 
-        let seed = thread_rng().gen();
+        let seed = rand::random();
         write.write_u64(seed).await?;
         let mut rng = Xoroshiro128StarStar::seed_from_u64(seed);
 

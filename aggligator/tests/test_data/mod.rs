@@ -34,14 +34,14 @@ impl Generator {
 
     /// Generates the next test packet.
     pub fn packet(&mut self) -> Bytes {
-        let mut rng = SplitMix64::from_entropy();
+        let mut rng = SplitMix64::from_rng(&mut rand::rng());
 
         let size = if self.seq.0 % 20 == 0 {
             self.min_size
         } else if self.seq.0 % 10 == 0 {
             self.max_size
         } else {
-            rng.gen_range(self.min_size..self.max_size - 8)
+            rng.random_range(self.min_size..self.max_size - 8)
         };
         let size = size.saturating_sub(8);
         let mut packet = Vec::with_capacity(size + 8);
@@ -50,7 +50,7 @@ impl Generator {
         self.seq += 1;
 
         for _ in 0..size {
-            packet.write_u8(rng.gen()).unwrap();
+            packet.write_u8(rng.random()).unwrap();
         }
 
         packet.write_u32::<BE>(hash(&packet)).unwrap();
