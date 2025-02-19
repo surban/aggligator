@@ -32,6 +32,7 @@ use aggligator::{
     transport::{ConnectingTransport, LinkTag, LinkTagBox},
 };
 
+pub use webusb_web;
 use webusb_web::{Usb, UsbDevice};
 
 mod thread_bound;

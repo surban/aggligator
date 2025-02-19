@@ -1,6 +1,6 @@
 [package]
 name = "aggligator-transport-webusb"
-version = "0.3.0"
+version = "0.3.1"
 description = "Aggligator transport: WebUSB for targeting WebAssembly"
 categories = ["asynchronous", "network-programming", "wasm"]
 keywords = ["aggligator", "aggligator-transport"]
