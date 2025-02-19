@@ -12,7 +12,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-aggligator = { version = "0.9.2", path = "../aggligator" }
+aggligator = { version = "0.9.4", path = "../aggligator" }
 
 async-trait = { workspace = true }
 futures = { workspace = true }

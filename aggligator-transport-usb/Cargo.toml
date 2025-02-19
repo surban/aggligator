@@ -17,7 +17,7 @@ host = ["upc/host", "rusb"]
 device = ["upc/device", "usb-gadget"]
 
 [dependencies]
-aggligator = { version = "0.9.2", path = "../aggligator" }
+aggligator = { version = "0.9.4", path = "../aggligator" }
 
 async-trait = { workspace = true }
 futures = { workspace = true }
