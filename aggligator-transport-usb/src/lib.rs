@@ -13,7 +13,6 @@
 use std::time::Duration;
 
 static NAME: &str = "usb";
-
 const TIMEOUT: Duration = Duration::from_secs(1);
 
 #[cfg(feature = "host")]
@@ -97,6 +96,7 @@ mod host {
 
     /// USB device information.
     #[derive(Debug, Clone, PartialEq, Eq)]
+    #[non_exhaustive]
     pub struct DeviceInfo {
         /// Bus number.
         pub bus_number: u8,
@@ -124,6 +124,7 @@ mod host {
 
     /// USB interface information.
     #[derive(Debug, Clone, PartialEq, Eq)]
+    #[non_exhaustive]
     pub struct InterfaceInfo {
         /// Interface number.
         pub number: u8,

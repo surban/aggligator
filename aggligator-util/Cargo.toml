@@ -45,7 +45,7 @@ axum-server = "0.7"
 clap = { version = "4", features = ["derive"] }
 clap_mangen = "0.2"
 clap-markdown = "0.1"
-gethostname = "0.5"
+gethostname = "1"
 network-interface = "2"
 rustls = "0.23"
 rustls-pemfile = "2.0"

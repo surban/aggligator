@@ -2,6 +2,7 @@
     "files.exclude": {
         "target/": true,
         "aggligator-transport-websocket-web/target/": true,
+        "aggligator-transport-webusb/target/": true,
     },
     "cSpell.words": [
         "Aggligator",
@@ -27,10 +28,8 @@
     // for WebAssembly:
     // "rust-analyzer.cargo.target": "wasm32-unknown-unknown",
     // "rust-analyzer.linkedProjects": [
-    //     "aggligator/Cargo.toml",
-    //     "aggligator-transport-websocket-web/Cargo.toml"
+    //     "aggligator-transport-websocket-web/Cargo.toml",
+    //     "aggligator-transport-webusb/Cargo.toml"
     // ],
-    // "rust-analyzer.cargo.features": [
-    //     "js",
-    // ],
+
 }
