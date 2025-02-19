@@ -62,7 +62,7 @@ jobs:
         run: cargo test --workspace --exclude aggligator-transport-bluer --quiet
 
   build-msrv:
-    name: Build with minimum supported Rust versions
+    name: Build with Rust 1.83
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -70,7 +70,7 @@ jobs:
           submodules: recursive
       - name: Install dependencies
         run: sudo apt-get update && sudo apt install libdbus-1-dev pkg-config
-      - name: Install Rust 1.80.0
-        run: rustup toolchain install 1.80.0
-      - name: Build aggligator and aggligator-util with Rust 1.80.0
-        run: cargo +1.80.0 build --features bluer,usb-device,usb-host,raw-speed-cli,dump --all-targets --quiet
+      - name: Install Rust 1.83.0
+        run: rustup toolchain install 1.83.0
+      - name: Build aggligator and aggligator-util with Rust 1.83.0
+        run: cargo +1.83.0 build --features bluer,usb-device,usb-host,raw-speed-cli,dump --all-targets --quiet
