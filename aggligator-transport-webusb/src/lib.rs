@@ -34,7 +34,6 @@ use aggligator::{
 
 use webusb_web::{Usb, UsbDevice};
 
-#[path = "../../shared/thread_bound.rs"]
 mod thread_bound;
 use thread_bound::ThreadBound;
 

@@ -38,7 +38,6 @@ use aggligator::{
     transport::{ConnectingTransport, LinkTag, LinkTagBox},
 };
 
-#[path = "../../shared/thread_bound.rs"]
 mod thread_bound;
 use thread_bound::ThreadBound;
 
