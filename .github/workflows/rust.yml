@@ -23,8 +23,10 @@ jobs:
         run: cargo fmt -- --check
       - name: Build
         run: cargo build --features bluer,usb-device,usb-host,raw-speed-cli,dump --all-targets --quiet
-      - name: Build WebAssembly
-        run: cd aggligator-transport-websocket-web && cargo build --quiet
+      - name: Build aggligator-transport-webusb
+        run: cd aggligator-transport-webusb && cargo build --quiet
+      - name: Build aggligator-transport-websocket-web
+        run: cd aggligator-transport-websocket-web && cargo build --quiet        
       - name: Build documentation
         run: cargo doc --no-deps --quiet
       - name: Code analysis
