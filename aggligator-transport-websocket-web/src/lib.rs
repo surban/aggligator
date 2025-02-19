@@ -13,22 +13,21 @@ compile_error!("aggligator-transport-websocket-web requires a WebAssembly target
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use futures::{future, Sink, SinkExt, Stream, StreamExt};
+use futures::{future, Sink, SinkExt, StreamExt};
 use std::{
     any::Any,
     cmp::Ordering,
     collections::HashSet,
     fmt,
-    future::Future,
     hash::{Hash, Hasher},
     io::{Error, ErrorKind, Result},
     pin::Pin,
     sync::Arc,
-    task::{ready, Context, Poll},
+    task::{Context, Poll},
 };
 use tokio::sync::watch;
 
-use websocket_web::{WebSocketReceiver, WebSocketSender};
+use websocket_web::WebSocketSender;
 
 #[doc(no_inline)]
 pub use websocket_web::{Interface, WebSocketBuilder};
@@ -38,6 +37,10 @@ use aggligator::{
     io::{StreamBox, TxRxBox},
     transport::{ConnectingTransport, LinkTag, LinkTagBox},
 };
+
+#[path = "../../shared/thread_bound.rs"]
+mod thread_bound;
+use thread_bound::ThreadBound;
 
 static NAME: &str = "websocket";
 
@@ -155,9 +158,9 @@ impl ConnectingTransport for WebSocketConnector {
         let tag: &OutgoingWebSocketLinkTag = tag.as_any().downcast_ref().unwrap();
 
         // WebSocket is not Send + Sync, thus we need to wrap the following
-        // code in a LocalFuture. It ensures that execution takes place on
+        // code in a ThreadBound. It ensures that execution takes place on
         // a single thread but appears to be Send + Sync.
-        LocalFuture::new(async {
+        ThreadBound::new(async {
             // Configure WebSocket.
             let mut builder = WebSocketBuilder::new(&tag.url);
             (self.cfg_fn)(&mut builder);
@@ -166,160 +169,33 @@ impl ConnectingTransport for WebSocketConnector {
             let websocket = builder.connect().await?;
 
             // Adapt WebSocket IO.
-            // WebSocketSink and WebSocketStream ensure that they are only used
-            // from a single thread but appear to be Send + Sync.
             let (tx, rx) = websocket.into_split();
-            let tx = Box::pin(WebSocketSink::new(tx));
-            let rx = Box::pin(WebSocketStream::new(rx));
+            let tx = Box::pin(ThreadBound::new(WebSocketSink(tx)));
+            let rx = Box::pin(ThreadBound::new(rx.map(|res| res.map(|msg| Bytes::from(msg.to_vec())))));
             Ok(TxRxBox::new(tx, rx).into())
         })
         .await
     }
 }
 
-#[cfg(all(target_family = "wasm", target_feature = "atomics"))]
-#[derive(Clone, Debug)]
-struct ThreadGuard(std::thread::ThreadId);
-
-#[cfg(all(target_family = "wasm", target_feature = "atomics"))]
-impl ThreadGuard {
-    pub fn new() -> Self {
-        Self(std::thread::current().id())
-    }
-
-    #[inline]
-    pub fn check(&self) {
-        if std::thread::current().id() != self.0 {
-            panic!(
-                "cannot use object on thread {:?} since it belongs to thread {:?}",
-                std::thread::current().id(),
-                self.0
-            );
-        }
-    }
-}
-
-#[cfg(all(target_family = "wasm", not(target_feature = "atomics")))]
-#[derive(Clone, Debug)]
-struct ThreadGuard();
-
-#[cfg(all(target_family = "wasm", not(target_feature = "atomics")))]
-impl ThreadGuard {
-    pub fn new() -> Self {
-        Self()
-    }
-
-    pub fn check(&self) {
-        // target has no threads
-    }
-}
-
-struct LocalFuture<F> {
-    future: F,
-    thread_guard: ThreadGuard,
-}
-
-unsafe impl<F> Send for LocalFuture<F> {}
-unsafe impl<F> Sync for LocalFuture<F> {}
-
-impl<F> LocalFuture<F> {
-    pub fn new(future: F) -> Self {
-        Self { future, thread_guard: ThreadGuard::new() }
-    }
-}
-
-impl<F> Future for LocalFuture<F>
-where
-    F: Future,
-{
-    type Output = F::Output;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        self.as_ref().thread_guard.check();
-
-        let future = unsafe { self.map_unchecked_mut(|s| &mut s.future) };
-        future.poll(cx)
-    }
-}
-
-impl<F> Drop for LocalFuture<F> {
-    fn drop(&mut self) {
-        self.thread_guard.check();
-    }
-}
-
-struct WebSocketSink {
-    sender: WebSocketSender,
-    thread_guard: ThreadGuard,
-}
-
-unsafe impl Send for WebSocketSink {}
-unsafe impl Sync for WebSocketSink {}
-
-impl WebSocketSink {
-    pub fn new(sender: WebSocketSender) -> Self {
-        Self { sender, thread_guard: ThreadGuard::new() }
-    }
-}
+struct WebSocketSink(WebSocketSender);
 
 impl Sink<Bytes> for WebSocketSink {
     type Error = Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {
-        self.thread_guard.check();
-        <WebSocketSender as SinkExt<&[u8]>>::poll_ready_unpin(&mut self.sender, cx)
+        <WebSocketSender as SinkExt<&[u8]>>::poll_ready_unpin(&mut self.0, cx)
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Bytes) -> Result<()> {
-        self.thread_guard.check();
-        <WebSocketSender as SinkExt<&[u8]>>::start_send_unpin(&mut self.sender, &*item)
+        <WebSocketSender as SinkExt<&[u8]>>::start_send_unpin(&mut self.0, &*item)
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {
-        self.thread_guard.check();
-        <WebSocketSender as SinkExt<&[u8]>>::poll_flush_unpin(&mut self.sender, cx)
+        <WebSocketSender as SinkExt<&[u8]>>::poll_flush_unpin(&mut self.0, cx)
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {
-        self.thread_guard.check();
-        <WebSocketSender as SinkExt<&[u8]>>::poll_close_unpin(&mut self.sender, cx)
-    }
-}
-
-impl Drop for WebSocketSink {
-    fn drop(&mut self) {
-        self.thread_guard.check();
-    }
-}
-
-struct WebSocketStream {
-    receiver: WebSocketReceiver,
-    thread_guard: ThreadGuard,
-}
-
-unsafe impl Send for WebSocketStream {}
-unsafe impl Sync for WebSocketStream {}
-
-impl WebSocketStream {
-    pub fn new(receiver: WebSocketReceiver) -> Self {
-        Self { receiver, thread_guard: ThreadGuard::new() }
-    }
-}
-
-impl Stream for WebSocketStream {
-    type Item = Result<Bytes>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        self.thread_guard.check();
-
-        let msg_opt = ready!(self.receiver.poll_next_unpin(cx)?);
-        let data_opt = msg_opt.map(|msg| Ok(Bytes::from(msg.to_vec())));
-        Poll::Ready(data_opt)
-    }
-}
-
-impl Drop for WebSocketStream {
-    fn drop(&mut self) {
-        self.thread_guard.check();
+        <WebSocketSender as SinkExt<&[u8]>>::poll_close_unpin(&mut self.0, cx)
     }
 }

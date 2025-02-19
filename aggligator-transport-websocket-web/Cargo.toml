@@ -1,6 +1,6 @@
 [package]
 name = "aggligator-transport-websocket-web"
-version = "0.1.0"
+version = "0.1.1"
 description = "Aggligator transport: WebSocket for the web targeting WebAssembly"
 categories = ["asynchronous", "web-programming::websocket", "wasm"]
 keywords = ["aggligator", "aggligator-transport", "websocket"]
@@ -12,7 +12,7 @@ license = "Apache-2.0"
 repository = "https://github.com/surban/aggligator"
 
 [dependencies]
-aggligator = { version = "0.9.3", path = "../aggligator", features = ["js"] }
+aggligator = { version = "0.9.4", path = "../aggligator", features = ["js"] }
 
 async-trait = "0.1"
 bytes = "1"
