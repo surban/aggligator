@@ -19,6 +19,7 @@ bimap = "0.6"
 bytes = "1"
 futures = "0.3"
 js-sys = "0.3"
+threadporter = "0.1"
 tokio = { version = "1", features = ["sync"] }
 tracing = "0.1"
 wasm-bindgen = "0.2"

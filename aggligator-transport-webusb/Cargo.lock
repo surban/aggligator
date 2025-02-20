@@ -52,6 +52,7 @@ dependencies = [
  "bytes",
  "futures",
  "js-sys",
+ "threadporter",
  "tokio",
  "tracing",
  "upc",
@@ -501,6 +502,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "threadporter"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1bebd7aab3f3389f4eac3d2c1a9ac480755cbdcc374f7d44975e66d06b49489"
+dependencies = [
+ "futures-core",
+ "futures-sink",
 ]
 
 [[package]]

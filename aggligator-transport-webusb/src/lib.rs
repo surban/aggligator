@@ -24,6 +24,7 @@ use std::{
     sync::Mutex,
     time::Duration,
 };
+use threadporter::ThreadBound;
 use tokio::sync::watch;
 
 use aggligator::{
@@ -34,9 +35,6 @@ use aggligator::{
 
 pub use webusb_web;
 use webusb_web::{Usb, UsbDevice, UsbInterface};
-
-mod thread_bound;
-use thread_bound::ThreadBound;
 
 mod sleep;
 use sleep::JsSleep;
