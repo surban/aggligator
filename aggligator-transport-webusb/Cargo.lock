@@ -44,7 +44,7 @@ dependencies = [
 
 [[package]]
 name = "aggligator-transport-webusb"
-version = "0.3.2"
+version = "0.4.0"
 dependencies = [
  "aggligator",
  "async-trait",

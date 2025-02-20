@@ -33,7 +33,7 @@ use aggligator::{
 };
 
 pub use webusb_web;
-use webusb_web::{Usb, UsbDevice};
+use webusb_web::{Usb, UsbDevice, UsbInterface};
 
 mod thread_bound;
 use thread_bound::ThreadBound;
@@ -104,45 +104,7 @@ impl LinkTag for OutgoingWebUsbLinkTag {
     }
 }
 
-/// WebUSB device information.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct DeviceInfo {
-    /// Vendor id.
-    pub vendor_id: u16,
-    /// Product id.
-    pub product_id: u16,
-    /// Class code.
-    pub class_code: u8,
-    /// Sub class code.
-    pub sub_class_code: u8,
-    /// Protocol code.
-    pub protocol_code: u8,
-    /// Manufacturer.
-    pub manufacturer: Option<String>,
-    /// Product.
-    pub product: Option<String>,
-    /// Serial number.
-    pub serial_number: Option<String>,
-}
-
-/// WebUSB interface information.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[non_exhaustive]
-pub struct InterfaceInfo {
-    /// Interface number.
-    pub number: u8,
-    /// Class code.
-    pub class_code: u8,
-    /// Sub class code.
-    pub sub_class_code: u8,
-    /// Protocol code.
-    pub protocol_code: u8,
-    /// Description.
-    pub description: Option<String>,
-}
-
-type FilterFn = Box<dyn Fn(&DeviceInfo, &InterfaceInfo) -> bool + Send + Sync>;
+type FilterFn = Box<dyn Fn(&UsbDevice, &UsbInterface) -> bool + Send + Sync>;
 
 /// WebUSB transport for outgoing connections.
 ///
@@ -178,7 +140,7 @@ impl WebUsbConnector {
     /// USB device and interface is matched.
     ///
     /// USB devices are re-enumerated when a hotplug event occurs.
-    pub fn new(filter: impl Fn(&DeviceInfo, &InterfaceInfo) -> bool + Send + Sync + 'static) -> Result<Self> {
+    pub fn new(filter: impl Fn(&UsbDevice, &UsbInterface) -> bool + Send + Sync + 'static) -> Result<Self> {
         Ok(Self {
             usb: ThreadBound::new(Usb::new()?),
             known_devices: Mutex::new(KnownDevices::default()),
@@ -224,28 +186,8 @@ impl ConnectingTransport for WebUsbConnector {
                     let id = self.device_id(&dev);
                     let Some(cfg) = dev.configuration() else { continue };
 
-                    let device_info = DeviceInfo {
-                        vendor_id: dev.vendor_id(),
-                        product_id: dev.product_id(),
-                        class_code: dev.device_class(),
-                        sub_class_code: dev.device_subclass(),
-                        protocol_code: dev.device_protocol(),
-                        manufacturer: dev.manufacturer_name(),
-                        product: dev.product_name(),
-                        serial_number: dev.serial_number(),
-                    };
-
                     for iface in cfg.interfaces {
-                        let alt = iface.alternate;
-                        let interface_info = InterfaceInfo {
-                            number: alt.alternate_setting,
-                            class_code: alt.interface_class,
-                            sub_class_code: alt.interface_subclass,
-                            protocol_code: alt.interface_protocol,
-                            description: alt.interface_name,
-                        };
-
-                        if (self.filter)(&device_info, &interface_info) {
+                        if (self.filter)(&dev, &iface) {
                             tags.insert(Box::new(OutgoingWebUsbLinkTag {
                                 id,
                                 interface: iface.interface_number,
