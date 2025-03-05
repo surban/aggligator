@@ -18,6 +18,7 @@ async-trait = "0.1"
 bytes = "1"
 futures = "0.3"
 tracing = "0.1"
+threadporter = "0.1"
 tokio = { version = "1", features = ["sync"] }
 
 websocket-web = "0.1.3"

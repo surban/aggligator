@@ -50,6 +50,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "futures",
+ "threadporter",
  "tokio",
  "tracing",
  "websocket-web",
@@ -490,6 +491,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "threadporter"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef3052f3daede4bd57b87845e91245186dc59445cad59246c9e0b11d0244008a"
+dependencies = [
+ "futures-core",
+ "futures-sink",
 ]
 
 [[package]]

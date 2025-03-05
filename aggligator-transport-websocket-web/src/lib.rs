@@ -25,6 +25,7 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
+use threadporter::{thread_bound, ThreadBound};
 use tokio::sync::watch;
 
 use websocket_web::WebSocketSender;
@@ -37,9 +38,6 @@ use aggligator::{
     io::{StreamBox, TxRxBox},
     transport::{ConnectingTransport, LinkTag, LinkTagBox},
 };
-
-mod thread_bound;
-use thread_bound::ThreadBound;
 
 static NAME: &str = "websocket";
 
@@ -159,7 +157,7 @@ impl ConnectingTransport for WebSocketConnector {
         // WebSocket is not Send + Sync, thus we need to wrap the following
         // code in a ThreadBound. It ensures that execution takes place on
         // a single thread but appears to be Send + Sync.
-        ThreadBound::new(async {
+        thread_bound(async {
             // Configure WebSocket.
             let mut builder = WebSocketBuilder::new(&tag.url);
             (self.cfg_fn)(&mut builder);
