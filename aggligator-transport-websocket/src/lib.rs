@@ -35,11 +35,12 @@ use tokio::{
     time::sleep,
 };
 use tokio_tungstenite::{client_async_tls_with_config, tungstenite::protocol::WebSocketConfig, Connector};
+use tokio_util::io::{CopyToBytes, SinkWriter, StreamReader};
 use url::Url;
 
 use aggligator::{
     control::Direction,
-    io::{StreamBox, TxRxBox},
+    io::{IoBox, StreamBox},
     transport::{AcceptedStreamBox, AcceptingTransport, ConnectingTransport, LinkTag, LinkTagBox},
     Link,
 };
@@ -280,6 +281,8 @@ impl ConnectingTransport for WebSocketConnector {
                 )
                 .sink_map_err(|err| Error::new(ErrorKind::Other, err)),
         );
+        let ws_write = SinkWriter::new(CopyToBytes::new(ws_tx));
+
         let ws_rx = Box::pin(
             ws_rx
                 .try_filter_map(|msg: tungstenite::Message| async move {
@@ -291,8 +294,9 @@ impl ConnectingTransport for WebSocketConnector {
                 })
                 .map_err(|err| Error::new(ErrorKind::Other, err)),
         );
+        let ws_read = StreamReader::new(ws_rx);
 
-        Ok(TxRxBox::new(ws_tx, ws_rx).into())
+        Ok(IoBox::new(ws_read, ws_write).into())
     }
 
     async fn link_filter(&self, new: &Link<LinkTagBox>, existing: &[Link<LinkTagBox>]) -> bool {
@@ -504,6 +508,7 @@ impl AcceptingTransport for WebSocketAcceptor {
 
             // Adapt WebSocket IO.
             let (ws_tx, ws_rx) = web_socket.split();
+
             let ws_tx =
                 Box::pin(
                     ws_tx
@@ -512,6 +517,8 @@ impl AcceptingTransport for WebSocketAcceptor {
                         })
                         .sink_map_err(|err| Error::new(ErrorKind::Other, err)),
                 );
+            let ws_write = SinkWriter::new(CopyToBytes::new(ws_tx));
+
             let ws_rx = Box::pin(
                 ws_rx
                     .try_filter_map(|msg: axum::extract::ws::Message| async move {
@@ -523,12 +530,13 @@ impl AcceptingTransport for WebSocketAcceptor {
                     })
                     .map_err(|err| Error::new(ErrorKind::Other, err)),
             );
+            let ws_read = StreamReader::new(ws_rx);
 
             // Build tag.
             tracing::debug!("Accepted WebSocket connection from {remote}");
             let tag = IncomingWebSocketLinkTag { local, remote, protocol };
 
-            let _ = tx.send(AcceptedStreamBox::new(TxRxBox::new(ws_tx, ws_rx).into(), tag)).await;
+            let _ = tx.send(AcceptedStreamBox::new(IoBox::new(ws_read, ws_write).into(), tag)).await;
         }
 
         Err(Error::new(ErrorKind::ConnectionReset, "router was dropped"))

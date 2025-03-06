@@ -1,6 +1,6 @@
 [package]
 name = "aggligator-transport-websocket-web"
-version = "0.1.1"
+version = "0.4.0"
 description = "Aggligator transport: WebSocket for the web targeting WebAssembly"
 categories = ["asynchronous", "web-programming::websocket", "wasm"]
 keywords = ["aggligator", "aggligator-transport", "websocket"]
@@ -19,9 +19,10 @@ bytes = "1"
 futures = "0.3"
 tracing = "0.1"
 threadporter = "0.1"
-tokio = { version = "1", features = ["sync"] }
+tokio = { version = "1", features = ["sync", "io-util"] }
+tokio-util = { version = "0.7", features = ["io"] }
 
-websocket-web = "0.1.3"
+websocket-web = "0.1.6"
 
 [package.metadata.docs.rs]
 all-features = true

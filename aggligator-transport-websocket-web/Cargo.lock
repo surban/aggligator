@@ -44,7 +44,7 @@ dependencies = [
 
 [[package]]
 name = "aggligator-transport-websocket-web"
-version = "0.1.1"
+version = "0.4.0"
 dependencies = [
  "aggligator",
  "async-trait",
@@ -52,6 +52,7 @@ dependencies = [
  "futures",
  "threadporter",
  "tokio",
+ "tokio-util",
  "tracing",
  "websocket-web",
 ]
@@ -510,6 +511,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d61fa4ffa3de412bfea335c6ecff681de2b609ba3c77ef3e00e521813a9ed9e"
 dependencies = [
  "backtrace",
+ "bytes",
  "pin-project-lite",
  "tokio-macros",
 ]
@@ -679,9 +681,9 @@ dependencies = [
 
 [[package]]
 name = "websocket-web"
-version = "0.1.4"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f77a6fb0f18fef28ec67427e6853f6fa5378162c89086866833f5f06726c7ef"
+checksum = "6ececf9f9b84404a804eea6791414801eda6f749c5c3426b7306c8935b11ad53"
 dependencies = [
  "futures-channel",
  "futures-core",

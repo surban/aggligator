@@ -26,7 +26,8 @@ use std::{
     task::{Context, Poll},
 };
 use threadporter::{thread_bound, ThreadBound};
-use tokio::sync::watch;
+use tokio::{io::BufWriter, sync::watch};
+use tokio_util::io::{SinkWriter, StreamReader};
 
 use websocket_web::WebSocketSender;
 
@@ -35,7 +36,7 @@ pub use websocket_web::{Interface, WebSocketBuilder};
 
 use aggligator::{
     control::Direction,
-    io::{StreamBox, TxRxBox},
+    io::{IoBox, StreamBox},
     transport::{ConnectingTransport, LinkTag, LinkTagBox},
 };
 
@@ -167,9 +168,19 @@ impl ConnectingTransport for WebSocketConnector {
 
             // Adapt WebSocket IO.
             let (tx, rx) = websocket.into_split();
-            let tx = Box::pin(ThreadBound::new(WebSocketSink(tx)));
-            let rx = Box::pin(ThreadBound::new(rx.map(|res| res.map(|msg| Bytes::from(msg.to_vec())))));
-            Ok(TxRxBox::new(tx, rx).into())
+
+            let tx = ThreadBound::new(WebSocketSink(tx));
+            let write = BufWriter::with_capacity(1_000_000, SinkWriter::new(tx));
+
+            let rx = ThreadBound::new(rx.map(|res| {
+                res.map(|msg| {
+                    tracing::trace!("Received message of {} bytes", msg.len());
+                    Bytes::from(msg.to_vec())
+                })
+            }));
+            let read = StreamReader::new(rx);
+
+            Ok(IoBox::new(read, write).into())
         })
         .await
     }
@@ -177,15 +188,16 @@ impl ConnectingTransport for WebSocketConnector {
 
 struct WebSocketSink(WebSocketSender);
 
-impl Sink<Bytes> for WebSocketSink {
+impl Sink<&[u8]> for WebSocketSink {
     type Error = Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {
         <WebSocketSender as SinkExt<&[u8]>>::poll_ready_unpin(&mut self.0, cx)
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: Bytes) -> Result<()> {
-        <WebSocketSender as SinkExt<&[u8]>>::start_send_unpin(&mut self.0, &*item)
+    fn start_send(mut self: Pin<&mut Self>, item: &[u8]) -> Result<()> {
+        tracing::trace!("Sending message of {} bytes", item.len());
+        <WebSocketSender as SinkExt<&[u8]>>::start_send_unpin(&mut self.0, item)
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {
