@@ -1,6 +1,6 @@
 [package]
 name = "aggligator-util"
-version = "0.18.2"
+version = "0.18.3"
 description = "Aggligator command line utilities"
 categories = ["network-programming", "command-line-utilities"]
 keywords = ["aggligator", "multipath", "multiplex", "tcp", "mptcp"]
