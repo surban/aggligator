@@ -511,7 +511,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d61fa4ffa3de412bfea335c6ecff681de2b609ba3c77ef3e00e521813a9ed9e"
 dependencies = [
  "backtrace",
- "bytes",
  "pin-project-lite",
  "tokio-macros",
 ]
@@ -681,9 +680,9 @@ dependencies = [
 
 [[package]]
 name = "websocket-web"
-version = "0.1.6"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ececf9f9b84404a804eea6791414801eda6f749c5c3426b7306c8935b11ad53"
+checksum = "e422271374d03090b907b9edecd87eb3aae021372defc8f3db9d46c8667a4ec4"
 dependencies = [
  "futures-channel",
  "futures-core",

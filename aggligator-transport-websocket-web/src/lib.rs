@@ -13,7 +13,7 @@ compile_error!("aggligator-transport-websocket-web requires a WebAssembly target
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use futures::{future, Sink, SinkExt, StreamExt};
+use futures::{future, StreamExt};
 use std::{
     any::Any,
     cmp::Ordering,
@@ -21,15 +21,11 @@ use std::{
     fmt,
     hash::{Hash, Hasher},
     io::{Error, ErrorKind, Result},
-    pin::Pin,
     sync::Arc,
-    task::{Context, Poll},
 };
 use threadporter::{thread_bound, ThreadBound};
-use tokio::{io::BufWriter, sync::watch};
+use tokio::sync::watch;
 use tokio_util::io::{SinkWriter, StreamReader};
-
-use websocket_web::WebSocketSender;
 
 #[doc(no_inline)]
 pub use websocket_web::{Interface, WebSocketBuilder};
@@ -168,43 +164,12 @@ impl ConnectingTransport for WebSocketConnector {
 
             // Adapt WebSocket IO.
             let (tx, rx) = websocket.into_split();
-
-            let tx = ThreadBound::new(WebSocketSink(tx));
-            let write = BufWriter::with_capacity(1_000_000, SinkWriter::new(tx));
-
-            let rx = ThreadBound::new(rx.map(|res| {
-                res.map(|msg| {
-                    tracing::trace!("Received message of {} bytes", msg.len());
-                    Bytes::from(msg.to_vec())
-                })
-            }));
-            let read = StreamReader::new(rx);
+            let write = SinkWriter::new(ThreadBound::new(tx));
+            let read =
+                StreamReader::new(ThreadBound::new(rx.map(|res| res.map(|msg| Bytes::from(msg.to_vec())))));
 
             Ok(IoBox::new(read, write).into())
         })
         .await
-    }
-}
-
-struct WebSocketSink(WebSocketSender);
-
-impl Sink<&[u8]> for WebSocketSink {
-    type Error = Error;
-
-    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {
-        <WebSocketSender as SinkExt<&[u8]>>::poll_ready_unpin(&mut self.0, cx)
-    }
-
-    fn start_send(mut self: Pin<&mut Self>, item: &[u8]) -> Result<()> {
-        tracing::trace!("Sending message of {} bytes", item.len());
-        <WebSocketSender as SinkExt<&[u8]>>::start_send_unpin(&mut self.0, item)
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {
-        <WebSocketSender as SinkExt<&[u8]>>::poll_flush_unpin(&mut self.0, cx)
-    }
-
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<()>> {
-        <WebSocketSender as SinkExt<&[u8]>>::poll_close_unpin(&mut self.0, cx)
     }
 }

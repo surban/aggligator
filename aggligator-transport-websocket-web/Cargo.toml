@@ -19,10 +19,10 @@ bytes = "1"
 futures = "0.3"
 tracing = "0.1"
 threadporter = "0.1"
-tokio = { version = "1", features = ["sync", "io-util"] }
+tokio = { version = "1", features = ["sync"] }
 tokio-util = { version = "0.7", features = ["io"] }
 
-websocket-web = "0.1.6"
+websocket-web = "0.1.7"
 
 [package.metadata.docs.rs]
 all-features = true
