@@ -779,7 +779,7 @@ where
                                     self.idle_links.retain(|idle_id| *idle_id != id);
                                     self.send_reliable_over_link(id, ReliableMsg::Data(data));
                                 } else if link.need_ack_flush() {
-                                    tracing::trace!("flushing link {id} due to sent acks");
+                                    tracing::trace!("flushing link {id} due to pending acks and no data to send");
                                     self.idle_links.retain(|&idle_id| idle_id != id);
                                     link.start_flush();
                                 } else if link.needs_flush() && !link.is_sendable() {
