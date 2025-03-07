@@ -1,6 +1,6 @@
 [package]
 name = "aggligator-transport-websocket-web"
-version = "0.4.0"
+version = "0.4.1"
 description = "Aggligator transport: WebSocket for the web targeting WebAssembly"
 categories = ["asynchronous", "web-programming::websocket", "wasm"]
 keywords = ["aggligator", "aggligator-transport", "websocket"]
@@ -26,5 +26,6 @@ websocket-web = "0.1.7"
 
 [package.metadata.docs.rs]
 all-features = true
-rustdoc-args = ["--cfg", "docsrs"]
+rustdoc-args = ["--cfg", "docsrs", "--cfg", "web_sys_unstable_apis", "--cfg", "getrandom_backend=\"wasm_js\""]
+rustc-args = ["--cfg", "web_sys_unstable_apis", "--cfg", "getrandom_backend=\"wasm_js\""]
 targets = ["wasm32-unknown-unknown"]
