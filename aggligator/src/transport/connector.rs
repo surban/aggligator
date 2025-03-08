@@ -10,7 +10,7 @@ use std::{
     collections::HashSet,
     fmt::{self, Debug},
     future::IntoFuture,
-    io::{Error, ErrorKind, Result},
+    io::{Error, Result},
     iter,
     sync::{Arc, Weak},
     time::Duration,
@@ -376,10 +376,7 @@ impl Connector {
                 // Connect available but unconnected tags.
                 for tag in tags {
                     if tag.transport_name() != transport.name() {
-                        break 'outer Err(Error::new(
-                            ErrorKind::Other,
-                            "link tag transport name mismatch".to_string(),
-                        ));
+                        break 'outer Err(Error::other("link tag transport name mismatch"));
                     }
 
                     if connecting_tags.contains(&tag)

@@ -195,7 +195,7 @@ impl ConnectingTransport for RfcommProfileConnector {
                         }
                     }
 
-                    Err::<(), _>(Error::new(ErrorKind::BrokenPipe, "discovery session terminated".to_string()))
+                    Err::<(), _>(Error::new(ErrorKind::BrokenPipe, "discovery session terminated"))
                 } else {
                     tracing::debug!("stopped Bluetooth discovery");
                     future::pending().await

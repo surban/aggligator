@@ -155,7 +155,7 @@ struct ReceivedReliableMsg {
 /// Link aggregator task event.
 enum TaskEvent<TX, RX, TAG> {
     /// A new link has been established.
-    NewLink(LinkInt<TX, RX, TAG>),
+    NewLink(Box<LinkInt<TX, RX, TAG>>),
     /// No new links will be established.
     NoNewLinks,
     /// A link event occurred.
@@ -529,9 +529,11 @@ where
             // Task for receiving a new link.
             let new_link_task = async {
                 match &mut self.link_rx {
-                    _ if !self.init_links.is_empty() => TaskEvent::NewLink(self.init_links.pop_front().unwrap()),
+                    _ if !self.init_links.is_empty() => {
+                        TaskEvent::NewLink(Box::new(self.init_links.pop_front().unwrap()))
+                    }
                     Some(link_rx) => match link_rx.recv().await {
-                        Some(link) => TaskEvent::NewLink(link),
+                        Some(link) => TaskEvent::NewLink(Box::new(link)),
                         None => TaskEvent::NoNewLinks,
                     },
                     None => future::pending().await,
@@ -659,8 +661,8 @@ where
                     }
                     let others =
                         self.links.iter().filter_map(|link_opt| link_opt.as_ref().map(Link::from)).collect();
-                    if (self.link_filter)(Link::from(&link), others).await {
-                        let id = self.add_link(link);
+                    if (self.link_filter)(Link::from(&*link), others).await {
+                        let id = self.add_link(*link);
                         tracing::info!("added new link with id {id}");
                     } else {
                         tracing::debug!("link was refused by link filter");

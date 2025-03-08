@@ -3,7 +3,7 @@
 use network_interface::NetworkInterfaceConfig;
 use std::{
     collections::HashSet,
-    io::{Error, ErrorKind, Result},
+    io::{Error, Result},
     net::{IpAddr, SocketAddr},
 };
 use tokio::net::{lookup_host, TcpSocket};
@@ -17,7 +17,7 @@ use crate::IpVersion;
 /// Filters out interfaces that are most likely useless.
 pub fn local_interfaces() -> Result<Vec<NetworkInterface>> {
     Ok(NetworkInterface::show()
-        .map_err(|err| Error::new(ErrorKind::Other, err.to_string()))?
+        .map_err(|err| Error::other(err.to_string()))?
         .into_iter()
         .filter(|iface| !iface.name.starts_with("ifb"))
         .collect())

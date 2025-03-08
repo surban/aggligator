@@ -362,7 +362,7 @@ impl Acceptor {
 
             tracing::debug!("accepted transport connection for tag {tag}");
             if tag.transport_name() != transport.name() {
-                break Err(Error::new(ErrorKind::Other, "link tag transport name mismatch".to_string()));
+                break Err(Error::other("link tag transport name mismatch"));
             }
 
             // Handle incoming connection in separate task.

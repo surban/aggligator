@@ -32,4 +32,5 @@
     //     "aggligator-transport-webusb/Cargo.toml"
     // ],
 
+    // "rust-analyzer.check.command": "clippy"
 }

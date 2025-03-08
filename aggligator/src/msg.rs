@@ -357,7 +357,11 @@ impl LinkMsg {
             Self::MSG_SEND_FINISH => Self::SendFinish { seq: reader.read_u32::<BE>()?.into() },
             Self::MSG_RECEIVE_CLOSE => Self::ReceiveClose { seq: reader.read_u32::<BE>()?.into() },
             Self::MSG_RECEIVE_FINISH => Self::ReceiveFinish { seq: reader.read_u32::<BE>()?.into() },
-            Self::MSG_TEST_DATA => Self::TestData { size: reader.bytes().count() },
+            Self::MSG_TEST_DATA => {
+                // The reader is always a memory buffer.
+                #[allow(clippy::unbuffered_bytes)]
+                Self::TestData { size: reader.bytes().count() }
+            }
             Self::MSG_SET_BLOCK => Self::SetBlock { blocked: reader.read_u8()? != 0 },
             Self::MSG_GOODBYE => Self::Goodbye,
             other => return Err(protocol_err!("invalid message id {other}")),

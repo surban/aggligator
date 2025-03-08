@@ -177,13 +177,13 @@ mod host {
         /// USB devices are re-enumerated when a hotplug event occurs, or, if hotplug events are unsupported
         /// by the operating system, periodically.
         pub fn new(filter: impl Fn(&DeviceInfo, &InterfaceInfo) -> bool + Send + Sync + 'static) -> Result<Self> {
-            let context = Context::new().map_err(|err| Error::new(ErrorKind::Other, err))?;
+            let context = Context::new().map_err(Error::other)?;
 
             let (_hotplug_reg, changed_rx) = if rusb::has_hotplug() {
                 let (changed_tx, changed_rx) = watch::channel(());
                 let hotplug_reg = HotplugBuilder::new()
                     .register(&context, Box::new(HotplugCallback(changed_tx)))
-                    .map_err(|err| Error::new(ErrorKind::Other, err))?;
+                    .map_err(Error::other)?;
                 (Some(Mutex::new(hotplug_reg)), Some(changed_rx))
             } else {
                 (None, None)
@@ -255,7 +255,7 @@ mod host {
                 }
 
                 {
-                    let devs = self.context.devices().map_err(|err| Error::new(ErrorKind::Other, err))?;
+                    let devs = self.context.devices().map_err(Error::other)?;
                     let mut tags = HashSet::new();
                     for dev in devs.iter() {
                         match self.probe_device(&dev) {
@@ -299,7 +299,7 @@ mod host {
 
             let mut dev = None;
             {
-                let devs = self.context.devices().map_err(|err| Error::new(ErrorKind::Other, err))?;
+                let devs = self.context.devices().map_err(Error::other)?;
                 for cand in devs.iter() {
                     if cand.bus_number() == tag.bus && cand.address() == tag.address {
                         dev = Some(cand);
@@ -309,7 +309,7 @@ mod host {
             }
             let Some(dev) = dev else { return Err(Error::new(ErrorKind::NotFound, "USB device gone")) };
 
-            let hnd = Arc::new(dev.open().map_err(|err| Error::new(ErrorKind::Other, err))?);
+            let hnd = Arc::new(dev.open().map_err(Error::other)?);
             let (tx, rx) = upc::host::connect(hnd, tag.interface, &[]).await?;
 
             Ok(TxRxBox::new(tx.into_sink(), rx.into_stream().map_ok(|p| p.freeze())).into())

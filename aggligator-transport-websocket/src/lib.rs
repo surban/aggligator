@@ -279,7 +279,7 @@ impl ConnectingTransport for WebSocketConnector {
                 .with(
                     |data: Bytes| async move { Ok::<_, tungstenite::Error>(tungstenite::Message::Binary(data)) },
                 )
-                .sink_map_err(|err| Error::new(ErrorKind::Other, err)),
+                .sink_map_err(Error::other),
         );
         let ws_write = SinkWriter::new(CopyToBytes::new(ws_tx));
 
@@ -292,7 +292,7 @@ impl ConnectingTransport for WebSocketConnector {
                         Ok(None)
                     }
                 })
-                .map_err(|err| Error::new(ErrorKind::Other, err)),
+                .map_err(Error::other),
         );
         let ws_read = StreamReader::new(ws_rx);
 
@@ -515,7 +515,7 @@ impl AcceptingTransport for WebSocketAcceptor {
                         .with(|data: Bytes| async move {
                             Ok::<_, axum::Error>(axum::extract::ws::Message::Binary(data))
                         })
-                        .sink_map_err(|err| Error::new(ErrorKind::Other, err)),
+                        .sink_map_err(Error::other),
                 );
             let ws_write = SinkWriter::new(CopyToBytes::new(ws_tx));
 
@@ -528,7 +528,7 @@ impl AcceptingTransport for WebSocketAcceptor {
                             Ok(None)
                         }
                     })
-                    .map_err(|err| Error::new(ErrorKind::Other, err)),
+                    .map_err(Error::other),
             );
             let ws_read = StreamReader::new(ws_rx);
 
