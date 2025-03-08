@@ -334,7 +334,8 @@ impl Connector {
         link_error_tx: broadcast::Sender<BoxLinkError>, reconnect_delay: Duration,
         wrappers: Arc<Vec<BoxConnectingWrapper>>,
     ) {
-        let TransportPack { transport, result_tx, mut remove_rx } = transport_pack;
+        let TransportPack { transport, result_tx, remove_rx } = transport_pack;
+        let mut remove_rx = remove_rx.fuse();
         let conn_id = control.id();
         let mut changed_control = control.clone();
 

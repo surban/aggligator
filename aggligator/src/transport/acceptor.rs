@@ -343,7 +343,8 @@ impl Acceptor {
         server: BoxServer, transport: AcceptingTransportPack, link_error_tx: broadcast::Sender<BoxLinkError>,
         wrappers: Arc<Vec<BoxAcceptingWrapper>>,
     ) {
-        let AcceptingTransportPack { transport, result_tx, mut remove_rx, _permit: _ } = transport;
+        let AcceptingTransportPack { transport, result_tx, remove_rx, _permit: _ } = transport;
+        let mut remove_rx = remove_rx.fuse();
 
         let (tx, mut rx) = mpsc::channel(128);
         let mut listener = transport.listen(tx);
