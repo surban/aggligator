@@ -112,6 +112,6 @@ pub fn bind_socket_to_interface(socket: &TcpSocket, interface: &[u8], remote: Ip
             }
         }
 
-        Err(Error::new(ErrorKind::NotFound, "no IP address for interface"))
+        Err(Error::new(std::io::ErrorKind::NotFound, "no IP address for interface"))
     }
 }
