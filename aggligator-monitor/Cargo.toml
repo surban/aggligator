@@ -1,6 +1,6 @@
 [package]
 name = "aggligator-monitor"
-version = "0.9.2"
+version = "0.9.5"
 description = "Aggligator link monitor and speed test"
 categories = ["asynchronous", "network-programming"]
 keywords = ["aggligator"]
@@ -12,7 +12,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-aggligator = { version = "0.9.4", path = "../aggligator" }
+aggligator = { version = "0.9.5", path = "../aggligator" }
 
 crossterm = { workspace = true }
 futures = { workspace = true }
