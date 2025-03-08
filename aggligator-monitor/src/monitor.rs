@@ -167,7 +167,7 @@ where
             let header = header_rx.borrow_and_update();
             queue!(stdout(), Print(&*header), MoveToNextLine(1)).unwrap();
         }
-        queue!(stdout(), Print("━".repeat(80).dark_grey()), MoveToNextLine(1)).unwrap();
+        queue!(stdout(), Print("━".repeat(80).grey()), MoveToNextLine(1)).unwrap();
         queue!(
             stdout(),
             MoveToColumn(STATS_COL),
@@ -175,7 +175,7 @@ where
             MoveToNextLine(1)
         )
         .unwrap();
-        queue!(stdout(), Print("━".repeat(80).dark_grey()), MoveToNextLine(2)).unwrap();
+        queue!(stdout(), Print("━".repeat(80).grey()), MoveToNextLine(2)).unwrap();
 
         // Connections.
         for (control, info) in &controls {
@@ -227,8 +227,8 @@ where
             short_id.truncate(8);
             queue!(
                 stdout(),
-                Print("Connection ".grey()),
-                Print(short_id.bold().blue()),
+                Print("Connection ".cyan()),
+                Print(short_id.bold().magenta()),
                 Print("  "),
                 Print(format_duration(stats.established.map(|e| e.elapsed()).unwrap_or_default())),
                 MoveToColumn(STATS_COL),
@@ -244,19 +244,19 @@ where
             .unwrap();
             queue!(
                 stdout(),
-                Print("TX:".grey()),
-                Print("  avail ".grey()),
+                Print("TX:".cyan()),
+                Print("  avail ".cyan()),
                 Print(format_bytes(stats.send_space as _)),
-                Print("   unack ".grey()),
+                Print("   unack ".cyan()),
                 Print(format_bytes(stats.sent_unacked as _)),
-                Print("   uncsmable ".grey()),
+                Print("   uncsmable ".cyan()),
                 Print(format_bytes(stats.sent_unconsumable as _)),
-                Print("   uncsmed ".grey()),
+                Print("   uncsmed ".cyan()),
                 Print(format_bytes(stats.sent_unconsumed as _)),
                 MoveToNextLine(1),
-                Print("RX:".grey()),
+                Print("RX:".cyan()),
                 MoveToColumn(62),
-                Print(" uncsmed ".grey()),
+                Print(" uncsmed ".cyan()),
                 Print(format_bytes(stats.recved_unconsumed as _)),
                 MoveToNextLine(1),
             )
@@ -271,7 +271,7 @@ where
                 queue!(
                     stdout(),
                     Print("  "),
-                    Print(format!("{}{}", format!("{n:1}").white(), ". ".grey())),
+                    Print(format!("{}{}", format!("{n:1}").blue(), ". ".cyan())),
                     Print(format!("{:<66}", tag.to_string()).cyan()),
                     Print(
                         format!(
@@ -290,17 +290,17 @@ where
                 .unwrap();
 
                 if disabled.contains(tag) {
-                    queue!(stdout(), Print("disabled".dark_red())).unwrap();
+                    queue!(stdout(), Print("disabled".red())).unwrap();
                 } else if let Some(link) = link {
                     let stats = link.stats();
                     match (link.not_working_reason(), link.not_working_since()) {
                         (Some(reason), Some(since)) => {
                             queue!(
                                 stdout(),
-                                Print("unconfirmed ".yellow()),
+                                Print("unconfirmed ".dark_yellow()),
                                 Print(format_duration(since.elapsed())),
-                                Print(": ".dark_grey()),
-                                Print(reason.to_string().white())
+                                Print(": ".grey()),
+                                Print(reason.to_string().blue())
                             )
                             .unwrap();
                         }
@@ -317,9 +317,9 @@ where
                     }
 
                     if link.is_blocked() {
-                        queue!(stdout(), Print(" blocked".dark_red())).unwrap();
+                        queue!(stdout(), Print(" blocked".red())).unwrap();
                     } else if link.is_remotely_blocked() {
-                        queue!(stdout(), Print(" remotely blocked".dark_red())).unwrap();
+                        queue!(stdout(), Print(" remotely blocked".red())).unwrap();
                     }
 
                     let hangs = link.stats().hangs;
@@ -344,14 +344,10 @@ where
                     queue!(
                         stdout(),
                         Print("    "),
-                        Print(format!(
-                            "{} {}",
-                            format!("{:4}", stats.roundtrip.as_millis()).white(),
-                            "ms".dark_grey()
-                        )),
+                        Print(format!("{} {}", format!("{:4}", stats.roundtrip.as_millis()).blue(), "ms".grey())),
                         Print(" "),
                         Print(format_bytes(stats.sent_unacked)),
-                        Print(" /".grey()),
+                        Print(" /".cyan()),
                         Print(format_bytes(stats.unacked_limit)),
                         MoveToColumn(STATS_COL),
                         Print(format_speed(tx_speed)),
@@ -370,14 +366,14 @@ where
             }
 
             // Seperation line.
-            queue!(stdout(), MoveToNextLine(1), Print("━".repeat(80).dark_grey()), MoveToNextLine(2)).unwrap();
+            queue!(stdout(), MoveToNextLine(1), Print("━".repeat(80).grey()), MoveToNextLine(2)).unwrap();
         }
 
         // Usage line.
         execute!(
             stdout(),
             MoveTo(0, rows - 2),
-            Print("Press 0-9 to toggle a link, q to quit.".grey()),
+            Print("Press 0-9 to toggle a link, q to quit.".cyan()),
             MoveToNextLine(1)
         )
         .unwrap();
@@ -427,7 +423,7 @@ pub fn format_bytes(bytes: u64) -> String {
         (1, "B ", 0)
     };
 
-    format!("{} {}", format!("{:6.n$}", bytes as f32 / factor as f32, n = n).white(), unit.dark_grey())
+    format!("{} {}", format!("{:6.n$}", bytes as f32 / factor as f32, n = n).blue(), unit.grey())
 }
 
 /// Formats a speed.
@@ -444,7 +440,7 @@ pub fn format_speed(speed: f64) -> String {
         (1, "B/s ", 0)
     };
 
-    format!("{} {}", format!("{:6.n$}", speed / factor as f64, n = n).white(), unit.dark_grey())
+    format!("{} {}", format!("{:6.n$}", speed / factor as f64, n = n).blue(), unit.grey())
 }
 
 /// Formats a duration.
@@ -459,18 +455,18 @@ pub fn format_duration(dur: Duration) -> String {
     let mut output = String::new();
 
     if hours > 0 {
-        write!(output, "{}{}", format!("{hours:2}").white(), "h".dark_grey()).unwrap();
+        write!(output, "{}{}", format!("{hours:2}").blue(), "h".grey()).unwrap();
     } else {
         write!(output, "   ").unwrap();
     }
 
     if hours > 0 || minutes > 0 {
-        write!(output, "{}{}", format!("{minutes:2}").white(), "m".dark_grey()).unwrap();
+        write!(output, "{}{}", format!("{minutes:2}").blue(), "m".grey()).unwrap();
     } else {
         write!(output, "   ").unwrap();
     }
 
-    write!(output, "{}{}", format!("{seconds:2}").white(), "s".dark_grey()).unwrap();
+    write!(output, "{}{}", format!("{seconds:2}").blue(), "s".grey()).unwrap();
 
     output
 }

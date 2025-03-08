@@ -419,7 +419,7 @@ impl ClientCli {
                         "Downstream: ".grey(),
                         format_speed(recv)
                     );
-                    let header = format!("{}\r\n\r\n{}{}", title.clone().white().bold(), speed, debug_warning());
+                    let header = format!("{}\r\n\r\n{}{}", title.clone().bold(), speed, debug_warning());
 
                     if header_tx.send(header).is_err() {
                         break;
@@ -691,7 +691,7 @@ impl ServerCli {
         } else {
             let task = exec::spawn(task);
 
-            let header_rx = watch::channel(format!("{}\r\n{}", title.white().bold(), debug_warning())).1;
+            let header_rx = watch::channel(format!("{}\r\n{}", title.bold(), debug_warning())).1;
             block_in_place(|| interactive_monitor(header_rx, control_rx, 1, None, Some(tag_error_rx), None))?;
 
             task.abort();

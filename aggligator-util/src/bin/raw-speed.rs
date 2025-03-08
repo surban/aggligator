@@ -297,7 +297,7 @@ impl RawClientCli {
 
             let (_cols, rows) = terminal::size().unwrap();
             execute!(stdout(), Clear(ClearType::All), MoveTo(0, 0)).unwrap();
-            execute!(stdout(), Print(header.white().bold()), MoveToNextLine(2)).unwrap();
+            execute!(stdout(), Print(header.bold()), MoveToNextLine(2)).unwrap();
             execute!(stdout(), Print("                       TX             RX    ".grey()), MoveToNextLine(1))
                 .unwrap();
 

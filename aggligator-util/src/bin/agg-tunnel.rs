@@ -379,7 +379,7 @@ impl ClientCli {
         } else {
             let task = exec::spawn(task);
 
-            let header_rx = watch::channel(format!("{title}\r\n").white().bold().to_string()).1;
+            let header_rx = watch::channel(format!("{title}\r\n").bold().to_string()).1;
             block_in_place(|| {
                 interactive_monitor(
                     header_rx,
@@ -577,7 +577,7 @@ impl ServerCli {
         } else {
             let task = exec::spawn(task);
 
-            let header_rx = watch::channel(format!("{title}\r\n").white().bold().to_string()).1;
+            let header_rx = watch::channel(format!("{title}\r\n").bold().to_string()).1;
             interactive_monitor(header_rx, control_rx, 1, None, None, None)?;
 
             task.abort();
