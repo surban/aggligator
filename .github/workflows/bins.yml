@@ -80,14 +80,14 @@ jobs:
         with:
           name: aggligator-x86_64-unknown-linux-musl
           path: bin/ubuntu-x86_64
-      - name: Zip binaries (Ubuntu x86_64)
-        run: zip -j aggligator-x86_64-unknown-linux-musl.zip bin/ubuntu-x86_64/*
+      - name: Compress binaries (Ubuntu x86_64)
+        run: tar -czf aggligator-x86_64-unknown-linux-musl.tar.gz bin/ubuntu-x86_64/*
       - name: Attach (Ubuntu x86_64) to release
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: aggligator-x86_64-unknown-linux-musl.zip
-          asset_name: aggligator-x86_64-linux.zip
+          file: aggligator-x86_64-unknown-linux-musl.tar.gz
+          asset_name: aggligator-x86_64-linux.tar.gz
           tag: ${{ github.ref_name }}
 
       - name: Download binaries (Ubuntu aarch64)
@@ -95,14 +95,14 @@ jobs:
         with:
           name: aggligator-aarch64-unknown-linux-musl
           path: bin/ubuntu-aarch64
-      - name: Zip binaries (Ubuntu aarch64)
-        run: zip -j aggligator-aarch64-unknown-linux-musl.zip bin/ubuntu-aarch64/*
+      - name: Compress binaries (Ubuntu aarch64)
+        run: tar -czf aggligator-aarch64-unknown-linux-musl.tar.gz bin/ubuntu-aarch64/*
       - name: Attach (Ubuntu aarch64) to release
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: aggligator-aarch64-unknown-linux-musl.zip
-          asset_name: aggligator-aarch64-linux.zip
+          file: aggligator-aarch64-unknown-linux-musl.tar.gz
+          asset_name: aggligator-aarch64-linux.tar.gz
           tag: ${{ github.ref_name }}
 
       - name: Download binaries (macOS)
@@ -110,14 +110,14 @@ jobs:
         with:
           name: aggligator-macos-latest
           path: bin/macos
-      - name: Zip binaries (macOS)
-        run: zip -j aggligator-macos-latest.zip bin/macos/*
+      - name: Compress binaries (macOS)
+        run: tar -czf aggligator-macos-latest.tar.gz bin/macos/*
       - name: Attach (macOS) to release
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: aggligator-macos-latest.zip
-          asset_name: aggligator-macos.zip
+          file: aggligator-macos-latest.tar.gz
+          asset_name: aggligator-macos.tar.gz
           tag: ${{ github.ref_name }}
 
       - name: Download binaries (Windows)
