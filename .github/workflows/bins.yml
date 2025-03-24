@@ -1,0 +1,136 @@
+name: Build binaries
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+  release:
+    types: [published]
+
+jobs:
+  bins:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false            
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+          - os: macos-latest
+          - os: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+      - name: Install MUSL toolchain
+        if: matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install musl-tools        
+      - name: Install cross toolchain
+        if: matrix.target
+        run: rustup target add ${{ matrix.target }}
+      - name: Build binaries (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          if [ -n "${{ matrix.target }}" ]; then
+            cargo build --release --target ${{ matrix.target }} --bin agg-speed --bin agg-tunnel
+          else
+            cargo build --release --bin agg-speed --bin agg-tunnel
+          fi
+        shell: bash
+      - name: Build binaries (Windows)
+        if: runner.os == 'Windows'
+        run: cargo build --release --bin agg-speed --bin agg-tunnel
+        shell: pwsh
+      - name: Archive binaries (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir bin
+          if [ -n "${{ matrix.target }}" ]; then
+            cp target/${{ matrix.target }}/release/agg-speed bin/
+            cp target/${{ matrix.target }}/release/agg-tunnel bin/
+          else
+            cp target/release/agg-speed bin/
+            cp target/release/agg-tunnel bin/
+          fi
+        shell: bash
+      - name: Archive binaries (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          New-Item -ItemType Directory -Path bin | Out-Null
+          Copy-Item .\target\release\agg-speed.exe .\bin\
+          Copy-Item .\target\release\agg-tunnel.exe .\bin\
+        shell: pwsh
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: aggligator-${{ matrix.target || matrix.os }}
+          path: bin
+
+  attach-release:
+    if: github.event_name == 'release'
+    needs: bins
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download binaries (Ubuntu x86_64)
+        uses: actions/download-artifact@v4
+        with:
+          name: aggligator-x86_64-unknown-linux-musl
+          path: bin/ubuntu-x86_64
+      - name: Zip binaries (Ubuntu x86_64)
+        run: zip -j aggligator-x86_64-unknown-linux-musl.zip bin/ubuntu-x86_64/*
+      - name: Attach (Ubuntu x86_64) to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: aggligator-x86_64-unknown-linux-musl.zip
+          asset_name: aggligator-x86_64-linux.zip
+          tag: ${{ github.ref_name }}
+
+      - name: Download binaries (Ubuntu aarch64)
+        uses: actions/download-artifact@v4
+        with:
+          name: aggligator-aarch64-unknown-linux-musl
+          path: bin/ubuntu-aarch64
+      - name: Zip binaries (Ubuntu aarch64)
+        run: zip -j aggligator-aarch64-unknown-linux-musl.zip bin/ubuntu-aarch64/*
+      - name: Attach (Ubuntu aarch64) to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: aggligator-aarch64-unknown-linux-musl.zip
+          asset_name: aggligator-aarch64-linux.zip
+          tag: ${{ github.ref_name }}
+
+      - name: Download binaries (macOS)
+        uses: actions/download-artifact@v4
+        with:
+          name: aggligator-macos-latest
+          path: bin/macos
+      - name: Zip binaries (macOS)
+        run: zip -j aggligator-macos-latest.zip bin/macos/*
+      - name: Attach (macOS) to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: aggligator-macos-latest.zip
+          asset_name: aggligator-macos.zip
+          tag: ${{ github.ref_name }}
+
+      - name: Download binaries (Windows)
+        uses: actions/download-artifact@v4
+        with:
+          name: aggligator-windows-latest
+          path: bin/windows
+      - name: Zip binaries (Windows)
+        run: zip -j aggligator-windows-latest.zip bin/windows/*
+      - name: Attach (Windows) to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: aggligator-windows-latest.zip
+          asset_name: aggligator-windows.zip
+          tag: ${{ github.ref_name }}
