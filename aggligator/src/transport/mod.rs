@@ -194,9 +194,20 @@ impl Clone for LinkTagBox {
     }
 }
 
-type BoxControl = Control<TxBox, RxBox, LinkTagBox>;
-type BoxServer = Server<TxBox, RxBox, LinkTagBox>;
-type BoxListener = Listener<TxBox, RxBox, LinkTagBox>;
-type BoxTask = Task<TxBox, RxBox, LinkTagBox>;
-type BoxLink = Link<LinkTagBox>;
-type BoxLinkError = LinkError<LinkTagBox>;
+/// Control handle for boxed transports.
+pub type BoxControl = Control<TxBox, RxBox, LinkTagBox>;
+
+/// Server for boxed transports.
+pub type BoxServer = Server<TxBox, RxBox, LinkTagBox>;
+
+/// Listener for boxed transports.
+pub type BoxListener = Listener<TxBox, RxBox, LinkTagBox>;
+
+/// Connection management task for boxed transports.
+pub type BoxTask = Task<TxBox, RxBox, LinkTagBox>;
+
+/// Link handle for boxed link tag.
+pub type BoxLink = Link<LinkTagBox>;
+
+/// Link error information for boxed link tag.
+pub type BoxLinkError = LinkError<LinkTagBox>;
