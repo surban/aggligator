@@ -20,8 +20,7 @@ const TIMEOUT: Duration = Duration::from_secs(1);
 mod host {
     use aggligator::io::{StreamBox, TxRxBox};
     use async_trait::async_trait;
-    use futures::TryStreamExt;
-    use rusb::{Context, Device, Hotplug, HotplugBuilder, Registration, UsbContext};
+    use futures::{FutureExt, StreamExt};
     use std::{
         any::Any,
         cmp::Ordering,
@@ -29,7 +28,6 @@ mod host {
         fmt,
         hash::{Hash, Hasher},
         io::{Error, ErrorKind, Result},
-        sync::Arc,
         time::Duration,
     };
     use tokio::{
@@ -49,8 +47,8 @@ mod host {
     /// Link tag for outgoing USB link.
     #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct OutgoingUsbLinkTag {
-        /// Bus number.
-        pub bus: u8,
+        /// Bus id.
+        pub bus_id: String,
         /// Device address.
         pub address: u8,
         /// Interface number.
@@ -59,7 +57,7 @@ mod host {
 
     impl fmt::Display for OutgoingUsbLinkTag {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            write!(f, "USB {} -> {}:{}", self.bus, self.address, self.interface)
+            write!(f, "USB {} -> {}:{}", self.bus_id, self.address, self.interface)
         }
     }
 
@@ -98,8 +96,11 @@ mod host {
     #[derive(Debug, Clone, PartialEq, Eq)]
     #[non_exhaustive]
     pub struct DeviceInfo {
-        /// Bus number.
-        pub bus_number: u8,
+        /// Bus id.
+        pub bus_id: String,
+        /// Bus number. (Linux only)
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        pub busnum: u8,
         /// Address.
         pub address: u8,
         /// USB port number chain.
@@ -114,12 +115,16 @@ mod host {
         pub sub_class_code: u8,
         /// Protocol code.
         pub protocol_code: u8,
+        /// Device version.
+        pub version: u16,
+        /// USB version.
+        pub usb_version: u16,
         /// Manufacturer.
-        pub manufacturer: String,
+        pub manufacturer: Option<String>,
         /// Product.
-        pub product: String,
+        pub product: Option<String>,
         /// Serial number.
-        pub serial_number: String,
+        pub serial_number: Option<String>,
     }
 
     /// USB interface information.
@@ -135,19 +140,7 @@ mod host {
         /// Protocol code.
         pub protocol_code: u8,
         /// Description.
-        pub description: String,
-    }
-
-    struct HotplugCallback(watch::Sender<()>);
-
-    impl Hotplug<Context> for HotplugCallback {
-        fn device_arrived(&mut self, _device: Device<Context>) {
-            self.0.send_replace(());
-        }
-
-        fn device_left(&mut self, _device: Device<Context>) {
-            self.0.send_replace(());
-        }
+        pub description: Option<String>,
     }
 
     type FilterFn = Box<dyn Fn(&DeviceInfo, &InterfaceInfo) -> bool + Send + Sync>;
@@ -156,10 +149,8 @@ mod host {
     ///
     /// This transport is packet-based.
     pub struct UsbConnector {
-        context: Context,
         filter: FilterFn,
-        _hotplug_reg: Option<Mutex<Registration<Context>>>,
-        changed_rx: Option<watch::Receiver<()>>,
+        hotplug: Option<Mutex<nusb::hotplug::HotplugWatch>>,
     }
 
     impl fmt::Debug for UsbConnector {
@@ -177,60 +168,79 @@ mod host {
         /// USB devices are re-enumerated when a hotplug event occurs, or, if hotplug events are unsupported
         /// by the operating system, periodically.
         pub fn new(filter: impl Fn(&DeviceInfo, &InterfaceInfo) -> bool + Send + Sync + 'static) -> Result<Self> {
-            let context = Context::new().map_err(Error::other)?;
-
-            let (_hotplug_reg, changed_rx) = if rusb::has_hotplug() {
-                let (changed_tx, changed_rx) = watch::channel(());
-                let hotplug_reg = HotplugBuilder::new()
-                    .register(&context, Box::new(HotplugCallback(changed_tx)))
-                    .map_err(Error::other)?;
-                (Some(Mutex::new(hotplug_reg)), Some(changed_rx))
-            } else {
-                (None, None)
+            let hotplug = match nusb::watch_devices() {
+                Ok(hotplug) => Some(Mutex::new(hotplug)),
+                Err(err) => {
+                    tracing::warn!("USB hotplug detection not available: {err}");
+                    None
+                }
             };
 
-            Ok(Self { context, filter: Box::new(filter), _hotplug_reg, changed_rx })
+            Ok(Self { filter: Box::new(filter), hotplug })
         }
 
-        fn probe_device(&self, dev: &Device<Context>) -> rusb::Result<Vec<OutgoingUsbLinkTag>> {
-            let hnd = dev.open()?;
-            let cfg = dev.active_config_descriptor()?;
-            let desc = dev.device_descriptor()?;
+        async fn probe_device(&self, dev_info: &nusb::DeviceInfo) -> Result<Vec<OutgoingUsbLinkTag>> {
+            let dev = dev_info.open().await?;
+            let cfg = dev.active_configuration()?;
+            let desc = dev.device_descriptor();
 
-            let langs = hnd.read_languages(TIMEOUT)?;
-            let Some(&lang) = langs.first() else { return Err(rusb::Error::NotFound) };
+            let lang = match dev.get_string_descriptor_supported_languages(TIMEOUT).await {
+                Ok(mut langs) => langs.next(),
+                Err(err) => {
+                    tracing::warn!("cannot get string descriptor languages: {err}");
+                    None
+                }
+            };
+
+            let read_desc = async |desc_index| {
+                let desc_index = desc_index?;
+                match lang {
+                    Some(lang) => match dev.get_string_descriptor(desc_index, lang, TIMEOUT).await {
+                        Ok(s) => Some(s),
+                        Err(err) => {
+                            tracing::warn!("cannot read string descriptor {desc_index}: {err}");
+                            None
+                        }
+                    },
+                    None => None,
+                }
+            };
 
             let device_info = DeviceInfo {
-                bus_number: dev.bus_number(),
-                address: dev.address(),
-                port_numbers: dev.port_numbers()?,
-                vendor_id: desc.vendor_id(),
-                product_id: desc.product_id(),
-                class_code: desc.class_code(),
-                sub_class_code: desc.sub_class_code(),
-                protocol_code: desc.protocol_code(),
-                manufacturer: hnd.read_manufacturer_string(lang, &desc, TIMEOUT)?,
-                product: hnd.read_product_string(lang, &desc, TIMEOUT)?,
-                serial_number: hnd.read_serial_number_string(lang, &desc, TIMEOUT)?,
+                bus_id: dev_info.bus_id().to_string(),
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                busnum: dev_info.busnum(),
+                address: dev_info.device_address(),
+                port_numbers: dev_info.port_chain().to_vec(),
+                vendor_id: dev_info.vendor_id(),
+                product_id: dev_info.product_id(),
+                class_code: dev_info.class(),
+                sub_class_code: dev_info.subclass(),
+                protocol_code: dev_info.protocol(),
+                version: dev_info.device_version(),
+                usb_version: dev_info.usb_version(),
+                manufacturer: read_desc(desc.manufacturer_string_index()).await,
+                product: read_desc(desc.product_string_index()).await,
+                serial_number: read_desc(desc.serial_number_string_index()).await,
             };
 
             let mut tags = Vec::new();
 
             for iface in cfg.interfaces() {
-                let Some(desc) = iface.descriptors().next() else { break };
+                let desc = iface.first_alt_setting();
 
                 let interface_info = InterfaceInfo {
                     number: desc.interface_number(),
-                    class_code: desc.class_code(),
-                    sub_class_code: desc.sub_class_code(),
-                    protocol_code: desc.protocol_code(),
-                    description: hnd.read_interface_string(lang, &desc, TIMEOUT)?,
+                    class_code: desc.class(),
+                    sub_class_code: desc.subclass(),
+                    protocol_code: desc.protocol(),
+                    description: read_desc(desc.string_index()).await,
                 };
 
                 if (self.filter)(&device_info, &interface_info) {
                     tags.push(OutgoingUsbLinkTag {
-                        bus: dev.bus_number(),
-                        address: dev.address(),
+                        bus_id: dev_info.bus_id().to_string(),
+                        address: dev_info.device_address(),
                         interface: desc.interface_number(),
                     });
                 }
@@ -247,45 +257,42 @@ mod host {
         }
 
         async fn link_tags(&self, tx: watch::Sender<HashSet<LinkTagBox>>) -> Result<()> {
-            let mut changed_rx = self.changed_rx.clone();
-
             loop {
-                if let Some(changed_rx) = &mut changed_rx {
-                    changed_rx.borrow_and_update();
-                }
-
-                {
-                    let devs = self.context.devices().map_err(Error::other)?;
-                    let mut tags = HashSet::new();
-                    for dev in devs.iter() {
-                        match self.probe_device(&dev) {
-                            Ok(dev_tags) => {
-                                tags.extend(dev_tags.into_iter().map(|tag| Box::new(tag) as Box<dyn LinkTag>))
-                            }
-                            Err(err) => {
-                                tracing::trace!(
-                                    "cannot probe device {}-{}: {err}",
-                                    dev.bus_number(),
-                                    dev.address()
-                                )
-                            }
+                let mut tags = HashSet::new();
+                for dev_info in nusb::list_devices().await? {
+                    match self.probe_device(&dev_info).await {
+                        Ok(dev_tags) => {
+                            tags.extend(dev_tags.into_iter().map(|tag| Box::new(tag) as Box<dyn LinkTag>))
+                        }
+                        Err(err) => {
+                            tracing::trace!(
+                                "cannot probe device {}-{}: {err}",
+                                dev_info.bus_id(),
+                                dev_info.device_address()
+                            )
                         }
                     }
-
-                    tx.send_if_modified(|v| {
-                        if *v != tags {
-                            *v = tags;
-                            true
-                        } else {
-                            false
-                        }
-                    });
                 }
 
-                match &mut changed_rx {
-                    Some(changed_rx) => {
+                tx.send_if_modified(|v| {
+                    if *v != tags {
+                        *v = tags;
+                        true
+                    } else {
+                        false
+                    }
+                });
+
+                match &self.hotplug {
+                    Some(hotplug) => {
+                        let mut hotplug = hotplug.lock().await;
                         tokio::select! {
-                            Ok(()) = changed_rx.changed() => tracing::debug!("USB devices changed"),
+                            Some(_) = hotplug.next() => {
+                                tracing::debug!("USB devices changed");
+                                sleep(Duration::from_millis(100)).await;
+                                while let Some(Some(_)) = hotplug.next().now_or_never() {}
+
+                            }
                             () = sleep(PROBE_INTERVAL) => (),
                         }
                     }
@@ -297,22 +304,17 @@ mod host {
         async fn connect(&self, tag: &dyn LinkTag) -> Result<StreamBox> {
             let tag: &OutgoingUsbLinkTag = tag.as_any().downcast_ref().unwrap();
 
-            let mut dev = None;
-            {
-                let devs = self.context.devices().map_err(Error::other)?;
-                for cand in devs.iter() {
-                    if cand.bus_number() == tag.bus && cand.address() == tag.address {
-                        dev = Some(cand);
-                        break;
-                    }
-                }
-            }
-            let Some(dev) = dev else { return Err(Error::new(ErrorKind::NotFound, "USB device gone")) };
+            let Some(dev) = nusb::list_devices()
+                .await?
+                .find(|cand| cand.bus_id() == tag.bus_id && cand.device_address() == tag.address)
+            else {
+                return Err(Error::new(ErrorKind::NotFound, "USB device gone"));
+            };
 
-            let hnd = Arc::new(dev.open().map_err(Error::other)?);
-            let (tx, rx) = upc::host::connect(hnd, tag.interface, &[]).await?;
+            let dev = dev.open().await?;
+            let (tx, rx) = upc::host::connect(dev, tag.interface, &[]).await?;
 
-            Ok(TxRxBox::new(tx.into_sink(), rx.into_stream().map_ok(|p| p.freeze())).into())
+            Ok(TxRxBox::new(tx.into_sink(), rx.into_stream()).into())
         }
     }
 }

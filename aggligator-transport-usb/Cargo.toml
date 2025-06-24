@@ -1,6 +1,6 @@
 [package]
 name = "aggligator-transport-usb"
-version = "0.3.1"
+version = "0.4.0-beta1"
 description = "Aggligator transport: USB"
 categories = ["asynchronous", "network-programming"]
 keywords = ["aggligator", "aggligator-transport"]
@@ -13,19 +13,19 @@ repository.workspace = true
 
 [features]
 default = ["host"]
-host = ["upc/host", "rusb"]
+host = ["upc/host", "dep:nusb"]
 device = ["upc/device", "usb-gadget"]
 
 [dependencies]
-aggligator = { version = "0.9.4", path = "../aggligator" }
+aggligator = { version = "0.9.6", path = "../aggligator" }
 
 async-trait = { workspace = true }
 futures = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true, features = ["macros"] }
 
-rusb = { version = "0.9", optional = true }
-upc = { version = "0.7.1", optional = true }
+nusb = { version = "=0.2.0-beta.2", optional = true }
+upc = { version = "=0.8.0-beta1", optional = true }
 usb-gadget = { version = "0.7", optional = true }
 
 [package.metadata.docs.rs]
