@@ -12,7 +12,7 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = []
+default = ["usb-host"]
 bluer = ["dep:aggligator-transport-bluer"]
 usb-device = ["aggligator-transport-usb/device"]
 usb-host = ["aggligator-transport-usb/host"]
