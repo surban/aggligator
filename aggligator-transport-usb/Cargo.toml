@@ -6,7 +6,7 @@ categories = ["asynchronous", "network-programming"]
 keywords = ["aggligator", "aggligator-transport"]
 readme = "README.md"
 edition.workspace = true
-rust-version = "1.83"
+rust-version = "1.85"
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -25,7 +25,7 @@ tracing = { workspace = true }
 tokio = { workspace = true, features = ["macros"] }
 
 nusb = { version = "=0.2.0-beta.2", optional = true }
-upc = { version = "=0.8.0-beta1", optional = true }
+upc = { version = "=0.8.0-beta2", optional = true }
 usb-gadget = { version = "0.7", optional = true }
 
 [package.metadata.docs.rs]

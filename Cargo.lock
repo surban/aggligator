@@ -2462,9 +2462,9 @@ checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
 name = "upc"
-version = "0.8.0-beta1"
+version = "0.8.0-beta2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52e5af14637a5b46df226ff4a96806fb77ba45e8b93be4f748202754d0127e37"
+checksum = "6dcce43fb6c6bce93a6f4fd88a3005f0a20065a4e5d59ff05a6886708d79d7b5"
 dependencies = [
  "bytes",
  "futures",
