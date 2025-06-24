@@ -345,16 +345,16 @@ impl ClientCli {
                                iface: &aggligator_transport_usb::InterfaceInfo| {
                 dev.vendor_id == usb::VID
                     && dev.product_id == usb::PID
-                    && dev.manufacturer == usb::MANUFACTURER
-                    && dev.product == usb::PRODUCT
-                    && dev.serial_number == filter_serial
+                    && dev.manufacturer.as_deref() == Some(usb::MANUFACTURER)
+                    && dev.product.as_deref() == Some(usb::PRODUCT)
+                    && dev.serial_number.as_deref() == Some(filter_serial.as_str())
                     && dev.class_code == usb::CLASS
                     && dev.sub_class_code == usb::SUB_CLASS
                     && dev.protocol_code == usb::PROTOCOL
                     && iface.class_code == usb::INTERFACE_CLASS
                     && iface.sub_class_code == usb::INTERFACE_SUB_CLASS
                     && iface.protocol_code == usb::INTERFACE_PROTOCOL
-                    && iface.description == usb::INTERFACE_NAME
+                    && iface.description.as_deref() == Some(usb::INTERFACE_NAME)
             };
             let usb_connector =
                 aggligator_transport_usb::UsbConnector::new(filter).context("cannot initialize USB")?;

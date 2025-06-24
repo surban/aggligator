@@ -225,16 +225,17 @@ impl ClientCli {
                               iface: &aggligator_transport_usb::InterfaceInfo| {
                             dev.vendor_id == usb::VID
                                 && dev.product_id == usb::PID
-                                && dev.manufacturer == usb::MANUFACTURER
-                                && dev.product == usb::PRODUCT
-                                && (dev.serial_number == filter_serial || filter_serial == "-")
+                                && dev.manufacturer.as_deref() == Some(usb::MANUFACTURER)
+                                && dev.product.as_deref() == Some(usb::PRODUCT)
+                                && (dev.serial_number.as_deref() == Some(filter_serial.as_str())
+                                    || filter_serial == "-")
                                 && dev.class_code == usb::CLASS
                                 && dev.sub_class_code == usb::SUB_CLASS
                                 && dev.protocol_code == usb::PROTOCOL
                                 && iface.class_code == usb::INTERFACE_CLASS
                                 && iface.sub_class_code == usb::INTERFACE_SUB_CLASS
                                 && iface.protocol_code == usb::INTERFACE_PROTOCOL
-                                && iface.description == filter_interface_name
+                                && iface.description.as_deref() == Some(filter_interface_name.as_str())
                         };
 
                     match aggligator_transport_usb::UsbConnector::new(filter) {
