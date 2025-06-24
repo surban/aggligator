@@ -173,9 +173,9 @@ pub struct SpeedCli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Raw speed test client.
+    /// Aggregated links speed test client.
     Client(ClientCli),
-    /// Raw speed test server.
+    /// Aggregated links speed test server.
     Server(ServerCli),
     /// Shows the default configuration.
     ShowCfg,
