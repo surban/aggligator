@@ -189,6 +189,25 @@ impl TcpConnector {
     /// Host name resolution is retried periodically, thus DNS updates will be taken
     /// into account without the need to recreate this transport.
     pub async fn new(hosts: impl IntoIterator<Item = String>, default_port: u16) -> Result<Self> {
+        let this = Self::unresolved(hosts, default_port).await?;
+
+        let addrs = this.resolve().await;
+        if addrs.is_empty() {
+            return Err(Error::new(ErrorKind::NotFound, "cannot resolve IP address of host"));
+        }
+        tracing::info!("{} resolves to: {:?}", &this, addrs);
+
+        Ok(this)
+    }
+
+    /// Create a new TCP transport for outgoing connections without checking that at least one host can be resolved.
+    ///
+    /// `hosts` can contain IP addresses and hostnames, including port numbers.
+    /// If an entry does not specify a port number, the `default_port` is used.
+    ///
+    /// Host name resolution is retried periodically, thus DNS updates will be taken
+    /// into account without the need to recreate this transport.
+    pub async fn unresolved(hosts: impl IntoIterator<Item = String>, default_port: u16) -> Result<Self> {
         let mut hosts: Vec<_> = hosts.into_iter().collect();
 
         if hosts.is_empty() {
@@ -201,20 +220,12 @@ impl TcpConnector {
             }
         }
 
-        let this = Self {
+        Ok(Self {
             hosts,
             ip_version: IpVersion::Both,
             resolve_interval: Duration::from_secs(10),
             link_filter: TcpLinkFilter::default(),
-        };
-
-        let addrs = this.resolve().await;
-        if addrs.is_empty() {
-            return Err(Error::new(ErrorKind::NotFound, "cannot resolve IP address of host"));
-        }
-        tracing::info!("{} resolves to: {:?}", &this, addrs);
-
-        Ok(this)
+        })
     }
 
     /// Sets the IP version used for connecting.
