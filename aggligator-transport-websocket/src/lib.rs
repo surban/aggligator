@@ -143,6 +143,24 @@ impl WebSocketConnector {
     /// Host name resolution is retried periodically, thus DNS updates will be taken
     /// into account without the need to recreate this transport.
     pub async fn new(urls: impl IntoIterator<Item = impl AsRef<str>>) -> Result<Self> {
+        let this = Self::unresolved(urls).await?;
+
+        let addrs = this.resolve().await;
+        if addrs.values().all(|addrs| addrs.is_empty()) {
+            return Err(Error::new(ErrorKind::NotFound, "cannot resolve IP address of any URL"));
+        }
+        tracing::info!("URLs resolve to: {:?}", &addrs);
+
+        Ok(this)
+    }
+
+    /// Create a new WebSocket transport for outgoing connections ut checking that at least one URL can be resolved.
+    ///
+    /// `urls` contains one or more WebSocket URLs of the target.
+    ///
+    /// Host name resolution is retried periodically, thus DNS updates will be taken
+    /// into account without the need to recreate this transport.
+    pub async fn unresolved(urls: impl IntoIterator<Item = impl AsRef<str>>) -> Result<Self> {
         let urls = urls
             .into_iter()
             .map(|url| url.as_ref().parse::<Url>())
@@ -161,21 +179,13 @@ impl WebSocketConnector {
             }
         }
 
-        let this = Self {
+        Ok(Self {
             urls,
             ip_version: IpVersion::Both,
             resolve_interval: Duration::from_secs(10),
             connector: None,
             web_socket_config: None,
-        };
-
-        let addrs = this.resolve().await;
-        if addrs.values().all(|addrs| addrs.is_empty()) {
-            return Err(Error::new(ErrorKind::NotFound, "cannot resolve IP address of any URL"));
-        }
-        tracing::info!("URLs resolve to: {:?}", &addrs);
-
-        Ok(this)
+        })
     }
 
     /// Sets the IP version used for connecting.
