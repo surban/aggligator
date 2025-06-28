@@ -648,7 +648,7 @@ impl ServerCli {
                 .serve(router.into_make_service_with_connect_info::<SocketAddr>())
                 .await
             {
-                eprintln!("Cannot listen on WebSocket {}: {err}", websocket_addr);
+                eprintln!("Cannot listen on WebSocket {websocket_addr}: {err}");
             }
         });
 
