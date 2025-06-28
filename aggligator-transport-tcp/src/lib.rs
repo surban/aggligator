@@ -84,7 +84,7 @@ impl IpVersion {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TcpLinkTag {
     /// Local interface name.
-    pub interface: Vec<u8>,
+    pub interface: Option<Vec<u8>>,
     /// Remote address.
     pub remote: SocketAddr,
     /// Link direction.
@@ -97,14 +97,19 @@ impl fmt::Display for TcpLinkTag {
             Direction::Incoming => "<-",
             Direction::Outgoing => "->",
         };
-        write!(f, "{:16} {dir} {}", String::from_utf8_lossy(&self.interface), self.remote)
+        write!(
+            f,
+            "{:16} {dir} {}",
+            String::from_utf8_lossy(self.interface.as_deref().unwrap_or_default()),
+            self.remote
+        )
     }
 }
 
 impl TcpLinkTag {
     /// Creates a new link tag for a TCP link.
-    pub fn new(interface: &[u8], remote: SocketAddr, direction: Direction) -> Self {
-        Self { interface: interface.to_vec(), remote, direction }
+    pub fn new(interface: Option<&[u8]>, remote: SocketAddr, direction: Direction) -> Self {
+        Self { interface: interface.map(|iface| iface.to_vec()), remote, direction }
     }
 }
 
@@ -118,7 +123,7 @@ impl LinkTag for TcpLinkTag {
     }
 
     fn user_data(&self) -> Vec<u8> {
-        self.interface.clone()
+        self.interface.clone().unwrap_or_default()
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -166,6 +171,7 @@ pub struct TcpConnector {
     ip_version: IpVersion,
     resolve_interval: Duration,
     link_filter: TcpLinkFilter,
+    multi_interface: bool,
 }
 
 impl fmt::Display for TcpConnector {
@@ -225,6 +231,7 @@ impl TcpConnector {
             ip_version: IpVersion::Both,
             resolve_interval: Duration::from_secs(10),
             link_filter: TcpLinkFilter::default(),
+            multi_interface: !cfg!(target_os = "android"),
         })
     }
 
@@ -243,6 +250,19 @@ impl TcpConnector {
         self.link_filter = link_filter;
     }
 
+    /// Sets whether all available local interfaces should be used for connecting.
+    ///
+    /// If this is true (default for non-Android platforms), a separate link is
+    /// established for each pair of server IP and local interface. Each outgoing socket
+    /// is explicitly bound to a local interface.
+    ///
+    /// If this is false (default for Android platform), one link is established for
+    /// each server IP. The operating system automatically assigns a local interface
+    /// for the outgoing socket.
+    pub fn set_multi_interface(&mut self, multi_interface: bool) {
+        self.multi_interface = multi_interface;
+    }
+
     /// Resolve target to socket addresses.
     async fn resolve(&self) -> Vec<SocketAddr> {
         util::resolve_hosts(&self.hosts, self.ip_version).await
@@ -257,12 +277,20 @@ impl ConnectingTransport for TcpConnector {
 
     async fn link_tags(&self, tx: watch::Sender<HashSet<LinkTagBox>>) -> Result<()> {
         loop {
-            let interfaces = util::local_interfaces()?;
+            let interfaces = match self.multi_interface {
+                true => Some(util::local_interfaces()?),
+                false => None,
+            };
 
             let mut tags: HashSet<LinkTagBox> = HashSet::new();
             for addr in self.resolve().await {
-                for iface in util::interface_names_for_target(&interfaces, addr) {
-                    let tag = TcpLinkTag::new(&iface, addr, Direction::Outgoing);
+                if self.multi_interface {
+                    for iface in util::interface_names_for_target(interfaces.as_deref().unwrap(), addr) {
+                        let tag = TcpLinkTag::new(Some(&iface), addr, Direction::Outgoing);
+                        tags.insert(Box::new(tag));
+                    }
+                } else {
+                    let tag = TcpLinkTag::new(None, addr, Direction::Outgoing);
                     tags.insert(Box::new(tag));
                 }
             }
@@ -288,7 +316,9 @@ impl ConnectingTransport for TcpConnector {
             IpAddr::V6(_) => TcpSocket::new_v6(),
         }?;
 
-        util::bind_socket_to_interface(&socket, &tag.interface, tag.remote.ip())?;
+        if let Some(interface) = &tag.interface {
+            util::bind_socket_to_interface(&socket, interface, tag.remote.ip())?;
+        }
 
         let stream = socket.connect(tag.remote).await?;
         let _ = stream.set_nodelay(true);
@@ -309,7 +339,7 @@ impl ConnectingTransport for TcpConnector {
             },
             new_tag.remote,
             String::from_utf8_lossy(new.remote_user_data()),
-            String::from_utf8_lossy(&new_tag.interface)
+            String::from_utf8_lossy(new_tag.interface.as_deref().unwrap_or(b"any interface"))
         );
 
         match existing.iter().find(|link| {
@@ -479,7 +509,7 @@ impl AcceptingTransport for TcpAcceptor {
 
             // Build tag.
             tracing::debug!("Accepted TCP connection from {remote} on {}", String::from_utf8_lossy(&interface));
-            let tag = TcpLinkTag { interface, remote, direction: Direction::Incoming };
+            let tag = TcpLinkTag::new(Some(&interface), remote, Direction::Incoming);
 
             // Configure socket.
             let _ = socket.set_nodelay(true);
