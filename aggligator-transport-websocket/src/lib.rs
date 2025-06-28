@@ -53,7 +53,7 @@ static NAME: &str = "websocket";
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct OutgoingWebSocketLinkTag {
     /// Local interface name.
-    pub interface: Vec<u8>,
+    pub interface: Option<Vec<u8>>,
     /// Remote socket address.
     pub remote: SocketAddr,
     /// Remote URL.
@@ -64,7 +64,13 @@ pub struct OutgoingWebSocketLinkTag {
 
 impl fmt::Display for OutgoingWebSocketLinkTag {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{} -> {} ({})", String::from_utf8_lossy(&self.interface), &self.remote, &self.url)
+        write!(
+            f,
+            "{} -> {} ({})",
+            String::from_utf8_lossy(self.interface.as_deref().unwrap_or_default()),
+            &self.remote,
+            &self.url
+        )
     }
 }
 
@@ -78,7 +84,7 @@ impl LinkTag for OutgoingWebSocketLinkTag {
     }
 
     fn user_data(&self) -> Vec<u8> {
-        self.interface.clone()
+        self.interface.clone().unwrap_or_default()
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -109,6 +115,7 @@ pub struct WebSocketConnector {
     resolve_interval: Duration,
     connector: Option<Connector>,
     web_socket_config: Option<WebSocketConfig>,
+    multi_interface: bool,
 }
 
 impl fmt::Debug for WebSocketConnector {
@@ -118,6 +125,7 @@ impl fmt::Debug for WebSocketConnector {
             .field("ip_version", &self.ip_version)
             .field("resolve_interval", &self.resolve_interval)
             .field("web_socket_config", &self.web_socket_config)
+            .field("multi_interface", &self.multi_interface)
             .finish()
     }
 }
@@ -185,6 +193,7 @@ impl WebSocketConnector {
             resolve_interval: Duration::from_secs(10),
             connector: None,
             web_socket_config: None,
+            multi_interface: !cfg!(target_os = "android"),
         })
     }
 
@@ -210,6 +219,19 @@ impl WebSocketConnector {
         self.web_socket_config = web_socket_config;
     }
 
+    /// Sets whether all available local interfaces should be used for connecting.
+    ///
+    /// If this is true (default for non-Android platforms), a separate link is
+    /// established for each pair of server IP and local interface. Each outgoing socket
+    /// is explicitly bound to a local interface.
+    ///
+    /// If this is false (default for Android platform), one link is established for
+    /// each server IP. The operating system automatically assigns a local interface
+    /// for the outgoing socket.
+    pub fn set_multi_interface(&mut self, multi_interface: bool) {
+        self.multi_interface = multi_interface;
+    }
+
     /// Resolve URLs to socket addresses.
     async fn resolve(&self) -> HashMap<&Url, Vec<SocketAddr>> {
         let mut url_addrs = HashMap::new();
@@ -233,14 +255,27 @@ impl ConnectingTransport for WebSocketConnector {
 
     async fn link_tags(&self, tx: watch::Sender<HashSet<LinkTagBox>>) -> Result<()> {
         loop {
-            let interfaces = util::local_interfaces()?;
+            let interfaces = match self.multi_interface {
+                true => Some(util::local_interfaces()?),
+                false => None,
+            };
 
             let mut tags: HashSet<LinkTagBox> = HashSet::new();
             for (url, addrs) in self.resolve().await {
                 for addr in addrs {
-                    for interface in util::interface_names_for_target(&interfaces, addr) {
+                    if self.multi_interface {
+                        for interface in util::interface_names_for_target(interfaces.as_deref().unwrap(), addr) {
+                            let tag = OutgoingWebSocketLinkTag {
+                                interface: Some(interface),
+                                remote: addr,
+                                url: url.to_string(),
+                                tls: url.scheme() == "wss",
+                            };
+                            tags.insert(Box::new(tag));
+                        }
+                    } else {
                         let tag = OutgoingWebSocketLinkTag {
-                            interface,
+                            interface: None,
                             remote: addr,
                             url: url.to_string(),
                             tls: url.scheme() == "wss",
@@ -271,7 +306,11 @@ impl ConnectingTransport for WebSocketConnector {
             IpAddr::V4(_) => TcpSocket::new_v4(),
             IpAddr::V6(_) => TcpSocket::new_v6(),
         }?;
-        util::bind_socket_to_interface(&socket, &tag.interface, tag.remote.ip())?;
+
+        if let Some(interface) = &tag.interface {
+            util::bind_socket_to_interface(&socket, interface, tag.remote.ip())?;
+        }
+
         let stream = socket.connect(tag.remote).await?;
         let _ = stream.set_nodelay(true);
 
@@ -321,7 +360,7 @@ impl ConnectingTransport for WebSocketConnector {
             },
             new_tag.remote,
             String::from_utf8_lossy(new.remote_user_data()),
-            String::from_utf8_lossy(&new_tag.interface)
+            String::from_utf8_lossy(new_tag.interface.as_deref().unwrap_or(b"any interface"))
         );
 
         match existing.iter().find(|link| {
