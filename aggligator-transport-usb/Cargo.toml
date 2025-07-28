@@ -1,6 +1,6 @@
 [package]
 name = "aggligator-transport-usb"
-version = "0.4.0"
+version = "0.5.0"
 description = "Aggligator transport: USB"
 categories = ["asynchronous", "network-programming"]
 keywords = ["aggligator", "aggligator-transport"]

@@ -1,6 +1,6 @@
 [package]
 name = "aggligator-transport-websocket"
-version = "0.4.3"
+version = "0.5.0"
 description = "Aggligator transport: WebSocket"
 categories = ["asynchronous", "network-programming"]
 keywords = ["aggligator", "aggligator-transport"]
@@ -22,9 +22,9 @@ tokio = { workspace = true, features = ["net", "sync"] }
 
 axum = { version = "0.8", features = ["ws"] }
 bytes = "1"
-tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.27", features = ["rustls-tls-webpki-roots"] }
 tokio-util = { version = "0.7", features = ["io"] }
-tungstenite = "0.26"
+tungstenite = "0.27"
 url = "2"
 
 [package.metadata.docs.rs]

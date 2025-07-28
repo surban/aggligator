@@ -1,6 +1,6 @@
 [package]
 name = "aggligator-transport-tcp"
-version = "0.2.2"
+version = "0.2.3"
 description = "Aggligator transport: TCP"
 categories = ["asynchronous", "network-programming"]
 keywords = ["aggligator", "aggligator-transport"]
@@ -25,7 +25,7 @@ tracing = { workspace = true }
 tokio = { workspace = true, features = ["net"] }
 
 network-interface = "2"
-socket2 = "0.5"
+socket2 = "0.6.0"
 
 [package.metadata.docs.rs]
 all-features = true

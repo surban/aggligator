@@ -12,7 +12,7 @@
 
 use async_trait::async_trait;
 use bimap::BiHashMap;
-use futures::{StreamExt, TryStreamExt};
+use futures::StreamExt;
 use std::{
     any::Any,
     cmp::Ordering,
@@ -229,7 +229,7 @@ impl ConnectingTransport for WebUsbConnector {
             let hnd = Rc::new(dev.open().await?);
             let (tx, rx) = upc::host::connect(hnd, tag.interface, &[]).await?;
 
-            Ok(TxRxBox::new(tx.into_sink(), rx.into_stream().map_ok(|p| p.freeze())).into())
+            Ok(TxRxBox::new(tx.into_sink(), rx.into_stream()).into())
         })
         .await
     }
