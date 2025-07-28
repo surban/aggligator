@@ -1,6 +1,6 @@
 [package]
 name = "aggligator-transport-usb"
-version = "0.4.0-beta2"
+version = "0.4.0"
 description = "Aggligator transport: USB"
 categories = ["asynchronous", "network-programming"]
 keywords = ["aggligator", "aggligator-transport"]
@@ -24,8 +24,8 @@ futures = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true, features = ["macros"] }
 
-nusb = { version = "=0.2.0-beta.2", optional = true }
-upc = { version = "=0.8.0-beta5", optional = true }
+nusb = { version = "0.2", optional = true }
+upc = { version = "0.8", optional = true }
 usb-gadget = { version = "0.7", optional = true }
 
 [package.metadata.docs.rs]
