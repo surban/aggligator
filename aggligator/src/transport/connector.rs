@@ -16,6 +16,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{broadcast, mpsc, oneshot, watch, RwLock};
+use tracing::Instrument;
 
 use super::{BoxControl, BoxLink, BoxLinkError, BoxTask, LinkTag, LinkTagBox};
 use crate::{
@@ -127,7 +128,7 @@ impl ConnectorBuilder {
         });
 
         // Run link aggregator task for connection.
-        exec::spawn(task.run());
+        exec::spawn(task.run().in_current_span());
 
         // Set up channels.
         let (transport_tx, transport_rx) = mpsc::unbounded_channel();
@@ -136,16 +137,19 @@ impl ConnectorBuilder {
         let (disabled_tags_tx, disabled_tags_rx) = watch::channel(HashSet::new());
 
         // Start connector task managing all transports.
-        exec::spawn(Connector::task(
-            control.clone(),
-            active_transports,
-            transport_rx,
-            tags_tx,
-            disabled_tags_rx,
-            error_tx,
-            reconnect_delay,
-            wrappers,
-        ));
+        exec::spawn(
+            Connector::task(
+                control.clone(),
+                active_transports,
+                transport_rx,
+                tags_tx,
+                disabled_tags_rx,
+                error_tx,
+                reconnect_delay,
+                wrappers,
+            )
+            .in_current_span(),
+        );
 
         Connector { control, outgoing: Some(outgoing), transport_tx, tags_rx, error_rx, disabled_tags_tx }
     }
@@ -242,7 +246,7 @@ impl Connector {
 
     /// Task for handling all transports.
     #[allow(clippy::too_many_arguments)]
-    #[tracing::instrument(level="debug", skip_all, fields(id=?control.id()))]
+    #[tracing::instrument(name = "aggligator::connector", level = "info", skip_all, fields(conn_id =? control.id()))]
     async fn task(
         control: BoxControl, active_transports: Arc<RwLock<Vec<Weak<dyn ConnectingTransport>>>>,
         mut transport_rx: mpsc::UnboundedReceiver<TransportPack>, tags_tx: watch::Sender<HashSet<LinkTagBox>>,
@@ -327,7 +331,7 @@ impl Connector {
     }
 
     /// Task for handling a transport.
-    #[tracing::instrument(level="debug", skip_all, fields(transport=transport_pack.transport.name()))]
+    #[tracing::instrument(level = "debug", skip_all, fields(transport = transport_pack.transport.name()))]
     async fn transport_task(
         transport_pack: TransportPack, control: BoxControl, tags_fw_tx: watch::Sender<HashSet<LinkTagBox>>,
         mut disabled_tags_rx: watch::Receiver<HashSet<LinkTagBox>>,
@@ -425,13 +429,13 @@ impl Connector {
                         let link = match control.add(tx, rx, tag.clone(), &tag.user_data()).await {
                             Ok(link) => link,
                             Err(err) => {
-                                tracing::debug!("adding link for tag {tag} to connection failed: {err}");
+                                tracing::warn!("adding link for tag {tag} to connection failed: {err}");
                                 let _ = link_error_tx.send(BoxLinkError::outgoing(conn_id, &tag, err.into()));
                                 sleep(reconnect_delay).await;
                                 return (tag, None);
                             }
                         };
-                        tracing::debug!("link for tag {tag} connected");
+                        tracing::info!("link for tag {tag} connected");
 
                         // Disconnect link when transport is removed.
                         struct DisconnectLink<'a>(&'a BoxLink);
@@ -445,7 +449,7 @@ impl Connector {
                         // Wait for disconnection and publish reason.
                         let sleep_until = sleep(reconnect_delay);
                         let reason = link.disconnected().await;
-                        tracing::debug!("link for tag {tag} disconnected: {reason}");
+                        tracing::info!("link for tag {tag} disconnected: {reason}");
                         let _ = link_error_tx.send(BoxLinkError::outgoing(conn_id, &tag, reason.clone().into()));
                         sleep_until.await;
 
@@ -483,7 +487,7 @@ impl Connector {
         // Publish result.
         match &res {
             Ok(()) => tracing::debug!("transport terminated"),
-            Err(err) => tracing::debug!("transport failed: {err}"),
+            Err(err) => tracing::warn!("transport {} failed: {err}", transport.name()),
         }
         let _ = result_tx.send(res);
     }

@@ -10,6 +10,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex, OwnedSemaphorePermit, RwLock, Semaphore};
+use tracing::Instrument;
 
 use super::{BoxControl, BoxLink, BoxLinkError, BoxListener, BoxServer, BoxTask, LinkError, LinkTag, LinkTagBox};
 use crate::{
@@ -118,14 +119,17 @@ impl AcceptorBuilder {
         let (error_tx, error_rx) = broadcast::channel(1024);
         let listener = Mutex::new(server.listen().unwrap());
 
-        exec::spawn(Acceptor::task(
-            server.clone(),
-            active_transports.clone(),
-            transport_rx,
-            error_tx,
-            transports_present_tx,
-            wrappers,
-        ));
+        exec::spawn(
+            Acceptor::task(
+                server.clone(),
+                active_transports.clone(),
+                transport_rx,
+                error_tx,
+                transports_present_tx,
+                wrappers,
+            )
+            .in_current_span(),
+        );
 
         Acceptor {
             server,
@@ -271,7 +275,7 @@ impl Acceptor {
         });
 
         // Run server task.
-        exec::spawn(task.run());
+        exec::spawn(task.run().in_current_span());
 
         tracing::debug!("accepted incoming connection {:?}", control.id());
         Ok((channel, control))
@@ -283,7 +287,7 @@ impl Acceptor {
     }
 
     /// Task managing all listening transports.
-    #[tracing::instrument(level="debug", skip_all, fields(id=?server.id()))]
+    #[tracing::instrument(name = "aggligator::acceptor", level = "info", skip_all, fields(server_id =? server.id()))]
     async fn task(
         server: BoxServer, active_transports: Arc<RwLock<Vec<Weak<dyn AcceptingTransport>>>>,
         mut transport_rx: mpsc::UnboundedReceiver<AcceptingTransportPack>,
@@ -338,7 +342,7 @@ impl Acceptor {
     }
 
     /// Task managing a listening transport.
-    #[tracing::instrument(level="debug", skip_all, fields(transport=transport.transport.name()))]
+    #[tracing::instrument(level = "debug", skip_all, fields(transport = transport.transport.name()))]
     async fn transport_task(
         server: BoxServer, transport: AcceptingTransportPack, link_error_tx: broadcast::Sender<BoxLinkError>,
         wrappers: Arc<Vec<BoxAcceptingWrapper>>,
@@ -392,12 +396,12 @@ impl Acceptor {
                 let link = match server.add_incoming(tx, rx, tag.clone(), &user_data).await {
                     Ok(link) => link,
                     Err(err) => {
-                        tracing::debug!("adding link for tag {tag} to connection failed: {err}");
+                        tracing::warn!("adding link for tag {tag} to connection failed: {err}");
                         let _ = link_error_tx.send(LinkError::incoming(&tag, err.into()));
                         return;
                     }
                 };
-                tracing::debug!("link for tag {tag} connected");
+                tracing::info!("link for tag {tag} connected to {:?}", link.conn_id());
 
                 // Disconnect link when transport is removed.
                 struct DisconnectLink<'a>(&'a BoxLink);
@@ -410,14 +414,14 @@ impl Acceptor {
 
                 // Wait for disconnection and publish reason.
                 let reason = link.disconnected().await;
-                tracing::debug!("link for tag {tag} disconnected: {reason}");
+                tracing::info!("link for tag {tag} disconnected: {reason}");
                 let _ = link_error_tx.send(BoxLinkError::incoming(&tag, reason.into()));
             };
             accepting_tasks.push(task);
         };
 
         if let Err(err) = &res {
-            tracing::warn!("transport failed: {err}");
+            tracing::warn!("transport {} failed: {err}", transport.name());
         }
 
         let _ = result_tx.send(res);

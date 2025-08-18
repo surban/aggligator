@@ -386,7 +386,8 @@ where
     ///
     /// This returns when the connection has been terminated.
     /// Cancelling the returned future leads to immediate termination of the connection.
-    #[tracing::instrument(level = "debug")]
+    #[tracing::instrument(name = "aggligator::connection", level = "info", skip_all, 
+                          fields(conn_id =? self.conn_id, dir =% self.direction), ret)]
     pub async fn run(mut self) -> Result<(), TaskError> {
         tracing::debug!("link aggregator task starting");
         self.start_time = Instant::now();
@@ -902,7 +903,7 @@ where
                     self.flushed_tx = Some(tx);
                 }
                 TaskEvent::ConfirmTimedOut(id) => {
-                    tracing::warn!("acknowledgement timeout on link {id}");
+                    tracing::debug!("acknowledgement timeout on link {id}");
                     self.unconfirm_link(id, NotWorkingReason::AckTimeout);
                 }
                 TaskEvent::Resend(packet) => {
@@ -1014,7 +1015,7 @@ where
                         .enumerate()
                         .filter_map(|(id, link_opt)| match link_opt {
                             Some(link) if link.unconfirmed.is_none() && link.roundtrip > max_ping => {
-                                tracing::warn!(
+                                tracing::debug!(
                                     "unconfirming link {id} due to slow ping of {} ms",
                                     link.roundtrip.as_millis()
                                 );
