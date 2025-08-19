@@ -19,7 +19,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "aggligator"
-version = "0.9.6"
+version = "0.9.7"
 dependencies = [
  "async-trait",
  "atomic_refcell",
@@ -49,7 +49,7 @@ dependencies = [
 
 [[package]]
 name = "aggligator-monitor"
-version = "0.9.5"
+version = "0.9.7"
 dependencies = [
  "aggligator",
  "crossterm",
@@ -74,7 +74,7 @@ dependencies = [
 
 [[package]]
 name = "aggligator-transport-tcp"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "aggligator",
  "aggligator-wrapper-tls",
@@ -88,7 +88,7 @@ dependencies = [
 
 [[package]]
 name = "aggligator-transport-usb"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "aggligator",
  "async-trait",
@@ -102,7 +102,7 @@ dependencies = [
 
 [[package]]
 name = "aggligator-transport-websocket"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "aggligator",
  "aggligator-transport-tcp",
@@ -120,7 +120,7 @@ dependencies = [
 
 [[package]]
 name = "aggligator-util"
-version = "0.18.6"
+version = "0.18.7"
 dependencies = [
  "aggligator",
  "aggligator-monitor",

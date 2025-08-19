@@ -1,6 +1,6 @@
 [package]
 name = "aggligator-transport-tcp"
-version = "0.2.3"
+version = "0.2.4"
 description = "Aggligator transport: TCP"
 categories = ["asynchronous", "network-programming"]
 keywords = ["aggligator", "aggligator-transport"]
@@ -16,7 +16,7 @@ default = ["tls"]
 tls = ["dep:aggligator-wrapper-tls"]
 
 [dependencies]
-aggligator = { version = "0.9.6", path = "../aggligator" }
+aggligator = { version = "0.9.7", path = "../aggligator" }
 aggligator-wrapper-tls = { version = "0.2.0", path = "../aggligator-wrapper-tls", optional = true }
 
 async-trait = { workspace = true }
