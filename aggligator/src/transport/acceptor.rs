@@ -277,7 +277,7 @@ impl Acceptor {
         // Run server task.
         exec::spawn(task.run().in_current_span());
 
-        tracing::debug!("accepted incoming connection {:?}", control.id());
+        tracing::debug!(conn_id =? control.id(), "accepted incoming connection");
         Ok((channel, control))
     }
 
@@ -342,7 +342,7 @@ impl Acceptor {
     }
 
     /// Task managing a listening transport.
-    #[tracing::instrument(level = "debug", skip_all, fields(transport = transport.transport.name()))]
+    #[tracing::instrument(name = "transport", level = "info", skip_all, fields(name = transport.transport.name()))]
     async fn transport_task(
         server: BoxServer, transport: AcceptingTransportPack, link_error_tx: broadcast::Sender<BoxLinkError>,
         wrappers: Arc<Vec<BoxAcceptingWrapper>>,
@@ -364,7 +364,7 @@ impl Acceptor {
                 Ok(()) = &mut remove_rx => break Ok(()),
             };
 
-            tracing::debug!("accepted transport connection for tag {tag}");
+            tracing::debug!(%tag, "accepted transport connection");
             if tag.transport_name() != transport.name() {
                 break Err(Error::other("link tag transport name mismatch"));
             }
@@ -377,12 +377,12 @@ impl Acceptor {
                 // Apply wrappers to IO stream.
                 for wrapper in wrappers {
                     let name = wrapper.name();
-                    tracing::debug!("wrapping tag {tag} in {name}");
+                    tracing::debug!(%tag, wrapper =% name, "wrapping");
 
                     match wrapper.wrap(stream_box).await {
                         Ok(wrapped) => stream_box = wrapped,
                         Err(err) => {
-                            tracing::debug!("wrapping tag {tag} in {name} failed: {err}");
+                            tracing::debug!(%tag, wrapper =% name, %err, "wrapping failed");
                             let _ = link_error_tx.send(BoxLinkError::incoming(&tag, err));
                             return;
                         }
@@ -390,18 +390,18 @@ impl Acceptor {
                 }
 
                 // Add link to aggregated connection.
-                tracing::debug!("adding link for tag {tag} to connection");
+                tracing::debug!(%tag, "adding link to connection");
                 let user_data = tag.user_data();
                 let TxRxBox { tx, rx } = stream_box.into_tx_rx();
                 let link = match server.add_incoming(tx, rx, tag.clone(), &user_data).await {
                     Ok(link) => link,
                     Err(err) => {
-                        tracing::warn!("adding link for tag {tag} to connection failed: {err}");
+                        tracing::warn!(%tag, %err, "adding link to connection failed");
                         let _ = link_error_tx.send(LinkError::incoming(&tag, err.into()));
                         return;
                     }
                 };
-                tracing::info!("link for tag {tag} connected to {:?}", link.conn_id());
+                tracing::info!(link_id =? link.id(), %tag, conn_id =? link.conn_id(), "link connected");
 
                 // Disconnect link when transport is removed.
                 struct DisconnectLink<'a>(&'a BoxLink);
@@ -414,14 +414,14 @@ impl Acceptor {
 
                 // Wait for disconnection and publish reason.
                 let reason = link.disconnected().await;
-                tracing::info!("link for tag {tag} disconnected: {reason}");
+                tracing::info!(link_id =? link.id(), %tag, %reason, "link disconnected");
                 let _ = link_error_tx.send(BoxLinkError::incoming(&tag, reason.into()));
             };
             accepting_tasks.push(task);
         };
 
         if let Err(err) = &res {
-            tracing::warn!("transport {} failed: {err}", transport.name());
+            tracing::warn!(%err, "transport failed");
         }
 
         let _ = result_tx.send(res);

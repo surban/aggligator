@@ -331,7 +331,7 @@ impl Connector {
     }
 
     /// Task for handling a transport.
-    #[tracing::instrument(level = "debug", skip_all, fields(transport = transport_pack.transport.name()))]
+    #[tracing::instrument(name = "transport", level = "info", skip_all, fields(name = transport_pack.transport.name()))]
     async fn transport_task(
         transport_pack: TransportPack, control: BoxControl, tags_fw_tx: watch::Sender<HashSet<LinkTagBox>>,
         mut disabled_tags_rx: watch::Receiver<HashSet<LinkTagBox>>,
@@ -391,16 +391,16 @@ impl Connector {
                         continue;
                     }
 
-                    tracing::debug!("connecting tag: {tag}");
+                    tracing::debug!(%tag, "connecting tag");
                     connecting_tags.insert(tag.clone());
 
                     let connect_task = async {
                         // Establish transport connection.
-                        tracing::debug!("establishing transport connection for tag {tag}");
+                        tracing::debug!(%tag, "establishing transport connection for tag");
                         let mut stream_box = match transport.connect(&*tag).await {
                             Ok(stream_box) => stream_box,
                             Err(err) => {
-                                tracing::debug!("connecting transport for tag {tag} failed: {err}");
+                                tracing::debug!(%tag, %err, "connecting transport for tag failed");
                                 let _ = link_error_tx.send(BoxLinkError::outgoing(conn_id, &tag, err));
                                 sleep(reconnect_delay).await;
                                 return (tag, None);
@@ -410,12 +410,12 @@ impl Connector {
                         // Apply wrappers to IO stream.
                         for wrapper in &*wrappers {
                             let name = wrapper.name();
-                            tracing::debug!("wrapping tag {tag} in {name}");
+                            tracing::debug!(%tag, wrapper =% name, "wrapping tag");
 
                             match wrapper.wrap(stream_box).await {
                                 Ok(wrapped) => stream_box = wrapped,
                                 Err(err) => {
-                                    tracing::debug!("wrapping tag {tag} in {name} failed: {err}");
+                                    tracing::debug!(%tag, wrapper =% name, %err, "wrapping tag failed");
                                     let _ = link_error_tx.send(BoxLinkError::outgoing(conn_id, &tag, err));
                                     sleep(reconnect_delay).await;
                                     return (tag, None);
@@ -424,18 +424,18 @@ impl Connector {
                         }
 
                         // Add link to aggregated connection.
-                        tracing::debug!("adding link for tag {tag} to connection");
+                        tracing::debug!(%tag, "adding link to connection");
                         let TxRxBox { tx, rx } = stream_box.into_tx_rx();
                         let link = match control.add(tx, rx, tag.clone(), &tag.user_data()).await {
                             Ok(link) => link,
                             Err(err) => {
-                                tracing::warn!("adding link for tag {tag} to connection failed: {err}");
+                                tracing::warn!(%tag, %err, "adding link to connection failed");
                                 let _ = link_error_tx.send(BoxLinkError::outgoing(conn_id, &tag, err.into()));
                                 sleep(reconnect_delay).await;
                                 return (tag, None);
                             }
                         };
-                        tracing::info!("link for tag {tag} connected");
+                        tracing::info!(link_id =? link.id(), %tag, "link connected");
 
                         // Disconnect link when transport is removed.
                         struct DisconnectLink<'a>(&'a BoxLink);
@@ -449,7 +449,7 @@ impl Connector {
                         // Wait for disconnection and publish reason.
                         let sleep_until = sleep(reconnect_delay);
                         let reason = link.disconnected().await;
-                        tracing::info!("link for tag {tag} disconnected: {reason}");
+                        tracing::info!(link_id =? link.id(), %tag, %reason, "link disconnected");
                         let _ = link_error_tx.send(BoxLinkError::outgoing(conn_id, &tag, reason.clone().into()));
                         sleep_until.await;
 
@@ -471,7 +471,7 @@ impl Connector {
                     connecting_tags.remove(&tag);
                     match reason {
                         Some(DisconnectReason::LinkFilter) => {
-                            tracing::debug!("blocking tag {tag}");
+                            tracing::debug!(%tag, "blocking tag");
                             link_filter_rejected_tags.insert(tag);
                         }
                         Some(_) => {
@@ -487,7 +487,7 @@ impl Connector {
         // Publish result.
         match &res {
             Ok(()) => tracing::debug!("transport terminated"),
-            Err(err) => tracing::warn!("transport {} failed: {err}", transport.name()),
+            Err(err) => tracing::warn!(%err, "transport failed"),
         }
         let _ = result_tx.send(res);
     }

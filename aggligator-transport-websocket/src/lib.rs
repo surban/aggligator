@@ -157,7 +157,7 @@ impl WebSocketConnector {
         if addrs.values().all(|addrs| addrs.is_empty()) {
             return Err(Error::new(ErrorKind::NotFound, "cannot resolve IP address of any URL"));
         }
-        tracing::info!("URLs resolve to: {:?}", &addrs);
+        tracing::info!(?addrs, "URLs initially resolved");
 
         Ok(this)
     }

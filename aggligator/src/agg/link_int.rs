@@ -276,7 +276,9 @@ where
     }
 
     /// Returns the next event for this link.
-    pub(crate) async fn event(&mut self, id: usize) -> LinkIntEvent {
+    pub(crate) async fn event(&mut self) -> LinkIntEvent {
+        let link_id = self.link_id();
+
         if let Some(err) = self.tx_error.take() {
             return LinkIntEvent::TxError(err);
         }
@@ -330,7 +332,7 @@ where
                             }
                         },
                         Err(err) => {
-                            tracing::debug!("link {id} poll ready failure: {}", err);
+                            tracing::debug!(?link_id, %err, "link poll ready failure");
                             break LinkIntEvent::TxError(err);
                         }
                     }
@@ -371,11 +373,11 @@ where
                         }
                     }
                     Some(Err(err)) => {
-                        tracing::debug!("link {id} receive failure: {}", err);
+                        tracing::debug!(?link_id, %err, "link receive failure");
                         break LinkIntEvent::RxError(err);
                     }
                     None => {
-                        tracing::debug!("link {id} receive end");
+                        tracing::debug!(?link_id, "link receive end");
                         break LinkIntEvent::RxError(io::ErrorKind::BrokenPipe.into());
                     }
                 }
@@ -422,7 +424,7 @@ where
         let data_len = data.as_ref().map(|data| data.len()).unwrap_or_default();
 
         if let Err(err) = self.tx.start_send_unpin(encoded) {
-            tracing::debug!("link send failure: {}", err);
+            tracing::debug!(link_id =? self.link_id, %err, "link send failure");
             self.tx_error = Some(err);
             return;
         }

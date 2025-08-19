@@ -512,7 +512,7 @@ where
                     let link = Link::from(&link_int);
                     link_tx_permit.send(link_int);
 
-                    tracing::debug!("link joins existing connection {conn_id:?}");
+                    tracing::debug!(?conn_id, "link joins existing connection");
                     Ok(link)
                 }
                 Err(_) => {
@@ -552,13 +552,13 @@ where
                     links: Vec::new(),
                 });
 
-                tracing::debug!("link starts new connection {conn_id:?}");
+                tracing::debug!(?conn_id, "link starts new connection");
                 Ok(link)
             }
 
             // Link cannot be accepted.
             Connection::Refuse { reason, err } => {
-                tracing::debug!("refusing link with reason {reason:?}: {err}");
+                tracing::debug!(?reason, %err, "refusing link");
                 timeout(cfg.link_ping_timeout, LinkMsg::Refused { reason }.send(&mut tx)).await??;
                 Err(err)
             }

@@ -201,7 +201,7 @@ impl TcpConnector {
         if addrs.is_empty() {
             return Err(Error::new(ErrorKind::NotFound, "cannot resolve IP address of host"));
         }
-        tracing::info!("{} resolves to: {:?}", &this, addrs);
+        tracing::info!(%this, ?addrs, "hosts initially resolved");
 
         Ok(this)
     }
@@ -440,7 +440,7 @@ impl TcpAcceptor {
                 match Self::listen(&iface, port, version) {
                     Ok(listener) => listeners.push(listener),
                     Err(err) => {
-                        tracing::warn!("cannot listen on {version:?} {}: {err}", &iface.name);
+                        tracing::warn!(interface =% iface.name, ip_version =? version, %err, "cannot listen");
                     }
                 }
             }
@@ -475,7 +475,7 @@ impl TcpAcceptor {
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
         socket.bind_device(Some(interface.name.as_bytes()))?;
 
-        tracing::debug!("listening on {addr} on {}", &interface.name);
+        tracing::debug!(%addr, interface =% interface.name, "listening");
 
         socket.listen(8)
     }
@@ -508,7 +508,7 @@ impl AcceptingTransport for TcpAcceptor {
             };
 
             // Build tag.
-            tracing::debug!("Accepted TCP connection from {remote} on {}", String::from_utf8_lossy(&interface));
+            tracing::debug!(%remote, interface =% String::from_utf8_lossy(&interface), "Accepted TCP connection");
             let tag = TcpLinkTag::new(Some(&interface), remote, Direction::Incoming);
 
             // Configure socket.

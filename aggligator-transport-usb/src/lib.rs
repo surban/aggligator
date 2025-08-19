@@ -171,7 +171,7 @@ mod host {
             let hotplug = match nusb::watch_devices() {
                 Ok(hotplug) => Some(Mutex::new(hotplug)),
                 Err(err) => {
-                    tracing::warn!("USB hotplug detection not available: {err}");
+                    tracing::warn!(%err, "USB hotplug detection not available");
                     None
                 }
             };
@@ -187,7 +187,7 @@ mod host {
             let lang = match dev.get_string_descriptor_supported_languages(TIMEOUT).await {
                 Ok(mut langs) => langs.next(),
                 Err(err) => {
-                    tracing::warn!("cannot get string descriptor languages: {err}");
+                    tracing::warn!(%err, "cannot get string descriptor languages");
                     None
                 }
             };
@@ -198,7 +198,7 @@ mod host {
                     Some(lang) => match dev.get_string_descriptor(desc_index, lang, TIMEOUT).await {
                         Ok(s) => Some(s),
                         Err(err) => {
-                            tracing::warn!("cannot read string descriptor {desc_index}: {err}");
+                            tracing::warn!(%err, "cannot read string descriptor {desc_index}");
                             None
                         }
                     },
@@ -266,9 +266,8 @@ mod host {
                         }
                         Err(err) => {
                             tracing::trace!(
-                                "cannot probe device {}-{}: {err}",
-                                dev_info.bus_id(),
-                                dev_info.device_address()
+                                bus_id =% dev_info.bus_id(), address =% dev_info.device_address(), %err,
+                                "cannot probe device"
                             )
                         }
                     }

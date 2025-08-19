@@ -13,6 +13,7 @@ use tokio::{
     sync::{mpsc, oneshot, watch},
     time::Instant,
 };
+use tracing::Instrument;
 
 use aggligator::exec;
 
@@ -41,6 +42,7 @@ pub const INTERVAL: Duration = Duration::from_secs(10);
 ///
 /// The function returns the measured send and receive speeds in bytes per second.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip_all, fields(name =% name))]
 pub async fn speed_test(
     name: &str, mut read: impl AsyncRead + Unpin + Send + 'static,
     mut write: impl AsyncWrite + Unpin + Send + 'static, limit: Option<usize>, duration: Option<Duration>,
@@ -86,135 +88,139 @@ pub async fn speed_test(
         None => (None, None),
     };
 
-    tracing::info!("Starting speed test for {name}");
+    tracing::info!("Starting speed test");
     #[cfg(debug_assertions)]
     tracing::warn!("debug build, speed test will not be accurate");
 
-    let sender_name = name.to_string();
     let sender_stop_tx = stop_tx.clone();
     let (stop_sender_tx, mut stop_sender_rx) = oneshot::channel();
-    let sender = exec::spawn(async move {
-        if !send {
-            return Ok((0, Duration::ZERO));
-        }
+    let sender = exec::spawn(
+        async move {
+            if !send {
+                return Ok((0, Duration::ZERO));
+            }
 
-        let seed = rand::random();
-        write.write_u64(seed).await?;
-        let mut rng = Xoroshiro128StarStar::seed_from_u64(seed);
+            let seed = rand::random();
+            write.write_u64(seed).await?;
+            let mut rng = Xoroshiro128StarStar::seed_from_u64(seed);
 
-        let mut sent_total = 0;
-        let mut sent_interval = 0;
-        let mut interval_start = Instant::now();
+            let mut sent_total = 0;
+            let mut sent_interval = 0;
+            let mut interval_start = Instant::now();
 
-        #[allow(clippy::assertions_on_constants)]
-        while limit.map(|limit| sent_total <= limit).unwrap_or(true)
-            && !sender_stop_tx.is_closed()
-            && start.elapsed() < duration.unwrap_or(Duration::MAX)
-        {
-            assert!(BUF_SIZE % 8 == 0);
-            let mut buf = [0; BUF_SIZE];
-            rng.fill_bytes(&mut buf);
+            #[allow(clippy::assertions_on_constants)]
+            while limit.map(|limit| sent_total <= limit).unwrap_or(true)
+                && !sender_stop_tx.is_closed()
+                && start.elapsed() < duration.unwrap_or(Duration::MAX)
+            {
+                assert!(BUF_SIZE % 8 == 0);
+                let mut buf = [0; BUF_SIZE];
+                rng.fill_bytes(&mut buf);
 
-            write.write_all(&buf).await?;
+                write.write_all(&buf).await?;
 
-            sent_total += BUF_SIZE;
-            sent_interval += BUF_SIZE;
+                sent_total += BUF_SIZE;
+                sent_interval += BUF_SIZE;
 
-            if interval_start.elapsed() >= report_interval {
-                let speed = sent_interval as f64 / interval_start.elapsed().as_secs_f64();
+                if interval_start.elapsed() >= report_interval {
+                    let speed = sent_interval as f64 / interval_start.elapsed().as_secs_f64();
 
-                tracing::info!("Send speed for {sender_name}: {:.1} MB/s", speed / MB);
-                if let Some(tx) = &send_tx {
-                    if tx.send(speed).is_err() {
-                        break;
+                    tracing::info!("Send speed: {:.1} MB/s", speed / MB);
+                    if let Some(tx) = &send_tx {
+                        if tx.send(speed).is_err() {
+                            break;
+                        }
                     }
+
+                    sent_interval = 0;
+                    interval_start = Instant::now();
                 }
 
-                sent_interval = 0;
-                interval_start = Instant::now();
-            }
-
-            if let Ok(()) = stop_sender_rx.try_recv() {
-                break;
-            }
-        }
-
-        tracing::info!("Sender exited");
-        Ok::<_, Error>((sent_total, start.elapsed()))
-    });
-
-    let receiver_name = name.to_string();
-    let receiver = exec::spawn(async move {
-        if !receive {
-            return Ok((0, Duration::ZERO));
-        }
-
-        let remote_seed = read.read_u64().await?;
-        let mut rng = Xoroshiro128StarStar::seed_from_u64(remote_seed);
-
-        if recv_block {
-            stop_tx.closed().await;
-            return Ok((0, Duration::ZERO));
-        }
-
-        let mut recved_total = 0;
-        let mut recved_interval = 0;
-        let mut interval_start = Instant::now();
-
-        while !stop_tx.is_closed() && start.elapsed() < duration.unwrap_or(Duration::MAX) {
-            let mut buf = [0; BUF_SIZE];
-            let mut n = read.read(&mut buf).await?;
-            if n == 0 {
-                break;
-            }
-            match n % 8 {
-                0 => (),
-                rem => {
-                    n += read.read_exact(&mut buf[n..(n + 8 - rem)]).await?;
-                    if n % 8 != 0 {
-                        break;
-                    }
+                if let Ok(()) = stop_sender_rx.try_recv() {
+                    break;
                 }
             }
-            let buf = &buf[..n];
 
-            let mut chk_buf = vec![0; n];
-            assert!(n % 8 == 0);
-            rng.fill_bytes(&mut chk_buf);
-            if chk_buf != buf {
-                let _ = stop_sender_tx.send(());
-                return Err(Error::new(ErrorKind::InvalidData, "received data is malformed"));
+            tracing::info!("Sender exited");
+            Ok::<_, Error>((sent_total, start.elapsed()))
+        }
+        .in_current_span(),
+    );
+
+    let receiver = exec::spawn(
+        async move {
+            if !receive {
+                return Ok((0, Duration::ZERO));
             }
 
-            recved_total += n;
-            recved_interval += n;
+            let remote_seed = read.read_u64().await?;
+            let mut rng = Xoroshiro128StarStar::seed_from_u64(remote_seed);
 
-            if interval_start.elapsed() >= report_interval {
-                let speed = recved_interval as f64 / interval_start.elapsed().as_secs_f64();
+            if recv_block {
+                stop_tx.closed().await;
+                return Ok((0, Duration::ZERO));
+            }
 
-                tracing::info!("Receive speed for {receiver_name}: {:.1} MB/s", speed / MB);
-                if let Some(tx) = &recv_tx {
-                    if tx.send(speed).is_err() {
-                        break;
+            let mut recved_total = 0;
+            let mut recved_interval = 0;
+            let mut interval_start = Instant::now();
+
+            while !stop_tx.is_closed() && start.elapsed() < duration.unwrap_or(Duration::MAX) {
+                let mut buf = [0; BUF_SIZE];
+                let mut n = read.read(&mut buf).await?;
+                if n == 0 {
+                    break;
+                }
+                match n % 8 {
+                    0 => (),
+                    rem => {
+                        n += read.read_exact(&mut buf[n..(n + 8 - rem)]).await?;
+                        if n % 8 != 0 {
+                            break;
+                        }
                     }
                 }
+                let buf = &buf[..n];
 
-                recved_interval = 0;
-                interval_start = Instant::now();
+                let mut chk_buf = vec![0; n];
+                assert!(n % 8 == 0);
+                rng.fill_bytes(&mut chk_buf);
+                if chk_buf != buf {
+                    let _ = stop_sender_tx.send(());
+                    return Err(Error::new(ErrorKind::InvalidData, "received data is malformed"));
+                }
+
+                recved_total += n;
+                recved_interval += n;
+
+                if interval_start.elapsed() >= report_interval {
+                    let speed = recved_interval as f64 / interval_start.elapsed().as_secs_f64();
+
+                    tracing::info!("Receive speed: {:.1} MB/s", speed / MB);
+                    if let Some(tx) = &recv_tx {
+                        if tx.send(speed).is_err() {
+                            break;
+                        }
+                    }
+
+                    recved_interval = 0;
+                    interval_start = Instant::now();
+                }
             }
-        }
 
-        tracing::info!("Receiver exited");
-        Ok((recved_total, start.elapsed()))
-    });
+            tracing::info!("Receiver exited");
+            Ok((recved_total, start.elapsed()))
+        }
+        .in_current_span(),
+    );
 
     let (Ok(sender), Ok(receiver)) = join!(sender, receiver) else { unreachable!() };
 
     if let Err(err) = &sender {
-        tracing::warn!("Sender error for {name}: {err}");
+        tracing::warn!(%err, "Sender error");
     }
     if let Err(err) = &receiver {
-        tracing::warn!("Receiver error for {name}: {err}");
+        tracing::warn!(%err, "Receiver error");
     }
 
     let (tx_total, tx_dur) = sender?;
@@ -223,8 +229,6 @@ pub async fn speed_test(
     let (rx_total, rx_dur) = receiver?;
     let rx_speed = rx_total as f64 / rx_dur.as_secs_f64().max(1e-10);
 
-    tracing::info!(
-        "Speed test for {name} done.  Upstream: {tx_speed:.0} bytes/s  Downstream: {rx_speed:.0} bytes/s"
-    );
+    tracing::info!("Upstream: {tx_speed:.0} bytes/s  Downstream: {rx_speed:.0} bytes/s");
     Ok((tx_speed, rx_speed))
 }
