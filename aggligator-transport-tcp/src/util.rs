@@ -8,7 +8,7 @@ use std::{
 };
 use tokio::net::{lookup_host, TcpSocket};
 
-pub use network_interface::NetworkInterface;
+pub use network_interface::{Addr, Netmask, NetworkInterface, V4IfAddr, V6IfAddr};
 
 use crate::IpVersion;
 

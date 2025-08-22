@@ -1,6 +1,6 @@
 [package]
 name = "aggligator-transport-websocket"
-version = "0.5.1"
+version = "0.5.2"
 description = "Aggligator transport: WebSocket"
 categories = ["asynchronous", "network-programming"]
 keywords = ["aggligator", "aggligator-transport"]
@@ -13,7 +13,7 @@ repository.workspace = true
 
 [dependencies]
 aggligator = { version = "0.9.7", path = "../aggligator" }
-aggligator-transport-tcp = { version = "0.2.4", path = "../aggligator-transport-tcp", default-features = false }
+aggligator-transport-tcp = { version = "0.2.5", path = "../aggligator-transport-tcp", default-features = false }
 
 async-trait = { workspace = true }
 futures = { workspace = true }

@@ -25,6 +25,7 @@ use std::{
     hash::{Hash, Hasher},
     io::{Error, ErrorKind, Result},
     net::{IpAddr, SocketAddr},
+    sync::Arc,
     time::Duration,
 };
 use tokio::{
@@ -38,6 +39,7 @@ use aggligator::{
     transport::{AcceptedStreamBox, AcceptingTransport, ConnectingTransport, LinkTag, LinkTagBox},
     Link,
 };
+use util::NetworkInterface;
 
 pub mod simple;
 pub mod util;
@@ -165,13 +167,26 @@ pub enum TcpLinkFilter {
 /// TCP transport for outgoing connections.
 ///
 /// This transport is IO-stream based.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TcpConnector {
     hosts: Vec<String>,
     ip_version: IpVersion,
     resolve_interval: Duration,
     link_filter: TcpLinkFilter,
     multi_interface: bool,
+    interface_filter: Arc<dyn Fn(&NetworkInterface) -> bool + Send + Sync>,
+}
+
+impl fmt::Debug for TcpConnector {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("TcpConnector")
+            .field("hosts", &self.hosts)
+            .field("ip_version", &self.ip_version)
+            .field("resolve_interval", &self.resolve_interval)
+            .field("link_filter", &self.link_filter)
+            .field("multi_interface", &self.multi_interface)
+            .finish()
+    }
 }
 
 impl fmt::Display for TcpConnector {
@@ -232,6 +247,7 @@ impl TcpConnector {
             resolve_interval: Duration::from_secs(10),
             link_filter: TcpLinkFilter::default(),
             multi_interface: !cfg!(target_os = "android"),
+            interface_filter: Arc::new(|_| true),
         })
     }
 
@@ -263,6 +279,20 @@ impl TcpConnector {
         self.multi_interface = multi_interface;
     }
 
+    /// Sets the local interface filter.
+    ///
+    /// It is only used when multi interface is enabled.
+    ///
+    /// The provided function is called for each discoved local interface and should
+    /// return whether the interface should be used for establishing links.
+    ///
+    /// By default all local interfaces are used.
+    pub fn set_interface_filter(
+        &mut self, interface_filter: impl Fn(&NetworkInterface) -> bool + Send + Sync + 'static,
+    ) {
+        self.interface_filter = Arc::new(interface_filter);
+    }
+
     /// Resolve target to socket addresses.
     async fn resolve(&self) -> Vec<SocketAddr> {
         util::resolve_hosts(&self.hosts, self.ip_version).await
@@ -277,21 +307,29 @@ impl ConnectingTransport for TcpConnector {
 
     async fn link_tags(&self, tx: watch::Sender<HashSet<LinkTagBox>>) -> Result<()> {
         loop {
-            let interfaces = match self.multi_interface {
-                true => Some(util::local_interfaces()?),
+            let interfaces: Option<Vec<NetworkInterface>> = match self.multi_interface {
+                true => Some(
+                    util::local_interfaces()?
+                        .into_iter()
+                        .filter(|iface| (self.interface_filter)(&iface))
+                        .collect(),
+                ),
                 false => None,
             };
 
             let mut tags: HashSet<LinkTagBox> = HashSet::new();
             for addr in self.resolve().await {
-                if self.multi_interface {
-                    for iface in util::interface_names_for_target(interfaces.as_deref().unwrap(), addr) {
-                        let tag = TcpLinkTag::new(Some(&iface), addr, Direction::Outgoing);
+                match &interfaces {
+                    Some(interfaces) => {
+                        for iface in util::interface_names_for_target(interfaces, addr) {
+                            let tag = TcpLinkTag::new(Some(&iface), addr, Direction::Outgoing);
+                            tags.insert(Box::new(tag));
+                        }
+                    }
+                    None => {
+                        let tag = TcpLinkTag::new(None, addr, Direction::Outgoing);
                         tags.insert(Box::new(tag));
                     }
-                } else {
-                    let tag = TcpLinkTag::new(None, addr, Direction::Outgoing);
-                    tags.insert(Box::new(tag));
                 }
             }
 

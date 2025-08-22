@@ -74,7 +74,7 @@ dependencies = [
 
 [[package]]
 name = "aggligator-transport-tcp"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "aggligator",
  "aggligator-wrapper-tls",
@@ -102,7 +102,7 @@ dependencies = [
 
 [[package]]
 name = "aggligator-transport-websocket"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "aggligator",
  "aggligator-transport-tcp",
