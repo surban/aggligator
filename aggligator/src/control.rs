@@ -150,6 +150,7 @@ pub struct Control<TX, RX, TAG> {
     pub(crate) server_id: Option<ServerId>,
     pub(crate) remote_server_id: Arc<Mutex<Option<ServerId>>>,
     pub(crate) direction: Direction,
+    pub(crate) terminate_tx: mpsc::Sender<()>,
     pub(crate) connected: Arc<AtomicBool>,
     pub(crate) link_tx: mpsc::Sender<LinkInt<TX, RX, TAG>>,
     pub(crate) links_rx: watch::Receiver<Vec<Link<TAG>>>,
@@ -166,6 +167,7 @@ impl<TX, RX, TAG> Clone for Control<TX, RX, TAG> {
             server_id: self.server_id,
             remote_server_id: self.remote_server_id.clone(),
             direction: self.direction,
+            terminate_tx: self.terminate_tx.clone(),
             connected: self.connected.clone(),
             link_tx: self.link_tx.clone(),
             links_rx: self.links_rx.clone(),
@@ -236,6 +238,15 @@ impl<TX, RX, TAG> Control<TX, RX, TAG> {
     /// The configuration of the connection.
     pub fn cfg(&self) -> &Cfg {
         &self.cfg
+    }
+
+    /// Immediately terminates the connection.
+    ///
+    /// The connection task is immediately terminated and the remote endpoint is
+    /// *not* notified of the connection closure.
+    /// For a clean shutdown, drop the [channel](crate::alc::Channel) instead.
+    pub fn terminate(&self) {
+        let _ = self.terminate_tx.try_send(());
     }
 
     /// Returns whether the connection has been terminated.

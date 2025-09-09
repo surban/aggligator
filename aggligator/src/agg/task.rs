@@ -154,6 +154,8 @@ struct ReceivedReliableMsg {
 
 /// Link aggregator task event.
 enum TaskEvent<TX, RX, TAG> {
+    /// Immediate termination.
+    Terminate,
     /// A new link has been established.
     NewLink(Box<LinkInt<TX, RX, TAG>>),
     /// No new links will be established.
@@ -219,6 +221,8 @@ pub struct Task<TX, RX, TAG> {
     conn_id: OwnedConnId,
     /// Connection direction.
     direction: Direction,
+    /// Channel for receiving an immediate termination request.
+    terminate_rx: mpsc::Receiver<()>,
     /// Established links.
     links: Vec<Option<LinkInt<TX, RX, TAG>>>,
     /// Channel for receiving newly established links.
@@ -323,9 +327,9 @@ where
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         cfg: Arc<Cfg>, remote_cfg: Option<Arc<ExchangedCfg>>, conn_id: OwnedConnId, direction: Direction,
-        links_tx: watch::Sender<Vec<Link<TAG>>>, link_rx: mpsc::Receiver<LinkInt<TX, RX, TAG>>,
-        connected_tx: oneshot::Sender<Arc<ExchangedCfg>>, read_tx: mpsc::Sender<Bytes>,
-        read_closed_rx: mpsc::Receiver<()>, write_rx: mpsc::Receiver<SendReq>,
+        terminate_rx: mpsc::Receiver<()>, links_tx: watch::Sender<Vec<Link<TAG>>>,
+        link_rx: mpsc::Receiver<LinkInt<TX, RX, TAG>>, connected_tx: oneshot::Sender<Arc<ExchangedCfg>>,
+        read_tx: mpsc::Sender<Bytes>, read_closed_rx: mpsc::Receiver<()>, write_rx: mpsc::Receiver<SendReq>,
         read_error_tx: watch::Sender<Option<RecvError>>, write_error_tx: watch::Sender<SendError>,
         stats_tx: watch::Sender<Stats>, server_changed_rx: mpsc::Receiver<()>,
         result_tx: watch::Sender<Result<(), TaskError>>, links: Vec<LinkInt<TX, RX, TAG>>,
@@ -335,6 +339,7 @@ where
             remote_cfg,
             conn_id,
             direction,
+            terminate_rx,
             links: Vec::new(),
             link_rx: Some(link_rx),
             links_tx,
@@ -527,6 +532,14 @@ where
                 }
             };
 
+            // Task waiting for termination request.
+            let terminate_task = async {
+                match self.terminate_rx.recv().await {
+                    Some(()) => TaskEvent::Terminate,
+                    None => future::pending().await,
+                }
+            };
+
             // Task for receiving a new link.
             let new_link_task = async {
                 match &mut self.link_rx {
@@ -633,6 +646,7 @@ where
 
             // Wait for next event.
             let event = select! {
+                terminate_event = terminate_task => terminate_event,
                 new_link_event = new_link_task => new_link_event,
                 ((id, event), _, _) = link_task => TaskEvent::LinkEvent { id, event },
                 write_event = write_rx_task => write_event,
@@ -654,6 +668,14 @@ where
 
             // Handle event.
             match event {
+                TaskEvent::Terminate => {
+                    tracing::debug!("immediate termination");
+                    result = Err(TaskError::Terminated);
+                    read_term = Some(RecvError::TaskTerminated);
+                    write_term = SendError::TaskTerminated;
+                    link_term = DisconnectReason::TaskTerminated;
+                    break;
+                }
                 TaskEvent::NewLink(mut link) => {
                     let link_id = link.link_id();
                     if self.remote_cfg.is_none() {

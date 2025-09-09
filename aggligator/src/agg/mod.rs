@@ -45,6 +45,7 @@ where
         remote_server_id: Option<ServerId>, links: Vec<LinkInt<TX, RX, TAG>>,
         link_tx_rx: Option<(mpsc::Sender<LinkInt<TX, RX, TAG>>, mpsc::Receiver<LinkInt<TX, RX, TAG>>)>,
     ) -> Self {
+        let (terminate_tx, terminate_rx) = mpsc::channel(1);
         let (read_tx, read_rx) = mpsc::channel(cfg.recv_queue.get());
         let (write_tx, write_rx) = mpsc::channel(cfg.send_queue.get());
         let (read_error_tx, read_error_rx) = watch::channel(Some(RecvError::TaskTerminated));
@@ -65,6 +66,7 @@ where
                 remote_cfg.clone(),
                 conn_id.clone(),
                 direction,
+                terminate_rx,
                 links_tx,
                 link_rx,
                 connected_tx,
@@ -94,6 +96,7 @@ where
                 server_id,
                 remote_server_id: Arc::new(Mutex::new(remote_server_id)),
                 direction,
+                terminate_tx,
                 link_tx,
                 links_rx,
                 connected,
