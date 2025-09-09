@@ -276,7 +276,7 @@ impl ConnectingTransport for WebSocketConnector {
                 true => Some(
                     util::local_interfaces()?
                         .into_iter()
-                        .filter(|iface| (self.interface_filter)(&iface))
+                        .filter(|iface| (self.interface_filter)(iface))
                         .collect(),
                 ),
                 false => None,
