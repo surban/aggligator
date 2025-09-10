@@ -47,3 +47,47 @@ pub fn parse_tcp_link_filter(s: &str) -> anyhow::Result<TcpLinkFilter> {
         other => bail!("unknown TCP link filter: {other}"),
     }
 }
+
+/// Waits for a platform-specific termination signal.
+pub async fn wait_sigterm() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+
+        let mut sigterm = signal(SignalKind::terminate()).unwrap();
+        let mut sigint = signal(SignalKind::interrupt()).unwrap();
+        let mut sighup = signal(SignalKind::hangup()).unwrap();
+
+        tokio::select! {
+            _ = sigterm.recv() => {},
+            _ = sigint.recv() => {},
+            _ = sighup.recv() => {},
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        use tokio::signal::windows;
+
+        let mut ctrl_c = windows::ctrl_c().unwrap();
+        let mut ctrl_break = windows::ctrl_break().unwrap();
+        let mut ctrl_close = windows::ctrl_close().unwrap();
+        let mut ctrl_logoff = windows::ctrl_logoff().unwrap();
+        let mut ctrl_shutdown = windows::ctrl_shutdown().unwrap();
+
+        tokio::select! {
+            _ = ctrl_c.recv() => {},
+            _ = ctrl_break.recv() => {},
+            _ = ctrl_close.recv() => {},
+            _ = ctrl_logoff.recv() => {},
+            _ = ctrl_shutdown.recv() => {},
+        }
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        std::future::pending::<()>().await;
+    }
+
+    tracing::info!("received termination signal");
+}

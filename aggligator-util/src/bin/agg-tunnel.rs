@@ -32,7 +32,7 @@ use aggligator::{
 };
 use aggligator_monitor::monitor::{interactive_monitor, watch_tags};
 use aggligator_transport_tcp::{IpVersion, TcpAcceptor, TcpConnector, TcpLinkFilter};
-use aggligator_util::{init_log, load_cfg, parse_tcp_link_filter, print_default_cfg};
+use aggligator_util::{init_log, load_cfg, parse_tcp_link_filter, print_default_cfg, wait_sigterm};
 
 #[cfg(feature = "bluer")]
 use aggligator_transport_bluer::rfcomm::{RfcommAcceptor, RfcommConnector};
@@ -101,15 +101,22 @@ async fn main() -> Result<()> {
     let cfg = load_cfg(&cli.cfg)?;
     let dump = cli.dump.clone();
 
-    match cli.command {
-        Commands::Client(client) => client.run(cfg, dump).await?,
-        Commands::Server(server) => server.run(cfg, dump).await?,
-        Commands::ShowCfg => print_default_cfg(),
-        Commands::ManPages => clap_mangen::generate_to(TunnelCli::command(), ".")?,
-        Commands::Markdown => println!("{}", clap_markdown::help_markdown::<TunnelCli>()),
-    }
+    let res = match cli.command {
+        Commands::Client(client) => client.run(cfg, dump).await,
+        Commands::Server(server) => server.run(cfg, dump).await,
+        Commands::ShowCfg => {
+            print_default_cfg();
+            Ok(())
+        }
+        Commands::ManPages => clap_mangen::generate_to(TunnelCli::command(), ".").map_err(|err| err.into()),
+        Commands::Markdown => {
+            println!("{}", clap_markdown::help_markdown::<TunnelCli>());
+            Ok(())
+        }
+    };
 
-    Ok(())
+    sleep(Duration::from_millis(300)).await;
+    res
 }
 
 #[derive(Parser)]
@@ -296,8 +303,10 @@ impl ClientCli {
             let dump = dump.clone();
             port_tasks.push(async move {
                 loop {
-                    let (socket, src) =
-                        future::select_all(listeners.iter().map(|l| l.accept().boxed())).await.0?;
+                    let (socket, src) = tokio::select! {
+                        res = future::select_all(listeners.iter().map(|l| l.accept().boxed())) => res.0?,
+                        () = wait_sigterm() => break,
+                    };
 
                     let mut builder = ConnectorBuilder::new(port_cfg.clone());
                     if let Some(dump) = dump.clone() {
@@ -320,6 +329,14 @@ impl ClientCli {
                     }
                     let control = connector.control();
                     let outgoing = connector.channel().unwrap();
+
+                    exec::spawn({
+                        let control = control.clone();
+                        async move {
+                            wait_sigterm().await;
+                            control.terminate();
+                        }
+                    });
 
                     let mut conn_tag_err_rx = connector.link_errors();
                     let tag_err_tx = tag_err_tx.clone();
@@ -367,7 +384,6 @@ impl ClientCli {
                     });
                 }
 
-                #[allow(unreachable_code)]
                 anyhow::Ok(())
             });
         }
@@ -539,8 +555,22 @@ impl ServerCli {
         let (control_tx, control_rx) = broadcast::channel(16);
 
         let task = async move {
+            let term_tx = broadcast::Sender::<()>::new(1);
             loop {
-                let (ch, control) = acceptor.accept().await?;
+                let (ch, control) = tokio::select! {
+                    res = acceptor.accept() => res?,
+                    () = wait_sigterm() => break,
+                };
+
+                exec::spawn({
+                    let control = control.clone();
+                    let mut term_rx = term_tx.subscribe();
+                    async move {
+                        let _ = term_rx.recv().await;
+                        control.terminate();
+                    }
+                });
+
                 let id = ch.id();
 
                 let control_tx = control_tx.clone();
@@ -567,7 +597,6 @@ impl ServerCli {
                 });
             }
 
-            #[allow(unreachable_code)]
             anyhow::Ok(())
         };
 

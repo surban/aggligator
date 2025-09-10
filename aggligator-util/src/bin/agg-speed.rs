@@ -22,6 +22,7 @@ use std::{
 use tokio::{
     sync::{broadcast, mpsc, watch},
     task::block_in_place,
+    time::sleep,
 };
 
 use aggligator::{
@@ -36,7 +37,7 @@ use aggligator_monitor::{
 };
 use aggligator_transport_tcp::{IpVersion, TcpAcceptor, TcpConnector, TcpLinkFilter};
 use aggligator_transport_websocket::{WebSocketAcceptor, WebSocketConnector};
-use aggligator_util::{init_log, load_cfg, parse_tcp_link_filter, print_default_cfg};
+use aggligator_util::{init_log, load_cfg, parse_tcp_link_filter, print_default_cfg, wait_sigterm};
 use aggligator_wrapper_tls::{TlsClient, TlsServer};
 
 #[cfg(feature = "bluer")]
@@ -199,16 +200,23 @@ async fn main() -> Result<()> {
         eprintln!("{}", debug_warning());
     }
 
-    match cli.command {
-        Commands::Client(client) => client.run(cfg, dump).await?,
-        Commands::Server(server) => server.run(cfg, dump).await?,
-        Commands::ShowCfg => print_default_cfg(),
-        Commands::ManPages => clap_mangen::generate_to(SpeedCli::command(), ".")?,
-        Commands::Markdown => println!("{}", clap_markdown::help_markdown::<SpeedCli>()),
-    }
+    let res = match cli.command {
+        Commands::Client(client) => client.run(cfg, dump).await,
+        Commands::Server(server) => server.run(cfg, dump).await,
+        Commands::ShowCfg => {
+            print_default_cfg();
+            Ok(())
+        }
+        Commands::ManPages => clap_mangen::generate_to(SpeedCli::command(), ".").map_err(|err| err.into()),
+        Commands::Markdown => {
+            println!("{}", clap_markdown::help_markdown::<SpeedCli>());
+            Ok(())
+        }
+    };
 
+    sleep(Duration::from_millis(300)).await;
     tracing::debug!("exiting main");
-    Ok(())
+    res
 }
 
 #[derive(Parser)]
@@ -386,6 +394,14 @@ impl ClientCli {
 
         let outgoing = connector.channel().unwrap();
         let control = connector.control();
+
+        exec::spawn({
+            let control = control.clone();
+            async move {
+                wait_sigterm().await;
+                control.terminate();
+            }
+        });
 
         let tags_rx = connector.available_tags_watch();
         let tag_err_rx = connector.link_errors();
@@ -664,8 +680,20 @@ impl ServerCli {
         let no_monitor = self.no_monitor;
         let oneshot = self.oneshot;
         let task = async move {
+            let term_tx = broadcast::Sender::<()>::new(1);
             loop {
-                let (ch, control) = acceptor.accept().await?;
+                let (ch, control) = tokio::select! {
+                    res = acceptor.accept() => res?,
+                    () = wait_sigterm() => break,
+                };
+                exec::spawn({
+                    let control = control.clone();
+                    let mut term_rx = term_tx.subscribe();
+                    async move {
+                        let _ = term_rx.recv().await;
+                        control.terminate();
+                    }
+                });
                 let _ = control_tx.send((control, String::new()));
 
                 exec::spawn(async move {
@@ -682,7 +710,6 @@ impl ServerCli {
                 });
             }
 
-            #[allow(unreachable_code)]
             anyhow::Ok(())
         };
 
