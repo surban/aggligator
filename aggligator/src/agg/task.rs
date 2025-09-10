@@ -55,7 +55,7 @@ pub enum TaskError {
     ///
     /// This will occur when the server is restarted while a client is connected.
     ServerIdMismatch,
-    /// The task was terminated, possibly due to the runtime shutting down.
+    /// The connection was forcefully terminated.
     Terminated,
 }
 
@@ -66,7 +66,7 @@ impl fmt::Display for TaskError {
             Self::NoLinksTimeout => write!(f, "no links available timeout"),
             Self::ProtocolError { link_id, error } => write!(f, "protocol error on link {link_id}: {error}"),
             Self::ServerIdMismatch => write!(f, "a new link connected to another server"),
-            Self::Terminated => write!(f, "task terminated"),
+            Self::Terminated => write!(f, "connection forcefully terminated"),
         }
     }
 }
@@ -198,6 +198,17 @@ enum TaskEvent<TX, RX, TAG> {
     RefusedLinkTask,
     /// The server id changed.
     ServerChanged,
+}
+
+/// Forceful connection termination.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SendTerminate {
+    /// No termination.
+    None,
+    /// Initiate termination.
+    Initiate,
+    /// Reply to received termination request.
+    Reply,
 }
 
 /// Link filter function type.
@@ -405,6 +416,7 @@ where
         let read_term;
         let write_term;
         let link_term;
+        let mut send_terminate = SendTerminate::None;
         let result;
 
         // Main loop.
@@ -669,11 +681,12 @@ where
             // Handle event.
             match event {
                 TaskEvent::Terminate => {
-                    tracing::debug!("immediate termination");
+                    tracing::info!("forceful connection termination by local request");
                     result = Err(TaskError::Terminated);
                     read_term = Some(RecvError::TaskTerminated);
                     write_term = SendError::TaskTerminated;
                     link_term = DisconnectReason::TaskTerminated;
+                    send_terminate = SendTerminate::Initiate;
                     break;
                 }
                 TaskEvent::NewLink(mut link) => {
@@ -845,13 +858,25 @@ where
                         }
                         LinkIntEvent::Rx { msg, data } => {
                             // Link has received a message.
-                            if let Err(err) = self.handle_received_msg(id, msg, data) {
-                                tracing::warn!(?link_id, %err, "link caused protocol error");
-                                result = Err(TaskError::ProtocolError { link_id, error: err.to_string() });
-                                read_term = Some(RecvError::ProtocolError);
-                                write_term = SendError::ProtocolError;
-                                link_term = DisconnectReason::ProtocolError(err.to_string());
-                                break;
+                            match self.handle_received_msg(id, msg, data) {
+                                Ok(false) => (),
+                                Ok(true) => {
+                                    tracing::info!("forceful connection termination by remote endpoint");
+                                    result = Err(TaskError::Terminated);
+                                    read_term = Some(RecvError::TaskTerminated);
+                                    write_term = SendError::TaskTerminated;
+                                    link_term = DisconnectReason::TaskTerminated;
+                                    send_terminate = SendTerminate::Reply;
+                                    break;
+                                }
+                                Err(err) => {
+                                    tracing::warn!(?link_id, %err, "link caused protocol error");
+                                    result = Err(TaskError::ProtocolError { link_id, error: err.to_string() });
+                                    read_term = Some(RecvError::ProtocolError);
+                                    write_term = SendError::ProtocolError;
+                                    link_term = DisconnectReason::ProtocolError(err.to_string());
+                                    break;
+                                }
                             }
                         }
                         LinkIntEvent::FlushDelayPassed => {
@@ -1073,19 +1098,41 @@ where
             }
         }
 
-        // Publish termination reasons.
-        let _ = self.result_tx.send_replace(result.clone());
+        // Terminate aggregated links channel.
         if *self.read_error_tx.borrow() == Some(RecvError::TaskTerminated) {
             self.read_error_tx.send_replace(read_term);
         }
         if *self.write_error_tx.borrow() == SendError::TaskTerminated {
             self.write_error_tx.send_replace(write_term);
         }
-        for link in &mut self.links {
-            if let Some(link) = link.take() {
-                link.notify_disconnected(link_term.clone());
+        self.read_tx = None;
+        self.write_rx = None;
+
+        // Exchange forceful terminatation over all links, if requested.
+        if send_terminate != SendTerminate::None {
+            let mut term_tasks = FuturesUnordered::new();
+            for link in &mut self.links {
+                let Some(link) = link.as_mut() else { continue };
+                term_tasks.push(link.terminate_connection(send_terminate == SendTerminate::Initiate));
+            }
+
+            let res =
+                timeout(self.cfg.termination_timeout, async move { while term_tasks.next().await.is_some() {} })
+                    .await;
+            if res.is_err() {
+                tracing::warn!("forceful connection termination timed out");
             }
         }
+
+        // Disconnect all links.
+        for link in self.links.drain(..) {
+            let Some(link) = link else { continue };
+            link.notify_disconnected(link_term.clone());
+        }
+
+        // Publish task termination reason.
+        let _ = self.result_tx.send_replace(result.clone());
+        self.link_rx = None;
 
         result
     }
@@ -1641,7 +1688,9 @@ where
     }
 
     /// Handle a received message.
-    fn handle_received_msg(&mut self, id: usize, msg: LinkMsg, data: Option<Bytes>) -> Result<(), io::Error> {
+    ///
+    /// Returns whether task should terminate.
+    fn handle_received_msg(&mut self, id: usize, msg: LinkMsg, data: Option<Bytes>) -> Result<bool, io::Error> {
         let link = self.links[id].as_mut().unwrap();
         let link_id = link.link_id();
 
@@ -1704,12 +1753,16 @@ where
                     }
                 }
             }
+            LinkMsg::Terminate => {
+                tracing::trace!(?link_id, "link recevied forceful connection termination request");
+                return Ok(true);
+            }
             LinkMsg::Welcome { .. } | LinkMsg::Connect { .. } | LinkMsg::Accepted | LinkMsg::Refused { .. } => {
                 return Err(protocol_err!("received unexpected message"))
             }
         }
 
-        Ok(())
+        Ok(false)
     }
 
     /// Handle received data.

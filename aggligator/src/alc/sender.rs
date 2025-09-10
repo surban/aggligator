@@ -37,7 +37,7 @@ pub enum SendError {
     ProtocolError,
     /// A link connected to another server than the other links.
     ServerIdMismatch,
-    /// The connection task was terminated.
+    /// The connection was forcefully terminated.
     TaskTerminated,
 }
 
@@ -51,7 +51,7 @@ impl fmt::Display for SendError {
             Self::AllLinksFailed => write!(f, "all links failed"),
             Self::ProtocolError => write!(f, "protocol error"),
             Self::ServerIdMismatch => write!(f, "a new link connected to another server"),
-            Self::TaskTerminated => write!(f, "task terminated"),
+            Self::TaskTerminated => write!(f, "connection forcefully terminated"),
         }
     }
 }

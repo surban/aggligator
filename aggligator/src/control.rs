@@ -240,10 +240,17 @@ impl<TX, RX, TAG> Control<TX, RX, TAG> {
         &self.cfg
     }
 
-    /// Immediately terminates the connection.
+    /// Forcefully terminates the connection.
     ///
     /// The connection task is immediately terminated and the remote endpoint is
-    /// *not* notified of the connection closure.
+    /// notified of the forceful connection termination.
+    ///
+    /// The connection tasks on both endpoints end with [`TaskError::Terminated`] and
+    /// senders and receivers will fail with
+    /// [`SendError::TaskTerminated`](crate::alc::SendError::TaskTerminated)
+    /// and [`RecvError::TaskTerminated`](crate::alc::RecvError::TaskTerminated).
+    /// All links are disconnected with reason [`DisconnectReason::TaskTerminated`].
+    ///
     /// For a clean shutdown, drop the [channel](crate::alc::Channel) instead.
     pub fn terminate(&self) {
         let _ = self.terminate_tx.try_send(());
@@ -805,7 +812,7 @@ pub enum DisconnectReason {
     ServerIdMismatch,
     /// A protocol error occured on this link.
     ProtocolError(String),
-    /// The connection task was terminated.
+    /// The connection was forcefully terminated.
     TaskTerminated,
 }
 
@@ -823,7 +830,7 @@ impl fmt::Display for DisconnectReason {
             Self::LinkFilter => write!(f, "link filter"),
             Self::ServerIdMismatch => write!(f, "link connected to another server"),
             Self::ProtocolError(err) => write!(f, "protocol error: {err}"),
-            Self::TaskTerminated => write!(f, "task terminated"),
+            Self::TaskTerminated => write!(f, "connection forcefully terminated"),
         }
     }
 }

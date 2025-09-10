@@ -154,6 +154,8 @@ pub(crate) enum LinkMsg {
     /// No more message will be send, but messages will be received
     /// until `Goodbye` is received.
     Goodbye,
+    /// Forcefully terminate connection.
+    Terminate,
 }
 
 impl LinkMsg {
@@ -178,6 +180,7 @@ impl LinkMsg {
     const MSG_TEST_DATA: u8 = 13;
     const MSG_SET_BLOCK: u8 = 14;
     const MSG_GOODBYE: u8 = 15;
+    const MSG_TERMINATE: u8 = 16;
 
     fn write(&self, mut writer: impl io::Write) -> Result<(), io::Error> {
         match self {
@@ -274,6 +277,9 @@ impl LinkMsg {
             LinkMsg::Goodbye => {
                 writer.write_u8(Self::MSG_GOODBYE)?;
             }
+            LinkMsg::Terminate => {
+                writer.write_u8(Self::MSG_TERMINATE)?;
+            }
         }
         Ok(())
     }
@@ -364,6 +370,7 @@ impl LinkMsg {
             }
             Self::MSG_SET_BLOCK => Self::SetBlock { blocked: reader.read_u8()? != 0 },
             Self::MSG_GOODBYE => Self::Goodbye,
+            Self::MSG_TERMINATE => Self::Terminate,
             other => return Err(protocol_err!("invalid message id {other}")),
         };
         Ok(msg)

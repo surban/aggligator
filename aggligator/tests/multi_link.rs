@@ -17,8 +17,11 @@ use aggligator::{
     cfg::{Cfg, LinkPing},
     connect::{connect, Server},
     control::DisconnectReason,
-    exec,
-    exec::time::{sleep, timeout},
+    exec::{
+        self,
+        time::{sleep, timeout},
+    },
+    TaskError,
 };
 
 mod test_channel;
@@ -34,6 +37,7 @@ struct LinkDesc {
 
 async fn multi_link_test(
     link_descs: &[LinkDesc], cfg: Cfg, max_size: usize, count: usize, expected_speed: usize, should_fail: bool,
+    terminate: Option<usize>,
 ) {
     let mut server_links = Vec::new();
     let mut client_links = Vec::new();
@@ -102,8 +106,16 @@ async fn multi_link_test(
         let (tx, mut rx) = ch.into_tx_rx();
         println!("server: maximum send size is {}", tx.max_size());
 
-        let expected_send_err = if should_fail { Some(SendError::AllLinksFailed) } else { None };
-        let expected_recv_err = if should_fail { Some(RecvError::AllLinksFailed) } else { None };
+        let expected_send_err = match (should_fail, terminate) {
+            (true, _) => Some(SendError::AllLinksFailed),
+            (_, Some(_)) => Some(SendError::TaskTerminated),
+            _ => None,
+        };
+        let expected_recv_err = match (should_fail, terminate) {
+            (true, _) => Some(RecvError::AllLinksFailed),
+            (_, Some(_)) => Some(RecvError::TaskTerminated),
+            _ => None,
+        };
         let speed = send_and_verify(
             "server",
             &tx,
@@ -153,7 +165,9 @@ async fn multi_link_test(
 
         println!("server: measured speed is {speed:.1} and expected speed is {expected_speed:.1}");
         #[cfg(not(debug_assertions))]
-        assert!(speed as usize >= expected_speed, "server too slow");
+        if terminate.is_none() {
+            assert!(speed as usize >= expected_speed, "server too slow");
+        }
 
         for (n, (link, desc)) in added_links.iter().zip(link_descs).enumerate() {
             println!("server: link status {n}: {:?}", link.disconnect_reason());
@@ -166,6 +180,12 @@ async fn multi_link_test(
                     Some(reason) if reason.should_reconnect() => (),
                     other => panic!("no or wrong disconnect reason: {other:?}"),
                 }
+            } else if terminate.is_some() {
+                if !link.is_disconnected() {
+                    println!("server: waiting for link {n} disconnect");
+                }
+                link.disconnected().await;
+                assert!(matches!(link.disconnect_reason(), Some(DisconnectReason::TaskTerminated)));
             } else {
                 assert!(!link.is_disconnected());
             }
@@ -174,14 +194,14 @@ async fn multi_link_test(
         println!("server: dropping sender");
         drop(tx);
 
-        if !should_fail {
+        if !should_fail && terminate.is_none() {
             println!("server: waiting for receive end");
             assert_eq!(rx.recv().await.unwrap(), None);
         }
 
         println!("server: waiting for termination notification");
         let result = control.terminated().await;
-        if should_fail {
+        if should_fail || terminate.is_some() {
             result.expect_err("control did not fail");
         } else {
             result.expect("control failed");
@@ -197,12 +217,15 @@ async fn multi_link_test(
 
         println!("server: waiting for task termination");
         let result = task.await.unwrap();
-        if !should_fail {
+        if !should_fail && terminate.is_none() {
             result.expect("server task failed");
             println!("server: done");
         } else {
             let err = result.expect_err("server task did not fail");
             println!("server error: {err}");
+            if terminate.is_some() {
+                assert!(matches!(err, TaskError::Terminated));
+            }
         }
     };
 
@@ -245,8 +268,16 @@ async fn multi_link_test(
         println!("client: sending and receiving test data");
         let (tx, mut rx) = ch.into_tx_rx();
 
-        let expected_send_err = if should_fail { Some(SendError::AllLinksFailed) } else { None };
-        let expected_recv_err = if should_fail { Some(RecvError::AllLinksFailed) } else { None };
+        let expected_send_err = match (should_fail, terminate) {
+            (true, _) => Some(SendError::AllLinksFailed),
+            (_, Some(_)) => Some(SendError::TaskTerminated),
+            _ => None,
+        };
+        let expected_recv_err = match (should_fail, terminate) {
+            (true, _) => Some(RecvError::AllLinksFailed),
+            (_, Some(_)) => Some(RecvError::TaskTerminated),
+            _ => None,
+        };
         let speed = send_and_verify(
             "client",
             &tx,
@@ -274,6 +305,14 @@ async fn multi_link_test(
                         }
                     }
                 }
+
+                match terminate {
+                    Some(terminate) if terminate == i => {
+                        println!("client: forcefully terminating connection");
+                        control.terminate();
+                    }
+                    _ => (),
+                }
             },
             expected_send_err,
             expected_recv_err,
@@ -282,14 +321,16 @@ async fn multi_link_test(
 
         println!("client: measured speed is {speed:.1} and expected speed is {expected_speed:.1}");
         #[cfg(not(debug_assertions))]
-        assert!(speed as usize >= expected_speed, "client too slow");
+        if terminate.is_none() {
+            assert!(speed as usize >= expected_speed, "client too slow");
+        }
 
         println!("client: dropping sender");
         drop(tx);
 
         println!("client: waiting for termination notification");
         let result = control.terminated().await;
-        if should_fail {
+        if should_fail || terminate.is_some() {
             result.expect_err("control did not fail");
         } else {
             result.expect("control failed");
@@ -298,26 +339,35 @@ async fn multi_link_test(
 
         println!("client: waiting for task termination");
         let result = task.await.unwrap();
-        if !should_fail {
+        if !should_fail && terminate.is_none() {
             result.expect("client task failed");
             println!("client: task done");
         } else {
             let err = result.expect_err("client task did not fail");
             println!("client error: {err}");
+            if terminate.is_some() {
+                assert!(matches!(err, TaskError::Terminated));
+            }
         }
 
         for (n, (link, desc)) in added_links.iter().zip(link_descs).enumerate() {
             println!("client: link status {n} (name: {}): {:?}", link.tag(), link.disconnect_reason());
             if desc.fail.is_some() {
-                link.disconnected().await;
                 if !link.is_disconnected() {
                     println!("client: waiting for link {n} disconnect");
                 }
+                link.disconnected().await;
                 match link.disconnect_reason() {
                     Some(reason) if reason.should_reconnect() => (),
                     Some(DisconnectReason::ConnectionClosed) => (),
                     other => panic!("no or wrong disconnect reason: {other:?}"),
                 }
+            } else if terminate.is_some() {
+                if !link.is_disconnected() {
+                    println!("client: waiting for link {n} disconnect");
+                }
+                link.disconnected().await;
+                assert!(matches!(link.disconnect_reason(), Some(DisconnectReason::TaskTerminated)));
             }
         }
 
@@ -344,7 +394,7 @@ async fn five_x_unlimited_multi_thread() {
     let link_descs: Vec<_> = iter::repeat(link_desc).take(5).collect();
     let alc_cfg = Cfg { ..Default::default() };
 
-    multi_link_test(&link_descs, alc_cfg, 16384, 10000, 10_000_000, false).await;
+    multi_link_test(&link_descs, alc_cfg, 16384, 10000, 10_000_000, false, None).await;
 }
 
 #[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "current_thread")))]
@@ -357,7 +407,7 @@ async fn five_x_unlimited_current_thread() {
     let link_descs: Vec<_> = iter::repeat(link_desc).take(5).collect();
     let alc_cfg = Cfg { ..Default::default() };
 
-    multi_link_test(&link_descs, alc_cfg, 16384, 10000, 10_000_000, false).await;
+    multi_link_test(&link_descs, alc_cfg, 16384, 10000, 10_000_000, false, None).await;
 }
 
 #[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "multi_thread")))]
@@ -385,7 +435,7 @@ async fn five_x_very_high_latency() {
         ..Default::default()
     };
 
-    multi_link_test(&link_descs, alc_cfg, 16384, 30000, 4_000_000, false).await;
+    multi_link_test(&link_descs, alc_cfg, 16384, 30000, 4_000_000, false, None).await;
 }
 
 #[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "multi_thread")))]
@@ -405,7 +455,7 @@ async fn five_x_blocked() {
 
     let alc_cfg = Cfg { ..Default::default() };
 
-    multi_link_test(&link_descs, alc_cfg, 16384, 10000, 10_000_000, false).await;
+    multi_link_test(&link_descs, alc_cfg, 16384, 10000, 10_000_000, false, None).await;
 }
 
 #[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "multi_thread")))]
@@ -424,7 +474,7 @@ async fn ten_x_hundert_kb_per_s() {
 
     let alc_cfg = Cfg { ..Default::default() };
 
-    multi_link_test(&link_descs, alc_cfg, 16384, 100, 500_000, false).await;
+    multi_link_test(&link_descs, alc_cfg, 16384, 100, 500_000, false, None).await;
 }
 
 #[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "multi_thread")))]
@@ -446,7 +496,7 @@ async fn ten_x_paused_link() {
 
     let alc_cfg = Cfg { link_retest_interval: Duration::from_secs(2), ..Default::default() };
 
-    multi_link_test(&link_descs, alc_cfg, 16384, 10_000, 3_000_000, false).await;
+    multi_link_test(&link_descs, alc_cfg, 16384, 10_000, 3_000_000, false, None).await;
 }
 
 #[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "multi_thread")))]
@@ -476,7 +526,7 @@ async fn ten_x_failed_link() {
         ..Default::default()
     };
 
-    timeout(Duration::from_secs(60), multi_link_test(&link_descs, alc_cfg, 16384, 2_000, 500_000, false))
+    timeout(Duration::from_secs(60), multi_link_test(&link_descs, alc_cfg, 16384, 2_000, 500_000, false, None))
         .await
         .unwrap();
 }
@@ -508,7 +558,7 @@ async fn ten_x_all_failed_link() {
         ..Default::default()
     };
 
-    multi_link_test(&link_descs, alc_cfg, 16384, 2_000, 0, true).await;
+    multi_link_test(&link_descs, alc_cfg, 16384, 2_000, 0, true, None).await;
 }
 
 #[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "multi_thread")))]
@@ -541,7 +591,35 @@ async fn ten_x_link_timeout() {
         ..Default::default()
     };
 
-    timeout(Duration::from_secs(60), multi_link_test(&link_descs, alc_cfg, 16384, 3_000, 0, false))
+    timeout(Duration::from_secs(60), multi_link_test(&link_descs, alc_cfg, 16384, 3_000, 0, false, None))
         .await
         .unwrap();
+}
+
+#[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "multi_thread")))]
+#[cfg_attr(feature = "js", wasm_bindgen_test)]
+async fn forceful_termination() {
+    let link_desc = LinkDesc {
+        cfg: test_channel::Cfg {
+            speed: 10_000_000,
+            latency: Some(Duration::from_millis(1000)),
+            buffer_size: 10_000_000,
+            buffer_items: 50_000,
+        },
+        ..Default::default()
+    };
+    let link_descs: Vec<_> = iter::repeat(link_desc).take(5).collect();
+
+    let alc_cfg = Cfg {
+        send_buffer: NonZeroU32::new(20_000_000).unwrap(),
+        recv_buffer: NonZeroU32::new(20_000_000).unwrap(),
+        send_queue: NonZeroUsize::new(50).unwrap(),
+        recv_queue: NonZeroUsize::new(50).unwrap(),
+        link_ack_timeout_max: Duration::from_secs(15),
+        link_non_working_timeout: Duration::from_secs(30),
+        link_unacked_init: NonZeroUsize::new(10_000_000).unwrap(),
+        ..Default::default()
+    };
+
+    multi_link_test(&link_descs, alc_cfg, 16384, 30000, 4_000_000, false, Some(10000)).await;
 }

@@ -515,6 +515,49 @@ where
         self.disconnect_rx.close();
     }
 
+    /// Forefully terminates the connection.
+    pub(crate) async fn terminate_connection(&mut self, mut expect_reply: bool) {
+        let link_id = self.link_id();
+
+        // Wait for link to become ready.
+        tracing::debug!(?link_id, "waiting for link to become ready for termination");
+        self.report_ready();
+        loop {
+            match self.event().await {
+                LinkIntEvent::TxReady | LinkIntEvent::TxError(_) => break,
+                LinkIntEvent::Rx { msg: LinkMsg::Terminate, .. } => expect_reply = false,
+                _ => (),
+            }
+        }
+
+        // Send termination message.
+        tracing::debug!(?link_id, "sending forceful connection termination");
+        match self.send_msg_and_flush(LinkMsg::Terminate).await {
+            Ok(()) => tracing::debug!(?link_id, "forceful connection termination sent"),
+            Err(err) => {
+                tracing::warn!(?link_id, %err, "sending forceful connection termination failed");
+            }
+        }
+
+        // Wait for termination message, if required.
+        if expect_reply {
+            tracing::debug!(?link_id, "waiting for forceful connection termination reply");
+            loop {
+                match self.event().await {
+                    LinkIntEvent::RxError(err) => {
+                        tracing::warn!(?link_id, %err, "receiving forceful connection termination reply failed");
+                        break;
+                    }
+                    LinkIntEvent::Rx { msg: LinkMsg::Terminate, .. } => {
+                        tracing::debug!(?link_id, "forceful connection termination reply received");
+                        break;
+                    }
+                    _ => (),
+                }
+            }
+        }
+    }
+
     /// Marks the send part of the link as idle.
     pub(crate) fn mark_idle(&mut self) {
         self.tx_idle_since = Some(Instant::now());
