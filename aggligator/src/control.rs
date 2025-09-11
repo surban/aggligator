@@ -242,7 +242,7 @@ impl<TX, RX, TAG> Control<TX, RX, TAG> {
 
     /// Forcefully terminates the connection.
     ///
-    /// The connection task is immediately terminated and the remote endpoint is
+    /// The connection task is terminated and the remote endpoint is
     /// notified of the forceful connection termination.
     ///
     /// The connection tasks on both endpoints end with [`TaskError::Terminated`] and
