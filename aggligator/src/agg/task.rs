@@ -1132,7 +1132,11 @@ where
 
         // Publish task termination reason.
         let _ = self.result_tx.send_replace(result.clone());
-        self.link_rx = None;
+        #[allow(unused_assignments)]
+        {
+            // For drop order.
+            self.link_rx = None;
+        }
 
         result
     }
