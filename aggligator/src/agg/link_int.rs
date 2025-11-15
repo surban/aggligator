@@ -4,7 +4,9 @@ use bytes::Bytes;
 use futures::{future, future::poll_fn, FutureExt, Sink, SinkExt, Stream, StreamExt};
 use std::{
     collections::VecDeque,
-    fmt, io, mem,
+    fmt,
+    io::{self, Error, ErrorKind},
+    mem,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -94,6 +96,8 @@ pub(crate) struct LinkInt<TX, RX, TAG> {
     tx_data: Option<Bytes>,
     /// Last transmit error.
     tx_error: Option<io::Error>,
+    /// Whether the transmit sink failed previously.
+    tx_failed: bool,
     /// Since when sink `tx` is being polled for readyness.
     tx_polling: Option<Instant>,
     /// Whether sink `tx` returned pending status when polled for readyness.
@@ -120,7 +124,7 @@ pub(crate) struct LinkInt<TX, RX, TAG> {
     pub(crate) tx_ack_queue: VecDeque<Seq>,
     /// Number of acks sent since last flush.
     txed_acks_unflushed: usize,
-    /// Receive sink.
+    /// Receive stream.
     rx: RX,
     /// Received data message, when waiting for the corresponding data packet.
     rxed_data_msg: Option<LinkMsg>,
@@ -226,6 +230,7 @@ where
             tx,
             tx_data: None,
             tx_error: None,
+            tx_failed: false,
             rx,
             remote_cfg: Arc::new(remote_cfg),
             needs_tx_accepted: direction == Direction::Incoming,
@@ -275,11 +280,22 @@ where
         self.link_id
     }
 
+    /// Checks whether the sink has failed.
+    fn check_tx_failed(&self) -> Result<(), io::Error> {
+        match self.tx_failed {
+            true => Err(Error::new(ErrorKind::ConnectionAborted, "link has failed")),
+            false => Ok(()),
+        }
+    }
+
     /// Returns the next event for this link.
     pub(crate) async fn event(&mut self) -> LinkIntEvent {
         let link_id = self.link_id();
 
         if let Some(err) = self.tx_error.take() {
+            return LinkIntEvent::TxError(err);
+        }
+        if let Err(err) = self.check_tx_failed() {
             return LinkIntEvent::TxError(err);
         }
 
@@ -307,7 +323,10 @@ where
                             self.tx_flushed = true;
                             break LinkIntEvent::TxFlushed;
                         }
-                        Err(err) => break LinkIntEvent::TxError(err),
+                        Err(err) => {
+                            self.tx_failed = true;
+                            break LinkIntEvent::TxError(err);
+                        }
                     }
                 } else {
                     let tx_ready = |cx: &mut Context| {
@@ -323,6 +342,7 @@ where
                             Some(data) => {
                                 self.tx_flushed = false;
                                 if let Err(err) = self.tx.start_send_unpin(data) {
+                                    self.tx_failed = true;
                                     break LinkIntEvent::TxError(err);
                                 }
                             }
@@ -333,6 +353,7 @@ where
                         },
                         Err(err) => {
                             tracing::debug!(?link_id, %err, "link poll ready failure");
+                            self.tx_failed = true;
                             break LinkIntEvent::TxError(err);
                         }
                     }
@@ -402,8 +423,10 @@ where
 
     /// Waits for the link to become ready, sends a message and flushes it.
     pub(crate) async fn send_msg_and_flush(&mut self, msg: LinkMsg) -> Result<(), io::Error> {
+        self.check_tx_failed()?;
+
         self.tx_polling = Some(Instant::now());
-        self.tx.send(msg.encode()).await?;
+        self.tx.send(msg.encode()).await.inspect_err(|_| self.tx_failed = true)?;
         self.tx_flushed = true;
         Ok(())
     }
@@ -414,6 +437,13 @@ where
     pub(crate) fn start_send_msg(&mut self, msg: LinkMsg, data: Option<Bytes>) {
         assert!(self.tx_polling.is_none());
         assert!(self.tx_data.is_none());
+
+        if let Err(err) = self.check_tx_failed() {
+            if self.tx_error.is_none() {
+                self.tx_error = Some(err);
+            }
+            return;
+        }
 
         self.tx_polling = Some(Instant::now());
         self.tx_flushed = false;
@@ -426,6 +456,7 @@ where
         if let Err(err) = self.tx.start_send_unpin(encoded) {
             tracing::debug!(link_id =? self.link_id, %err, "link send failure");
             self.tx_error = Some(err);
+            self.tx_failed = true;
             return;
         }
 
@@ -487,12 +518,20 @@ where
         self.tx_flushed = false;
         self.tx_idle_since = None;
 
+        if let Err(err) = self.check_tx_failed() {
+            if self.tx_error.is_none() {
+                self.tx_error = Some(err);
+            }
+            return 0;
+        }
+
         let mut sent = 0;
         while sent < data_limit {
             match poll_fn(|cx| self.tx.poll_ready_unpin(cx)).now_or_never() {
                 Some(Ok(())) => (),
                 Some(Err(err)) => {
                     self.tx_error = Some(err);
+                    self.tx_failed = true;
                     break;
                 }
                 None => break,
@@ -501,6 +540,7 @@ where
             let size = packet_size.min(data_limit - sent);
             if let Err(err) = self.tx.start_send_unpin(LinkMsg::TestData { size }.encode()) {
                 self.tx_error = Some(err);
+                self.tx_failed = true;
                 break;
             }
             sent += size;
