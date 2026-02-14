@@ -299,7 +299,15 @@ impl Acceptor {
 
         loop {
             // Notify of transport availability.
-            transports_present_tx.send_replace(!transport_tasks.is_empty());
+            transports_present_tx.send_if_modified(|v| {
+                let present = !transport_tasks.is_empty();
+                if *v != present {
+                    *v = present;
+                    true
+                } else {
+                    false
+                }
+            });
 
             enum ListenerEvent {
                 TransportAdded(AcceptingTransportPack),
@@ -324,9 +332,6 @@ impl Acceptor {
                     let mut active_transports = active_transports.write().await;
                     active_transports.retain(|at| at.strong_count() > 0);
                     active_transports.push(Arc::downgrade(&transport_pack.transport));
-
-                    // Notify of transport availability.
-                    transports_present_tx.send_replace(true);
 
                     // Start transport task.
                     transport_tasks.push(Self::transport_task(
