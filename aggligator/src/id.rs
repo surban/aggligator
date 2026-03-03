@@ -50,6 +50,11 @@ impl fmt::Debug for EncryptedConnId {
 
 impl EncryptedConnId {
     /// Encrypts the connection id with the first 16 bytes of the shared secret.
+    ///
+    /// XOR with the DH shared secret is sufficient here because each connection
+    /// uses a fresh ephemeral key exchange, making the shared secret a one-time key.
+    /// This protects against passive eavesdroppers; active MITM attacks are out of
+    /// scope and should be mitigated by using TLS on the link transport.
     pub fn new(id: ConnId, secret: &SharedSecret) -> Self {
         let key = BE::read_u128(secret.as_bytes());
         Self(key ^ id.0)
