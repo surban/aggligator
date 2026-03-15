@@ -1,6 +1,6 @@
 [package]
 name = "aggligator-util"
-version = "0.18.9"
+version = "0.18.10"
 description = "Aggligator command line utilities"
 categories = ["network-programming", "command-line-utilities"]
 keywords = ["aggligator", "multipath", "multiplex", "tcp", "mptcp"]
@@ -23,7 +23,7 @@ aggligator = { version = "0.9.9", path = "../aggligator", features = ["dump"] }
 aggligator-monitor = { version = "0.9.7", path = "../aggligator-monitor" }
 aggligator-transport-bluer = { version = "0.1.1", path = "../aggligator-transport-bluer", optional = true }
 aggligator-transport-tcp = { version = "0.2.4", path = "../aggligator-transport-tcp" }
-aggligator-transport-usb = { version = "0.5.1", path = "../aggligator-transport-usb", optional = true }
+aggligator-transport-usb = { version = "0.6.0", path = "../aggligator-transport-usb", optional = true }
 aggligator-transport-websocket = { version = "0.6.0", path = "../aggligator-transport-websocket" }
 aggligator-wrapper-tls = { version = "0.2.0", path = "../aggligator-wrapper-tls" }
 
