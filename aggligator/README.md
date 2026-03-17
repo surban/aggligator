@@ -97,7 +97,7 @@ automatically re-established.
 
 ## Minimum supported Rust version
 
-The minimum supported Rust version (MSRV) is 1.80.
+The minimum supported Rust version (MSRV) is 1.89.
 
 ## License
 
