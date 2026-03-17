@@ -1,7 +1,7 @@
 //! Integrity codec.
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use crc32fast::hash;
+use crc_fast::crc32_iso_hdlc;
 use std::{fmt, io, mem::size_of};
 use tokio_util::codec::{Decoder, Encoder};
 
@@ -108,7 +108,7 @@ impl IntegrityCodec {
 
         let data = src.split_to(header.length as usize);
 
-        if header.checksum != hash(&data) {
+        if header.checksum != crc32_iso_hdlc(&data) {
             return Err(io::Error::new(io::ErrorKind::InvalidData, IntegrityError::DataCorrupted));
         }
 
@@ -159,7 +159,7 @@ impl Encoder<Bytes> for IntegrityCodec {
         dst.put_u16(self.encode_seq);
         self.encode_seq = self.encode_seq.wrapping_add(1);
 
-        dst.put_u32(hash(&data));
+        dst.put_u32(crc32_iso_hdlc(&data));
 
         dst.extend_from_slice(&data[..]);
 

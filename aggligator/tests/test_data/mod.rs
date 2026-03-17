@@ -3,7 +3,7 @@
 
 use byteorder::{ReadBytesExt, WriteBytesExt, BE};
 use bytes::{Buf, Bytes};
-use crc32fast::hash;
+use crc_fast::crc32_iso_hdlc;
 use futures::join;
 use rand::prelude::*;
 use rand_xoshiro::SplitMix64;
@@ -53,7 +53,7 @@ impl Generator {
             packet.write_u8(rng.random()).unwrap();
         }
 
-        packet.write_u32::<BE>(hash(&packet)).unwrap();
+        packet.write_u32::<BE>(crc32_iso_hdlc(&packet)).unwrap();
 
         self.total += packet.len();
         Bytes::from(packet)
@@ -98,7 +98,7 @@ impl Verifier {
         reader.consume(packet.len() - 8);
 
         let cksum = reader.read_u32::<BE>()?;
-        let cksum2 = hash(&packet[..packet.len() - 4]);
+        let cksum2 = crc32_iso_hdlc(&packet[..packet.len() - 4]);
         if cksum != cksum2 {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "mismatched checksum"));
         }

@@ -27,7 +27,7 @@ async-trait = { workspace = true }
 atomic_refcell = { workspace = true }
 byteorder = { workspace = true }
 bytes = { workspace = true }
-crc32fast = { workspace = true }
+crc-fast = { workspace = true }
 futures = { workspace = true }
 rand = { workspace = true }
 rand_core = { workspace = true }
