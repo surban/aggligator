@@ -6,7 +6,7 @@ use bytes::{Buf, Bytes};
 use crc_fast::crc32_iso_hdlc;
 use futures::join;
 use rand::prelude::*;
-use rand_xoshiro::SplitMix64;
+use rand::rngs::Xoshiro256PlusPlus;
 use std::{
     io::{self, BufRead},
     num::Wrapping,
@@ -34,7 +34,7 @@ impl Generator {
 
     /// Generates the next test packet.
     pub fn packet(&mut self) -> Bytes {
-        let mut rng = SplitMix64::from_rng(&mut rand::rng());
+        let mut rng = Xoshiro256PlusPlus::from_rng(&mut rand::rng());
 
         let size = if self.seq.0 % 20 == 0 {
             self.min_size

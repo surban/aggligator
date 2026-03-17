@@ -17,7 +17,6 @@ aggligator = { version = "0.9.7", path = "../aggligator" }
 crossterm = { workspace = true }
 futures = { workspace = true }
 rand = { workspace = true }
-rand_xoshiro = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "sync"] }
 tracing = { workspace = true }
 

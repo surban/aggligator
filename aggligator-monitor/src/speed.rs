@@ -2,7 +2,7 @@
 
 use futures::future;
 use rand::prelude::*;
-use rand_xoshiro::Xoroshiro128StarStar;
+use rand::rngs::Xoshiro256PlusPlus;
 use std::{
     io::{Error, ErrorKind, Result},
     time::Duration,
@@ -102,7 +102,7 @@ pub async fn speed_test(
 
             let seed = rand::random();
             write.write_u64(seed).await?;
-            let mut rng = Xoroshiro128StarStar::seed_from_u64(seed);
+            let mut rng = Xoshiro256PlusPlus::seed_from_u64(seed);
 
             let mut sent_total = 0;
             let mut sent_interval = 0;
@@ -154,7 +154,7 @@ pub async fn speed_test(
             }
 
             let remote_seed = read.read_u64().await?;
-            let mut rng = Xoroshiro128StarStar::seed_from_u64(remote_seed);
+            let mut rng = Xoshiro256PlusPlus::seed_from_u64(remote_seed);
 
             if recv_block {
                 stop_tx.closed().await;
