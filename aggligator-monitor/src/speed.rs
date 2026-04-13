@@ -112,7 +112,7 @@ pub async fn speed_test(
                 && !sender_stop_tx.is_closed()
                 && start.elapsed() < duration.unwrap_or(Duration::MAX)
             {
-                assert!(BUF_SIZE % 8 == 0);
+                assert!(BUF_SIZE.is_multiple_of(8));
                 let mut buf = [0; BUF_SIZE];
                 rng.fill_bytes(&mut buf);
 

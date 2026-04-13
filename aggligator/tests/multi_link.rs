@@ -3,7 +3,6 @@
 use futures::{future, join};
 use std::{
     future::IntoFuture,
-    iter,
     num::{NonZeroU32, NonZeroUsize},
     time::Duration,
 };
@@ -391,7 +390,7 @@ async fn five_x_unlimited_multi_thread() {
         cfg: test_channel::Cfg { speed: 0, latency: None, ..Default::default() },
         ..Default::default()
     };
-    let link_descs: Vec<_> = iter::repeat(link_desc).take(5).collect();
+    let link_descs: Vec<_> = std::iter::repeat_n(link_desc, 5).collect();
     let alc_cfg = Cfg { ..Default::default() };
 
     multi_link_test(&link_descs, alc_cfg, 16384, 10000, 10_000_000, false, None).await;
@@ -404,7 +403,7 @@ async fn five_x_unlimited_current_thread() {
         cfg: test_channel::Cfg { speed: 0, latency: None, ..Default::default() },
         ..Default::default()
     };
-    let link_descs: Vec<_> = iter::repeat(link_desc).take(5).collect();
+    let link_descs: Vec<_> = std::iter::repeat_n(link_desc, 5).collect();
     let alc_cfg = Cfg { ..Default::default() };
 
     multi_link_test(&link_descs, alc_cfg, 16384, 10000, 10_000_000, false, None).await;
@@ -422,7 +421,7 @@ async fn five_x_very_high_latency() {
         },
         ..Default::default()
     };
-    let link_descs: Vec<_> = iter::repeat(link_desc).take(5).collect();
+    let link_descs: Vec<_> = std::iter::repeat_n(link_desc, 5).collect();
 
     let alc_cfg = Cfg {
         send_buffer: NonZeroU32::new(20_000_000).unwrap(),
@@ -445,7 +444,7 @@ async fn five_x_blocked() {
         cfg: test_channel::Cfg { speed: 0, latency: None, ..Default::default() },
         ..Default::default()
     };
-    let mut link_descs: Vec<_> = iter::repeat(link_desc).take(5).collect();
+    let mut link_descs: Vec<_> = std::iter::repeat_n(link_desc, 5).collect();
 
     link_descs[0].block = Some((0, Duration::from_secs(1)));
     link_descs[1].block = Some((1000, Duration::from_secs(1)));
@@ -470,7 +469,7 @@ async fn ten_x_hundert_kb_per_s() {
         },
         ..Default::default()
     };
-    let link_descs: Vec<_> = iter::repeat(link_desc).take(10).collect();
+    let link_descs: Vec<_> = std::iter::repeat_n(link_desc, 10).collect();
 
     let alc_cfg = Cfg { ..Default::default() };
 
@@ -608,7 +607,7 @@ async fn forceful_termination() {
         },
         ..Default::default()
     };
-    let link_descs: Vec<_> = iter::repeat(link_desc).take(5).collect();
+    let link_descs: Vec<_> = std::iter::repeat_n(link_desc, 5).collect();
 
     let alc_cfg = Cfg {
         send_buffer: NonZeroU32::new(20_000_000).unwrap(),

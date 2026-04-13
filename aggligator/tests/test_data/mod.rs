@@ -35,9 +35,9 @@ impl Generator {
     pub fn packet(&mut self) -> Bytes {
         let mut rng = Xoshiro256PlusPlus::from_rng(&mut rand::rng());
 
-        let size = if self.seq.0 % 20 == 0 {
+        let size = if self.seq.0.is_multiple_of(20) {
             self.min_size
-        } else if self.seq.0 % 10 == 0 {
+        } else if self.seq.0.is_multiple_of(10) {
             self.max_size
         } else {
             rng.random_range(self.min_size..self.max_size - 8)
