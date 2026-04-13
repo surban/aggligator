@@ -227,8 +227,10 @@ impl Sink<Bytes> for SenderSink {
         }
 
         let flushed_rx = this.flushed_rx.as_mut().unwrap();
-        ready!(flushed_rx.poll_unpin(cx)).map_err(|_| this.error_rx.borrow().clone())?;
+        let res = ready!(flushed_rx.poll_unpin(cx));
+        
         this.flushed_rx = None;
+        res.map_err(|_| this.error_rx.borrow().clone())?;
 
         Poll::Ready(Ok(()))
     }
