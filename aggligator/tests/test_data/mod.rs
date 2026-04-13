@@ -5,8 +5,7 @@ use byteorder::{ReadBytesExt, WriteBytesExt, BE};
 use bytes::{Buf, Bytes};
 use crc_fast::crc32_iso_hdlc;
 use futures::join;
-use rand::prelude::*;
-use rand::rngs::Xoshiro256PlusPlus;
+use rand::{prelude::*, rngs::Xoshiro256PlusPlus};
 use std::{
     io::{self, BufRead},
     num::Wrapping,

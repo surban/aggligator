@@ -5,8 +5,7 @@ use bytes::Bytes;
 use futures::{
     future, future::BoxFuture, stream, stream::FuturesUnordered, Future, FutureExt, Sink, Stream, StreamExt,
 };
-use rand::prelude::*;
-use rand::rngs::SmallRng;
+use rand::{prelude::*, rngs::SmallRng};
 use std::{
     collections::{HashSet, VecDeque},
     error::Error,

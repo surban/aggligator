@@ -1,8 +1,7 @@
 //! Speed test.
 
 use futures::future;
-use rand::prelude::*;
-use rand::rngs::Xoshiro256PlusPlus;
+use rand::{prelude::*, rngs::Xoshiro256PlusPlus};
 use std::{
     io::{Error, ErrorKind, Result},
     time::Duration,
