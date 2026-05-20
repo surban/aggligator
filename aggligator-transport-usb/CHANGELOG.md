@@ -5,6 +5,12 @@ All notable changes to the Aggligator USB transport will be documented in this f
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.7.0 - 2026-05-20
+### Changed
+- update upc to 1.0
+- update usb-gadget to 1.2
+- update aggligator to 0.9.11
+
 ## 0.6.0 - 2026-03-15
 ### Changed
 - update upc to 0.10

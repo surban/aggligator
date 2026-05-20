@@ -70,7 +70,7 @@ dependencies = [
 
 [[package]]
 name = "aggligator-transport-usb"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "aggligator",
  "async-trait",
@@ -2368,9 +2368,9 @@ checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
 name = "upc"
-version = "0.10.7"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c078f590e70e914868dcedfb1abecd40d96d1350eb16504b0ee1595cbcfbb84e"
+checksum = "bcb340b99ed2aaea4a775fa09b6737ae7cb9ae70b9e741dd0e1bb9d1f76112a4"
 dependencies = [
  "bytes",
  "futures",
@@ -2395,9 +2395,9 @@ dependencies = [
 
 [[package]]
 name = "usb-gadget"
-version = "1.1.1"
+version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7010a310d9c6caac0282c94a0ab830d7dec675bb62241553f681cc795e0f4d31"
+checksum = "a57f5767e127a41fefc1de7f55bfe707e1080de797ccf3e3089c7d35635cfd3a"
 dependencies = [
  "bitflags",
  "byteorder",
