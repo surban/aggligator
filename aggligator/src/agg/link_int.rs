@@ -28,6 +28,33 @@ use crate::{
     seq::Seq,
 };
 
+/// Optional deadline.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct Deadline(pub Option<Instant>);
+
+impl Deadline {
+    /// Unset deadline.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Require specified deadline.
+    pub fn require(&mut self, deadline: Instant) {
+        match self.0 {
+            None => self.0 = Some(deadline),
+            Some(other) => self.0 = Some(other.min(deadline)),
+        }
+    }
+
+    /// Wait until deadline elapses or forever, if unset.
+    pub async fn wait(&self) {
+        match self.0 {
+            None => future::pending().await,
+            Some(deadline) => sleep_until(deadline).await,
+        }
+    }
+}
+
 /// Link event.
 #[derive(Debug)]
 pub(crate) enum LinkIntEvent {
@@ -46,8 +73,8 @@ pub(crate) enum LinkIntEvent {
     },
     /// Receiving over the link has failed.
     RxError(io::Error),
-    /// Link has been idle for the configured flush delay and now requires flushing.
-    FlushDelayPassed,
+    /// Link now requires flushing.
+    FlushRequired,
     /// Local disconnection request.
     Disconnect,
     /// Link blocked status has changed.
@@ -110,8 +137,8 @@ pub(crate) struct LinkInt<TX, RX, TAG> {
     tx_idle_since: Option<Instant>,
     /// Performing flushing of sink `tx`.
     tx_flushing: bool,
-    /// Whether no message has been sent since last flush.
-    tx_flushed: bool,
+    /// When a message was first sent over link after it was flushed.
+    tx_first_sent: Option<Instant>,
     /// Number of bytes sent for which no acknowledgement has been received yet.
     pub(crate) txed_unacked_data: usize,
     /// Limit of sent unacknowledged bytes.
@@ -252,7 +279,7 @@ where
             unconfirmed_rx,
             test: LinkTest::Inactive,
             tx_flushing: false,
-            tx_flushed: true,
+            tx_first_sent: None,
             rxed_data_msg: None,
             tx_last_msg: None,
             txed_unacked: None,
@@ -309,7 +336,8 @@ where
             }
         });
 
-        let flushable = !(self.tx_flushing || self.tx_flushed);
+        let tx_first_sent = self.tx_first_sent;
+        let tx_flushing = self.tx_flushing;
 
         let tx_task = async {
             loop {
@@ -320,7 +348,7 @@ where
                     match self.tx.flush().await {
                         Ok(()) => {
                             self.tx_flushing = false;
-                            self.tx_flushed = true;
+                            self.tx_first_sent = None;
                             break LinkIntEvent::TxFlushed;
                         }
                         Err(err) => {
@@ -340,7 +368,7 @@ where
                     match poll_fn(tx_ready).await {
                         Ok(()) => match self.tx_data.take() {
                             Some(data) => {
-                                self.tx_flushed = false;
+                                self.tx_first_sent.get_or_insert_with(Instant::now);
                                 if let Err(err) = self.tx.start_send_unpin(data) {
                                     self.tx_failed = true;
                                     break LinkIntEvent::TxError(err);
@@ -406,16 +434,27 @@ where
         };
 
         let flush_req_task = async {
-            match self.tx_idle_since {
-                Some(idle_since) if flushable => sleep_until(idle_since + self.cfg.link_flush_delay).await,
-                _ => future::pending().await,
+            let mut deadline = Deadline::new();
+
+            match tx_first_sent {
+                Some(tx_first_sent) if !tx_flushing => {
+                    if let Some(idle_since) = self.tx_idle_since {
+                        deadline.require(idle_since + self.cfg.link_flush_delay);
+                    }
+                    if let Some(link_flush_interval) = self.cfg.link_flush_interval {
+                        deadline.require(tx_first_sent + link_flush_interval);
+                    }
+                }
+                _ => (),
             }
+
+            deadline.wait().await;
         };
 
         select! {
             tx_event = tx_task => tx_event,
             rx_event = rx_task => rx_event,
-            () = flush_req_task => LinkIntEvent::FlushDelayPassed,
+            () = flush_req_task => LinkIntEvent::FlushRequired,
             Some(()) = self.disconnect_rx.recv() => LinkIntEvent::Disconnect,
             Some(()) = self.blocked_changed_rx.recv() => LinkIntEvent::BlockedChanged,
         }
@@ -427,7 +466,7 @@ where
 
         self.tx_polling = Some(Instant::now());
         self.tx.send(msg.encode()).await.inspect_err(|_| self.tx_failed = true)?;
-        self.tx_flushed = true;
+        self.tx_first_sent.get_or_insert_with(Instant::now);
         Ok(())
     }
 
@@ -446,7 +485,7 @@ where
         }
 
         self.tx_polling = Some(Instant::now());
-        self.tx_flushed = false;
+        self.tx_first_sent.get_or_insert_with(Instant::now);
         self.tx_idle_since = None;
 
         let encoded = msg.encode();
@@ -496,7 +535,7 @@ where
 
     /// Whether flushing is required.
     pub(crate) fn needs_flush(&self) -> bool {
-        !self.tx_flushed && !self.tx_flushing
+        self.tx_first_sent.is_some() && !self.tx_flushing
     }
 
     /// Whether the link has an outstanding acknowledgement.
@@ -515,7 +554,7 @@ where
         assert!(self.tx_data.is_none());
 
         self.tx_polling = Some(Instant::now());
-        self.tx_flushed = false;
+        self.tx_first_sent.get_or_insert_with(Instant::now);
         self.tx_idle_since = None;
 
         if let Err(err) = self.check_tx_failed() {
@@ -623,6 +662,11 @@ where
         self.txed_unacked_data_limit = self.txed_unacked_data_limit.clamp(128, self.cfg.link_unacked_init.get());
         self.txed_unacked_data_limit_increased = None;
         self.txed_unacked_data_limit_increased_consecutively = 0;
+
+        tracing::trace!(link_id =? self.link_id(),
+            "decreasing unacked limit of link to {} bytes",
+            self.txed_unacked_data_limit
+        );
     }
 
     /// Whether link is blocked locally or remotely.
@@ -741,7 +785,7 @@ impl<TX, RX, TAG> From<&LinkInt<TX, RX, TAG>> for super::dump::LinkDump {
             link_id: link.link_id.0,
             unconfirmed: link.unconfirmed.is_some(),
             tx_flushing: link.tx_flushing,
-            tx_flushed: link.tx_flushed,
+            tx_flushed: link.tx_first_sent.is_none(),
             roundtrip: link.roundtrip.as_secs_f32(),
             tx_ack_queue: link.tx_ack_queue.len(),
             txed_unacked_data: link.txed_unacked_data,

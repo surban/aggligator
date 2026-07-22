@@ -118,6 +118,14 @@ impl Sender {
     /// Flushes data queued for sending.
     #[inline]
     pub async fn flush(&self) -> Result<(), SendError> {
+        if self.cfg.ignore_flush {
+            if self.tx.is_closed() {
+                return Err(self.error_rx.borrow().clone());
+            } else {
+                return Ok(());
+            }
+        }
+
         let (flushed_tx, flushed_rx) = oneshot::channel();
         self.tx.send(SendReq::Flush(flushed_tx)).await.map_err(|_| self.error_rx.borrow().clone())?;
         flushed_rx.await.map_err(|_| self.error_rx.borrow().clone())?;
@@ -216,6 +224,14 @@ impl Sink<Bytes> for SenderSink {
 
         if this.closed {
             return Poll::Ready(Ok(()));
+        }
+
+        if this.cfg.ignore_flush {
+            if this.tx.is_closed() {
+                return Poll::Ready(Err(this.error_rx.borrow().clone()));
+            } else {
+                return Poll::Ready(Ok(()));
+            }
         }
 
         if this.flushed_rx.is_none() {

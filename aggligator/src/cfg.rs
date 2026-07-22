@@ -39,6 +39,12 @@ pub enum LinkPing {
 pub struct Cfg {
     /// The size of a data packet when sending using [stream-based IO](crate::alc::Stream).
     pub io_write_size: NonZeroUsize,
+    /// Ignore explicit flush requests by [`Sender::flush`](crate::alc::Sender::flush)
+    /// and the [sender sink](crate::alc::SenderSink).
+    ///
+    /// Automatic flushing by [`link_flush_delay`](Self::link_flush_delay) and
+    /// [`link_flush_interval`](Self::link_flush_interval) is unaffected.
+    pub ignore_flush: bool,
     /// Maximum number of unacknowledged sent bytes.
     pub send_buffer: NonZeroU32,
     /// Length of queue for sending data packets.
@@ -75,6 +81,8 @@ pub struct Cfg {
     pub link_non_working_timeout: Duration,
     /// Delay before flushing a link when it has become idle.
     pub link_flush_delay: Duration,
+    /// Interval for flushing non-idle links.
+    pub link_flush_interval: Option<Duration>,
     /// Timeout after which connection is closed when no working links are present.
     pub no_link_timeout: Duration,
     /// Timeout after which connection is forcefully closed when sender and receiver are closed.
@@ -94,6 +102,7 @@ impl Default for Cfg {
     fn default() -> Self {
         Self {
             io_write_size: NonZeroUsize::new(8_192).unwrap(),
+            ignore_flush: false,
             send_buffer: NonZeroU32::new(134_217_728).unwrap(),
             send_queue: NonZeroUsize::new(1024).unwrap(),
             recv_buffer: NonZeroU32::new(134_217_728).unwrap(),
@@ -109,7 +118,8 @@ impl Default for Cfg {
             link_test_data_limit: usize::MAX,
             link_retest_interval: Duration::from_secs(15),
             link_non_working_timeout: Duration::from_secs(600),
-            link_flush_delay: Duration::from_millis(500),
+            link_flush_delay: Duration::from_millis(5),
+            link_flush_interval: Some(Duration::from_millis(10)),
             no_link_timeout: Duration::from_secs(90),
             termination_timeout: Duration::from_secs(300),
             connect_queue: NonZeroUsize::new(32).unwrap(),

@@ -878,7 +878,7 @@ where
                                 }
                             }
                         }
-                        LinkIntEvent::FlushDelayPassed => {
+                        LinkIntEvent::FlushRequired => {
                             // Link requires send buffer flushing.
                             let link = self.links[id].as_mut().unwrap();
                             tracing::trace!(?link_id, "flushing link");
