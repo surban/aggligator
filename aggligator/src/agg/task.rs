@@ -1318,10 +1318,60 @@ where
                     }
                 }
             }
-            None => {
-                all_links_slow = true;
+            None => all_links_slow = true,
+        }
+
+        // Determine minimum ping and calculate allowable ping spread.
+        const MIN_ROUNDTRIP_ESTIMATES: usize = 10;
+        let min_ping = self
+            .links
+            .iter()
+            .filter_map(|link_opt| link_opt.as_ref())
+            .filter(|link| {
+                link.unconfirmed.is_none()
+                    && !link.is_blocked()
+                    && link.roundtrip_estimates.is_some_and(|n| n >= 10)
+            })
+            .map(|link| link.roundtrip)
+            .min();
+        let (limit_ping, good_ping) =
+            if let (Some(link_max_ping_spread), Some(min_ping)) = (self.cfg.link_max_ping_spread, min_ping) {
+                let limit_ping = min_ping * link_max_ping_spread;
+                let good_ping = (min_ping + 3 * limit_ping) / 4;
+                (Some(limit_ping), Some(good_ping))
+            } else {
+                (None, None)
+            };
+
+        // Decrease limit of links with ping above allowable ping spread.
+        if let Some(limit_ping) = limit_ping {
+            for link_opt in &mut self.links {
+                match link_opt {
+                    Some(link)
+                        if link.unconfirmed.is_none()
+                            && !link.is_blocked()
+                            && link.roundtrip > limit_ping
+                            && link.roundtrip_estimates.is_some_and(|n| n >= MIN_ROUNDTRIP_ESTIMATES) =>
+                    {
+                        // Decrease limit.
+                        let current = link.txed_unacked_data.min(link.txed_unacked_data_limit);
+                        link.txed_unacked_data_limit = current * 95 / 100;
+                        tracing::trace!(link_id =? link.link_id(),
+                            "decreasing unacked limit of link to {} bytes due to ping spread limit ({} ms, limit={} ms)",
+                            link.txed_unacked_data_limit,
+                            link.roundtrip.as_millis(),
+                            limit_ping.as_millis(),
+                        );
+
+                        // Block link from increasing its send data limit.
+                        link.txed_unacked_data_limit_increased = Some(coming_seq);
+                        link.txed_unacked_data_limit_increased_consecutively = 0;
+                        link.roundtrip_estimates = None;
+                    }
+                    _ => (),
+                }
             }
-        };
+        }
 
         // Check if data is available for sending but no link is available.
         let send_data_avail = self.write_rx.as_mut().map(|rx| rx.try_peek().is_ok()).unwrap_or_default()
@@ -1352,8 +1402,11 @@ where
                             && self
                                 .cfg
                                 .link_max_ping
-                                .map(|max_ping| link.roundtrip <= max_ping / 2 || all_links_slow)
-                                .unwrap_or(true) =>
+                                .is_none_or(|max_ping| link.roundtrip <= max_ping / 2 || all_links_slow)
+                            && good_ping.is_none_or(|good_ping| {
+                                link.roundtrip <= good_ping
+                                    && link.roundtrip_estimates.is_some_and(|n| n >= MIN_ROUNDTRIP_ESTIMATES)
+                            }) =>
                     {
                         // Increase limit, faster if done many times consecutively.
                         link.txed_unacked_data_limit =
@@ -1380,6 +1433,7 @@ where
                         link.txed_unacked_data_limit_increased = Some(coming_seq);
                         link.txed_unacked_data_limit_increased_consecutively =
                             link.txed_unacked_data_limit_increased_consecutively.saturating_add(1);
+                        link.roundtrip_estimates = None;
                     }
                     _ => (),
                 }
@@ -1709,6 +1763,7 @@ where
                     let elapsed = current_ping_sent.elapsed();
                     tracing::trace!(?link_id, "ping round-trip time is {} ms", elapsed.as_millis());
                     link.roundtrip = elapsed;
+                    link.roundtrip_estimates = Some(1);
                     link.last_ping = Some(Instant::now());
                     self.link_testing_step(id);
                 }
@@ -1860,12 +1915,13 @@ where
         tracing::trace!(?link_id, "processing received ack for {rxed_seq} on link");
 
         // Possibly unblock send buffer increase.
-        match link.txed_unacked_data_limit_increased {
-            Some(last_increased) if last_increased <= rxed_seq => {
+        if let Some(last_increased) = link.txed_unacked_data_limit_increased {
+            if last_increased <= rxed_seq {
                 tracing::trace!(?link_id, "re-allowing increase of send limit of link");
                 link.txed_unacked_data_limit_increased = None;
+            } else {
+                link.roundtrip_estimates = Some(0);
             }
-            _ => (),
         }
 
         // Remove packet that has been received by remote endpoint.
@@ -1884,7 +1940,15 @@ where
                     self.txed_unacked -= size;
                     self.txed_unconsumable += size;
 
-                    link.roundtrip = (99 * link.roundtrip + sent.elapsed()) / 100;
+                    if link.roundtrip_estimates == Some(0) {
+                        link.roundtrip = sent.elapsed();
+                    } else {
+                        link.roundtrip = (99 * link.roundtrip + sent.elapsed()) / 100;
+                    }
+
+                    if let Some(n) = &mut link.roundtrip_estimates {
+                        *n = n.saturating_add(1);
+                    }
 
                     *status = SentReliableStatus::Received { size };
                 }

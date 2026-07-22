@@ -73,6 +73,8 @@ pub struct Cfg {
     ///
     /// A link is used anyways if all links have a ping higher than the specified value.
     pub link_max_ping: Option<Duration>,
+    /// Maximum factor by which highest ping may exceed lowest ping.
+    pub link_max_ping_spread: Option<u32>,
     /// Maximum amount of data to send to test the functionality of a link before using it.
     pub link_test_data_limit: usize,
     /// Time to wait before link is tested again after a test has failed.
@@ -104,7 +106,7 @@ impl Default for Cfg {
             io_write_size: NonZeroUsize::new(8_192).unwrap(),
             ignore_flush: false,
             send_buffer: NonZeroU32::new(134_217_728).unwrap(),
-            send_queue: NonZeroUsize::new(1024).unwrap(),
+            send_queue: NonZeroUsize::new(8).unwrap(),
             recv_buffer: NonZeroU32::new(134_217_728).unwrap(),
             recv_queue: NonZeroUsize::new(1024).unwrap(),
             link_ack_timeout_min: Duration::from_secs(1),
@@ -115,6 +117,7 @@ impl Default for Cfg {
             link_ping: LinkPing::WhenIdle(Duration::from_secs(15)),
             link_ping_timeout: Duration::from_secs(40),
             link_max_ping: None,
+            link_max_ping_spread: None,
             link_test_data_limit: usize::MAX,
             link_retest_interval: Duration::from_secs(15),
             link_non_working_timeout: Duration::from_secs(600),

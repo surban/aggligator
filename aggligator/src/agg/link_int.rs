@@ -186,6 +186,8 @@ pub(crate) struct LinkInt<TX, RX, TAG> {
     pub(crate) test: LinkTest,
     /// Last measured roundtrip duration.
     pub(crate) roundtrip: Duration,
+    /// Number of reliable roundtrip estimates.
+    pub(crate) roundtrip_estimates: Option<usize>,
     /// When last ping has been performed.
     pub(crate) last_ping: Option<Instant>,
     /// When current (not yet answered) ping has been sent.
@@ -288,6 +290,7 @@ where
             send_ping: false,
             send_pong: false,
             roundtrip,
+            roundtrip_estimates: Some(0),
             disconnecting: None,
             txed_unacked_data: 0,
             txed_unacked_data_limit: cfg.link_unacked_init.get(),
