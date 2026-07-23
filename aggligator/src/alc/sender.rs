@@ -200,6 +200,12 @@ impl Sink<Bytes> for SenderSink {
             return Poll::Ready(Err(SendError::Shutdown));
         }
 
+        if let Some(flushed_rx) = &mut this.flushed_rx {
+            let res = ready!(flushed_rx.poll_unpin(cx));
+            this.flushed_rx = None;
+            res.map_err(|_| this.error_rx.borrow().clone())?;
+        }
+
         this.tx.poll_ready_unpin(cx).map_err(|_| this.error_rx.borrow().clone())
     }
 
