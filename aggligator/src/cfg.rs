@@ -85,6 +85,8 @@ pub struct Cfg {
     pub link_flush_delay: Duration,
     /// Interval for flushing non-idle links.
     pub link_flush_interval: Option<Duration>,
+    /// Target packet size for [IO-stream-based links](crate::io).
+    pub link_io_packet_size: NonZeroUsize,
     /// Timeout after which connection is closed when no working links are present.
     pub no_link_timeout: Duration,
     /// Timeout after which connection is forcefully closed when sender and receiver are closed.
@@ -121,8 +123,9 @@ impl Default for Cfg {
             link_test_data_limit: usize::MAX,
             link_retest_interval: Duration::from_secs(15),
             link_non_working_timeout: Duration::from_secs(600),
-            link_flush_delay: Duration::from_millis(5),
-            link_flush_interval: Some(Duration::from_millis(10)),
+            link_flush_delay: Duration::from_millis(10),
+            link_flush_interval: None,
+            link_io_packet_size: NonZeroUsize::new(65_536).unwrap(),
             no_link_timeout: Duration::from_secs(90),
             termination_timeout: Duration::from_secs(300),
             connect_queue: NonZeroUsize::new(32).unwrap(),

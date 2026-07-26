@@ -285,6 +285,7 @@ impl<TX, RX, TAG> ServerInner<TX, RX, TAG> {
 /// Clones share the same underlying server.
 pub struct Server<TX, RX, TAG> {
     server_id: ServerId,
+    cfg: Arc<Cfg>,
     inner: Arc<Mutex<ServerInner<TX, RX, TAG>>>,
 }
 
@@ -296,7 +297,7 @@ impl<TX, RX, TAG> fmt::Debug for Server<TX, RX, TAG> {
 
 impl<TX, RX, TAG> Clone for Server<TX, RX, TAG> {
     fn clone(&self) -> Self {
-        Self { server_id: self.server_id, inner: self.inner.clone() }
+        Self { server_id: self.server_id, cfg: self.cfg.clone(), inner: self.inner.clone() }
     }
 }
 
@@ -309,12 +310,18 @@ where
     /// Creates a new link aggregator server.
     pub fn new(cfg: Cfg) -> Self {
         let server_id = ServerId::generate();
-        Self { server_id, inner: Arc::new(Mutex::new(ServerInner::new(Arc::new(cfg), server_id))) }
+        let cfg = Arc::new(cfg);
+        Self { server_id, cfg: cfg.clone(), inner: Arc::new(Mutex::new(ServerInner::new(cfg, server_id))) }
     }
 
     /// The server id.
     pub fn id(&self) -> ServerId {
         self.server_id
+    }
+
+    /// The configuration of the server.
+    pub fn cfg(&self) -> &Cfg {
+        &self.cfg
     }
 
     /// Starts building a new outgoing connection.
@@ -598,7 +605,9 @@ where
     pub async fn add_incoming_io(
         &self, read: R, write: W, tag: TAG, user_data: &[u8],
     ) -> Result<Link<TAG>, IncomingError> {
-        self.add_incoming(IoTx::new(write), IoRx::new(read), tag, user_data).await
+        let tx = IoTx::with_capacity(write, self.cfg.link_io_packet_size.get());
+        let rx = IoRx::with_capacity(read, self.cfg.link_io_packet_size.get());
+        self.add_incoming(tx, rx, tag, user_data).await
     }
 }
 

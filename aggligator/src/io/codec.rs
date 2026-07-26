@@ -41,6 +41,8 @@ pub struct IntegrityCodec {
     decode_seq: u16,
     /// Next sequence number for encoding
     encode_seq: u16,
+    /// Decode buffer size.
+    decode_buffer_size: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -60,7 +62,13 @@ impl IntegrityCodec {
 
     /// Creates a new `IntegrityCodec` with the default configuration values.
     pub fn new() -> Self {
-        Self { max_frame_len: 8 * 1_024 * 1_024, state: DecodeState::Header, decode_seq: 0, encode_seq: 0 }
+        Self {
+            max_frame_len: 8 * 1_024 * 1_024,
+            state: DecodeState::Header,
+            decode_seq: 0,
+            encode_seq: 0,
+            decode_buffer_size: None,
+        }
     }
 
     /// Returns the maximum packet size.
@@ -81,6 +89,7 @@ impl IntegrityCodec {
 
     fn decode_header(&mut self, src: &mut BytesMut) -> io::Result<Option<Header>> {
         if src.len() < Self::HEADER_LEN {
+            src.reserve(Self::HEADER_LEN);
             return Ok(None);
         }
 
@@ -121,6 +130,10 @@ impl Decoder for IntegrityCodec {
     type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> io::Result<Option<BytesMut>> {
+        if self.decode_buffer_size.is_none() {
+            self.decode_buffer_size = Some(src.capacity());
+        }
+
         let header = match self.state {
             DecodeState::Header => match self.decode_header(src)? {
                 Some(header) => {
@@ -135,11 +148,17 @@ impl Decoder for IntegrityCodec {
         match self.decode_data(header, src)? {
             Some(data) => {
                 self.state = DecodeState::Header;
-                src.reserve(Self::HEADER_LEN.saturating_sub(src.len()));
-
+                if let Some(size) = self.decode_buffer_size {
+                    src.reserve(size);
+                }
                 Ok(Some(data))
             }
-            None => Ok(None),
+            None => {
+                if let Some(size) = self.decode_buffer_size {
+                    src.reserve(size);
+                }
+                Ok(None)
+            }
         }
     }
 }

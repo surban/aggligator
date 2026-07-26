@@ -397,7 +397,8 @@ impl Acceptor {
                 // Add link to aggregated connection.
                 tracing::debug!(%tag, "adding link to connection");
                 let user_data = tag.user_data();
-                let TxRxBox { tx, rx } = stream_box.into_tx_rx();
+                let TxRxBox { tx, rx } =
+                    stream_box.into_tx_rx_with_capacity(server.cfg().link_io_packet_size.get());
                 let link = match server.add_incoming(tx, rx, tag.clone(), &user_data).await {
                     Ok(link) => link,
                     Err(err) => {

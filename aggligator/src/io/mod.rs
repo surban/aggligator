@@ -32,12 +32,23 @@ where
 {
     /// Wraps an IO writer using the default configuration of the integrity codec.
     pub fn new(write: W) -> Self {
-        Self(FramedWrite::new(write, IntegrityCodec::new()))
+        Self::with_codec(write, IntegrityCodec::new())
+    }
+
+    /// Wraps and IO writer using the default configuration of the integrity codec and
+    /// the specified write buffer capacity.
+    pub fn with_capacity(write: W, capacity: usize) -> Self {
+        Self::with_codec_and_capacity(write, IntegrityCodec::new(), capacity)
     }
 
     /// Wraps an IO writer using a customized integrity codec.
     pub fn with_codec(write: W, codec: IntegrityCodec) -> Self {
         Self(FramedWrite::new(write, codec))
+    }
+
+    /// Wraps an IO writer using a customized integrity codec and write buffer capacity.
+    pub fn with_codec_and_capacity(write: W, codec: IntegrityCodec, capacity: usize) -> Self {
+        Self(FramedWrite::with_capacity(write, codec, capacity))
     }
 }
 
@@ -77,12 +88,23 @@ where
 {
     /// Wraps an IO reader using the default configuration of the integrity codec.
     pub fn new(read: R) -> Self {
-        Self(FramedRead::new(read, IntegrityCodec::new()))
+        Self::with_codec(read, IntegrityCodec::new())
+    }
+
+    /// Wraps and IO reader using the default configuration of the integrity codec and
+    /// the specified write buffer capacity.
+    pub fn with_capacity(read: R, capacity: usize) -> Self {
+        Self::with_codec_and_capacity(read, IntegrityCodec::new(), capacity)
     }
 
     /// Wraps an IO reader using a customized integrity codec.
     pub fn with_codec(read: R, codec: IntegrityCodec) -> Self {
         Self(FramedRead::new(read, codec))
+    }
+
+    /// Wraps an IO reader using a customized integrity codec and write buffer capacity.
+    pub fn with_codec_and_capacity(read: R, codec: IntegrityCodec, capacity: usize) -> Self {
+        Self(FramedRead::with_capacity(read, codec, capacity))
     }
 }
 
@@ -127,6 +149,21 @@ impl StreamBox {
             Self::Io(IoBox { read, write }) => {
                 let tx = IoTxBox::new(write);
                 let rx = IoRxBox::new(read);
+                TxRxBox::new(tx, rx)
+            }
+        }
+    }
+
+    /// Make stream packet-based with specified buffer capacity.
+    ///
+    /// A packet-based stream is unaffacted.
+    /// An IO-based stream is wrapped in the integrity codec with the specified buffer capacity.    
+    pub fn into_tx_rx_with_capacity(self, capacity: usize) -> TxRxBox {
+        match self {
+            Self::TxRx(tx_rx) => tx_rx,
+            Self::Io(IoBox { read, write }) => {
+                let tx = IoTxBox::with_capacity(write, capacity);
+                let rx = IoRxBox::with_capacity(read, capacity);
                 TxRxBox::new(tx, rx)
             }
         }

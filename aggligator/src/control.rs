@@ -434,7 +434,9 @@ where
     /// # Panics
     /// Panics when the size of `user_data` exceeds [`u16::MAX`].
     pub async fn add_io(&self, read: R, write: W, tag: TAG, user_data: &[u8]) -> Result<Link<TAG>, AddLinkError> {
-        self.add(IoTx::new(write), IoRx::new(read), tag, user_data).await
+        let tx = IoTx::with_capacity(write, self.cfg.link_io_packet_size.get());
+        let rx = IoRx::with_capacity(read, self.cfg.link_io_packet_size.get());
+        self.add(tx, rx, tag, user_data).await
     }
 }
 
