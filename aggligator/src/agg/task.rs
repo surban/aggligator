@@ -1366,19 +1366,25 @@ where
             }
         }
 
+        // Count number of working links.
+        let working_link_count = self
+            .links
+            .iter()
+            .filter(|link_opt| {
+                link_opt.as_ref().is_some_and(|link| link.unconfirmed.is_none() && !link.is_blocked())
+            })
+            .count();
+
         // Check if data is available for sending but no link is available.
         let send_data_avail = self.write_rx.as_mut().map(|rx| rx.try_peek().is_ok()).unwrap_or_default()
             || !self.resend_queue.is_empty();
         let sendable_link_avail = self.links.iter().any(|link_opt| {
-            link_opt
-                .as_ref()
-                .map(|link| {
-                    !link.tx_pending
-                        && link.unconfirmed.is_none()
-                        && !link.is_blocked()
-                        && link.txed_unacked_data < link.txed_unacked_data_limit
-                })
-                .unwrap_or_default()
+            link_opt.as_ref().is_some_and(|link| {
+                !link.tx_pending
+                    && link.unconfirmed.is_none()
+                    && !link.is_blocked()
+                    && link.txed_unacked_data < link.txed_unacked_data_limit
+            })
         });
 
         // Increase the unacked data limits of links that are currently blocked by it.
@@ -1402,19 +1408,20 @@ where
                             }) =>
                     {
                         // Increase limit, faster if done many times consecutively.
-                        link.txed_unacked_data_limit =
-                            if link.txed_unacked_data_limit_increased_consecutively >= 100 {
-                                link.txed_unacked_data_limit * 120 / 100
-                            } else if link.txed_unacked_data_limit_increased_consecutively >= 50 {
-                                link.txed_unacked_data_limit * 110 / 100
-                            } else if link.txed_unacked_data_limit_increased_consecutively >= 25 {
-                                link.txed_unacked_data_limit * 105 / 100
-                            } else if link.txed_unacked_data_limit_increased_consecutively >= 10 {
-                                link.txed_unacked_data_limit * 102 / 100
-                            } else {
-                                link.txed_unacked_data_limit * 101 / 100
-                            }
-                            .max(100);
+                        link.txed_unacked_data_limit = if working_link_count == 1 {
+                            link.txed_unacked_data_limit * 2
+                        } else if link.txed_unacked_data_limit_increased_consecutively >= 100 {
+                            link.txed_unacked_data_limit * 120 / 100
+                        } else if link.txed_unacked_data_limit_increased_consecutively >= 50 {
+                            link.txed_unacked_data_limit * 110 / 100
+                        } else if link.txed_unacked_data_limit_increased_consecutively >= 25 {
+                            link.txed_unacked_data_limit * 105 / 100
+                        } else if link.txed_unacked_data_limit_increased_consecutively >= 10 {
+                            link.txed_unacked_data_limit * 102 / 100
+                        } else {
+                            link.txed_unacked_data_limit * 101 / 100
+                        }
+                        .max(100);
 
                         tracing::trace!(link_id =? link.link_id(),
                             "increasing unacked limit of link to {} bytes (done {} times without overrun)",
