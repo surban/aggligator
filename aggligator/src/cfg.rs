@@ -85,6 +85,8 @@ pub struct Cfg {
     pub link_flush_delay: Duration,
     /// Interval for flushing non-idle links.
     pub link_flush_interval: Option<Duration>,
+    /// Maximum age of unflushed acknowledgements.
+    pub link_ack_flush_interval: Option<Duration>,
     /// Target packet size for [IO-stream-based links](crate::io).
     pub link_io_packet_size: NonZeroUsize,
     /// Timeout after which connection is closed when no working links are present.
@@ -108,9 +110,9 @@ impl Default for Cfg {
             io_write_size: NonZeroUsize::new(8_192).unwrap(),
             ignore_flush: false,
             send_buffer: NonZeroU32::new(134_217_728).unwrap(),
-            send_queue: NonZeroUsize::new(8).unwrap(),
+            send_queue: NonZeroUsize::new(16).unwrap(),
             recv_buffer: NonZeroU32::new(134_217_728).unwrap(),
-            recv_queue: NonZeroUsize::new(1024).unwrap(),
+            recv_queue: NonZeroUsize::new(16).unwrap(),
             link_ack_timeout_min: Duration::from_secs(1),
             link_ack_timeout_roundtrip_factor: NonZeroU32::new(5).unwrap(),
             link_ack_timeout_max: Duration::from_secs(30),
@@ -120,11 +122,12 @@ impl Default for Cfg {
             link_ping_timeout: Duration::from_secs(40),
             link_max_ping: None,
             link_max_ping_spread: None,
-            link_test_data_limit: usize::MAX,
+            link_test_data_limit: 65_536,
             link_retest_interval: Duration::from_secs(15),
             link_non_working_timeout: Duration::from_secs(600),
-            link_flush_delay: Duration::from_millis(10),
+            link_flush_delay: Duration::from_millis(50),
             link_flush_interval: None,
+            link_ack_flush_interval: Some(Duration::from_millis(50)),
             link_io_packet_size: NonZeroUsize::new(65_536).unwrap(),
             no_link_timeout: Duration::from_secs(90),
             termination_timeout: Duration::from_secs(300),

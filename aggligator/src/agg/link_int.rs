@@ -30,7 +30,10 @@ use crate::{
 
 /// Optional deadline.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-struct Deadline(pub Option<Instant>);
+struct Deadline {
+    instant: Option<Instant>,
+    reason: &'static str,
+}
 
 impl Deadline {
     /// Unset deadline.
@@ -39,18 +42,21 @@ impl Deadline {
     }
 
     /// Require specified deadline.
-    pub fn require(&mut self, deadline: Instant) {
-        match self.0 {
-            None => self.0 = Some(deadline),
-            Some(other) => self.0 = Some(other.min(deadline)),
+    pub fn require(&mut self, reason: &'static str, deadline: Instant) {
+        if self.instant.is_none_or(|existing| deadline < existing) {
+            self.instant = Some(deadline);
+            self.reason = reason;
         }
     }
 
     /// Wait until deadline elapses or forever, if unset.
     pub async fn wait(&self) {
-        match self.0 {
+        match self.instant {
             None => future::pending().await,
-            Some(deadline) => sleep_until(deadline).await,
+            Some(deadline) => {
+                sleep_until(deadline).await;
+                tracing::trace!("deadline for {} elapsed", self.reason);
+            }
         }
     }
 }
@@ -137,8 +143,8 @@ pub(crate) struct LinkInt<TX, RX, TAG> {
     tx_idle_since: Option<Instant>,
     /// Performing flushing of sink `tx`.
     tx_flushing: bool,
-    /// When a message was first sent over link after it was flushed.
-    tx_first_sent: Option<Instant>,
+    /// When a data message was first sent over link after it was flushed.
+    txed_first_unflushed_data: Option<Instant>,
     /// Number of bytes sent for which no acknowledgement has been received yet.
     pub(crate) txed_unacked_data: usize,
     /// Limit of sent unacknowledged bytes.
@@ -151,6 +157,8 @@ pub(crate) struct LinkInt<TX, RX, TAG> {
     pub(crate) tx_ack_queue: VecDeque<Seq>,
     /// Number of acks sent since last flush.
     txed_acks_unflushed: usize,
+    /// When oldest unflushed ack was sent.
+    txed_first_unflushed_ack: Option<Instant>,
     /// Receive stream.
     rx: RX,
     /// Received data message, when waiting for the corresponding data packet.
@@ -281,7 +289,7 @@ where
             unconfirmed_rx,
             test: LinkTest::Inactive,
             tx_flushing: false,
-            tx_first_sent: None,
+            txed_first_unflushed_data: None,
             rxed_data_msg: None,
             tx_last_msg: None,
             txed_unacked: None,
@@ -297,6 +305,7 @@ where
             txed_unacked_data_limit_increased: None,
             txed_unacked_data_limit_increased_consecutively: 45,
             txed_acks_unflushed: 0,
+            txed_first_unflushed_ack: None,
             tx_ack_queue: VecDeque::new(),
             tx_idle_since: None,
             tx_pending: false,
@@ -339,8 +348,9 @@ where
             }
         });
 
-        let tx_first_sent = self.tx_first_sent;
+        let txed_first_unflushed_data = self.txed_first_unflushed_data;
         let tx_flushing = self.tx_flushing;
+        let txed_first_unflushed_ack = self.txed_first_unflushed_ack;
 
         let tx_task = async {
             loop {
@@ -351,7 +361,7 @@ where
                     match self.tx.flush().await {
                         Ok(()) => {
                             self.tx_flushing = false;
-                            self.tx_first_sent = None;
+                            self.txed_first_unflushed_data = None;
                             break LinkIntEvent::TxFlushed;
                         }
                         Err(err) => {
@@ -371,7 +381,7 @@ where
                     match poll_fn(tx_ready).await {
                         Ok(()) => match self.tx_data.take() {
                             Some(data) => {
-                                self.tx_first_sent.get_or_insert_with(Instant::now);
+                                self.txed_first_unflushed_data.get_or_insert_with(Instant::now);
                                 if let Err(err) = self.tx.start_send_unpin(data) {
                                     self.tx_failed = true;
                                     break LinkIntEvent::TxError(err);
@@ -439,16 +449,22 @@ where
         let flush_req_task = async {
             let mut deadline = Deadline::new();
 
-            match tx_first_sent {
+            match txed_first_unflushed_data {
                 Some(tx_first_sent) if !tx_flushing => {
                     if let Some(idle_since) = self.tx_idle_since {
-                        deadline.require(idle_since + self.cfg.link_flush_delay);
+                        deadline.require("link data idle flush", idle_since + self.cfg.link_flush_delay);
                     }
                     if let Some(link_flush_interval) = self.cfg.link_flush_interval {
-                        deadline.require(tx_first_sent + link_flush_interval);
+                        deadline.require("link data flush interval", tx_first_sent + link_flush_interval);
                     }
                 }
                 _ => (),
+            }
+
+            if let (Some(txed_first_unflushed_ack), Some(link_ack_flush_interval)) =
+                (txed_first_unflushed_ack, self.cfg.link_ack_flush_interval)
+            {
+                deadline.require("link ack flush interval", txed_first_unflushed_ack + link_ack_flush_interval);
             }
 
             deadline.wait().await;
@@ -458,8 +474,8 @@ where
             tx_event = tx_task => tx_event,
             rx_event = rx_task => rx_event,
             () = flush_req_task => LinkIntEvent::FlushRequired,
-            Some(()) = self.disconnect_rx.recv() => LinkIntEvent::Disconnect,
             Some(()) = self.blocked_changed_rx.recv() => LinkIntEvent::BlockedChanged,
+            Some(()) = self.disconnect_rx.recv() => LinkIntEvent::Disconnect,
         }
     }
 
@@ -469,7 +485,6 @@ where
 
         self.tx_polling = Some(Instant::now());
         self.tx.send(msg.encode()).await.inspect_err(|_| self.tx_failed = true)?;
-        self.tx_first_sent.get_or_insert_with(Instant::now);
         Ok(())
     }
 
@@ -488,7 +503,6 @@ where
         }
 
         self.tx_polling = Some(Instant::now());
-        self.tx_first_sent.get_or_insert_with(Instant::now);
         self.tx_idle_since = None;
 
         let encoded = msg.encode();
@@ -508,7 +522,10 @@ where
         self.tx_last_msg = Some(Instant::now());
 
         match &msg {
-            LinkMsg::Ack { .. } | LinkMsg::Consumed { .. } => self.txed_acks_unflushed += 1,
+            LinkMsg::Ack { .. } | LinkMsg::Consumed { .. } => {
+                self.txed_acks_unflushed += 1;
+                self.txed_first_unflushed_ack.get_or_insert_with(Instant::now);
+            }
             LinkMsg::Data { seq } => match self.txed_unacked {
                 Some(txed_unacked) if txed_unacked > *seq => (),
                 _ => self.txed_unacked = Some(*seq),
@@ -527,6 +544,7 @@ where
     /// Flush the send buffer of the link.
     pub(crate) fn start_flush(&mut self) {
         self.txed_acks_unflushed = 0;
+        self.txed_first_unflushed_ack = None;
         self.tx_flushing = true;
         self.tx_polling = Some(Instant::now());
     }
@@ -538,7 +556,7 @@ where
 
     /// Whether flushing is required.
     pub(crate) fn needs_flush(&self) -> bool {
-        self.tx_first_sent.is_some() && !self.tx_flushing
+        self.txed_first_unflushed_data.is_some() && !self.tx_flushing
     }
 
     /// Whether the link has an outstanding acknowledgement.
@@ -557,7 +575,7 @@ where
         assert!(self.tx_data.is_none());
 
         self.tx_polling = Some(Instant::now());
-        self.tx_first_sent.get_or_insert_with(Instant::now);
+        self.txed_first_unflushed_data.get_or_insert_with(Instant::now);
         self.tx_idle_since = None;
 
         if let Err(err) = self.check_tx_failed() {
@@ -788,7 +806,7 @@ impl<TX, RX, TAG> From<&LinkInt<TX, RX, TAG>> for super::dump::LinkDump {
             link_id: link.link_id.0,
             unconfirmed: link.unconfirmed.is_some(),
             tx_flushing: link.tx_flushing,
-            tx_flushed: link.tx_first_sent.is_none(),
+            tx_flushed: link.txed_first_unflushed_data.is_none(),
             roundtrip: link.roundtrip.as_secs_f32(),
             tx_ack_queue: link.tx_ack_queue.len(),
             txed_unacked_data: link.txed_unacked_data,

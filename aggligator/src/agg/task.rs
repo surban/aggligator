@@ -825,13 +825,6 @@ where
                                     );
                                     self.idle_links.retain(|idle_id| *idle_id != id);
                                     self.send_reliable_over_link(id, ReliableMsg::Data(data));
-                                } else if link.need_ack_flush() {
-                                    tracing::trace!(
-                                        ?link_id,
-                                        "flushing link due to pending acks and no data to send"
-                                    );
-                                    self.idle_links.retain(|&idle_id| idle_id != id);
-                                    link.start_flush();
                                 } else if link.needs_flush() && !link.is_sendable() {
                                     tracing::trace!(?link_id, "flushing link because it is not sendable");
                                     self.idle_links.retain(|&idle_id| idle_id != id);
@@ -1903,7 +1896,6 @@ where
     /// Returns whether sending a Consumed message is required.
     fn is_consume_ack_required(&self) -> bool {
         self.rxed_reliable_consumed_since_last_ack > self.cfg.recv_buffer.get() as usize / 10
-            || (self.rxed_reliable_size == 0 && self.rxed_reliable_consumed_since_last_ack > 0)
             || self.rxed_reliable_consumed_force_ack
     }
 
