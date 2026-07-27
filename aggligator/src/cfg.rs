@@ -114,7 +114,7 @@ impl Default for Cfg {
             recv_buffer: NonZeroU32::new(134_217_728).unwrap(),
             recv_queue: NonZeroUsize::new(16).unwrap(),
             link_ack_timeout_min: Duration::from_secs(1),
-            link_ack_timeout_roundtrip_factor: NonZeroU32::new(5).unwrap(),
+            link_ack_timeout_roundtrip_factor: NonZeroU32::new(10).unwrap(),
             link_ack_timeout_max: Duration::from_secs(30),
             link_unacked_init: NonZeroUsize::new(8192).unwrap(),
             link_unacked_limit: NonZeroUsize::new(134_217_728).unwrap(),

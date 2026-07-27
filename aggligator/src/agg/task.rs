@@ -123,6 +123,8 @@ enum SentReliableStatus {
     Sent {
         /// Time packet was sent.
         sent: Instant,
+        /// Time packet was flushed.
+        flushed: Option<Instant>,
         /// Index of link used to send the packet.
         link_id: usize,
         /// Sent message.
@@ -535,9 +537,13 @@ where
             let earliest_confirm_timeout = self.earliest_confirm_timeout();
             let recv_confirm_timeout = async move {
                 match earliest_confirm_timeout {
-                    Some((link_id, timeout)) => {
+                    Some((link_id, timeout, flushed)) => {
                         sleep_until(timeout).await;
-                        link_id
+                        if flushed {
+                            TaskEvent::ConfirmTimedOut(link_id)
+                        } else {
+                            TaskEvent::LinkEvent { id: link_id, event: LinkIntEvent::FlushRequired }
+                        }
                     }
                     None => future::pending().await,
                 }
@@ -661,7 +667,7 @@ where
                 new_link_event = new_link_task => new_link_event,
                 ((id, event), _, _) = link_task => TaskEvent::LinkEvent { id, event },
                 write_event = write_rx_task => write_event,
-                link_id = recv_confirm_timeout => TaskEvent::ConfirmTimedOut(link_id),
+                recv_confirm_wimeout_event = recv_confirm_timeout => recv_confirm_wimeout_event,
                 link_id = next_ping_timeout => TaskEvent::PingLink(link_id),
                 link_id = next_pong_timeout => TaskEvent::LinkPingTimeout(link_id),
                 link_id = next_unconfirmed_timeout => TaskEvent::LinkUnconfirmedTimeout(link_id),
@@ -827,8 +833,7 @@ where
                                     self.send_reliable_over_link(id, ReliableMsg::Data(data));
                                 } else if link.needs_flush() && !link.is_sendable() {
                                     tracing::trace!(?link_id, "flushing link because it is not sendable");
-                                    self.idle_links.retain(|&idle_id| idle_id != id);
-                                    link.start_flush();
+                                    self.flush_link(id);
                                 } else if !self.idle_links.contains(&id) {
                                     // Store link in idle list.
                                     tracing::trace!(?link_id, "link has become idle");
@@ -839,14 +844,14 @@ where
                                 // Link is unconfirmed, make sure it is flushed.
                                 if link.needs_flush() || link.need_ack_flush() {
                                     tracing::trace!(?link_id, "flushing link because it is now unconfirmed");
-                                    self.idle_links.retain(|&idle_id| idle_id != id);
-                                    link.start_flush();
+                                    self.flush_link(id);
                                 }
                             }
                         }
                         LinkIntEvent::TxFlushed => {
                             // Link has completed flushing.
                             self.unflushed_links.remove(&id);
+                            self.mark_txed_packets_flushed(id);
                         }
                         LinkIntEvent::Rx { msg, data } => {
                             // Link has received a message.
@@ -873,10 +878,8 @@ where
                         }
                         LinkIntEvent::FlushRequired => {
                             // Link requires send buffer flushing.
-                            let link = self.links[id].as_mut().unwrap();
                             tracing::trace!(?link_id, "flushing link");
-                            self.idle_links.retain(|&idle_id| idle_id != id);
-                            link.start_flush();
+                            self.flush_link(id);
                         }
                         LinkIntEvent::TxError(err) | LinkIntEvent::RxError(err) => {
                             // Link has failed.
@@ -901,8 +904,7 @@ where
                             if link.disconnecting.is_none() {
                                 tracing::info!(?link_id, "starting disconnection of link by local request");
                                 link.disconnecting = Some(DisconnectInitiator::Local);
-                                self.idle_links.retain(|&idle_id| idle_id != id);
-                                link.start_flush();
+                                self.flush_link(id);
                             }
                         }
                     }
@@ -955,7 +957,11 @@ where
                     self.flushed_tx = Some(tx);
                 }
                 TaskEvent::ConfirmTimedOut(id) => {
-                    tracing::debug!("acknowledgement timeout on link {id}");
+                    let link = self.links[id].as_mut().unwrap();
+                    tracing::debug!(
+                        "acknowledgement timeout on link {id} with ping {} ms",
+                        link.roundtrip.as_millis()
+                    );
                     self.unconfirm_link(id, NotWorkingReason::AckTimeout);
                 }
                 TaskEvent::Resend(packet) => {
@@ -1475,18 +1481,31 @@ where
     /// Time when the earliest sent packet times out confirmation.
     ///
     /// Returns link id and instant of timeout.
-    fn earliest_confirm_timeout(&self) -> Option<(usize, Instant)> {
+    fn earliest_confirm_timeout(&self) -> Option<(usize, Instant, bool)> {
         for p in &self.txed_packets {
-            if let SentReliableStatus::Sent { link_id, sent, resent, .. } = &*p.status.borrow() {
+            if let SentReliableStatus::Sent { link_id, sent, flushed, resent, .. } = &*p.status.borrow() {
                 let link = self.links[*link_id].as_ref().unwrap();
+                let definitely_sent = flushed.unwrap_or(*sent);
                 let dur_factor = if *resent { 3 } else { 1 };
                 let dur = (link.roundtrip * self.cfg.link_ack_timeout_roundtrip_factor.get() * dur_factor)
                     .clamp(self.cfg.link_ack_timeout_min, self.cfg.link_ack_timeout_max);
-                return Some((*link_id, *sent + dur));
+                return Some((*link_id, definitely_sent + dur, flushed.is_some()));
             }
         }
 
         None
+    }
+
+    /// Marks reliably transmitted packets as flushed at the current time.
+    fn mark_txed_packets_flushed(&self, id: usize) {
+        for packet in &self.txed_packets {
+            match &mut *packet.status.borrow_mut() {
+                SentReliableStatus::Sent { flushed: flushed @ None, link_id, .. } if *link_id == id => {
+                    *flushed = Some(Instant::now());
+                }
+                _ => (),
+            }
+        }
     }
 
     /// Time when next link must be pinged.
@@ -1539,6 +1558,7 @@ where
             seq,
             status: AtomicRefCell::new(SentReliableStatus::Sent {
                 sent: Instant::now(),
+                flushed: None,
                 link_id: id,
                 msg: reliable_msg,
                 resent: false,
@@ -1580,6 +1600,7 @@ where
         // Update packet.
         *status = SentReliableStatus::Sent {
             sent: Instant::now(),
+            flushed: None,
             link_id: id,
             msg: reliable_msg.clone(),
             resent: true,
@@ -1588,14 +1609,14 @@ where
 
     /// Unconfirms a link.
     fn unconfirm_link(&mut self, id: usize, reason: NotWorkingReason) {
+        // Flush link.
+        self.flush_link(id);
+
         // Mark link as unconfirmed.
         let link = self.links[id].as_mut().unwrap();
         link.unconfirmed = Some((Instant::now(), reason));
         self.idle_links.retain(|&idle_id| idle_id != id);
         self.unflushed_links.remove(&id);
-
-        // Flush link.
-        link.start_flush();
 
         // Reset limits.
         link.reset();
@@ -1742,6 +1763,7 @@ where
         let link = self.links[id].as_mut().unwrap();
         link.start_flush();
         self.idle_links.retain(|&idle_id| idle_id != id);
+        self.mark_txed_packets_flushed(id);
     }
 
     /// Handle a received message.
@@ -1941,6 +1963,8 @@ where
 
                     if link.roundtrip_estimates == Some(0) {
                         link.roundtrip = sent.elapsed();
+                    } else if sent.elapsed() > link.roundtrip {
+                        link.roundtrip = (link.roundtrip + sent.elapsed()) / 2;
                     } else {
                         link.roundtrip = (99 * link.roundtrip + sent.elapsed()) / 100;
                     }
