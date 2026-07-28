@@ -87,9 +87,26 @@ impl IntegrityCodec {
         self.max_frame_len = max_packet_size;
     }
 
+    /// Reserve at least `additional` space in buffer `buf`.
+    ///
+    /// When a reservation needs to be performed, at least
+    /// [`Self::decode_buffer_size`] is reserved.
+    fn reserve(&self, buf: &mut BytesMut, mut additional: usize) {
+        let rem = buf.capacity() - buf.len();
+        if additional <= rem {
+            return;
+        }
+
+        if let Some(decode_buffer_size) = self.decode_buffer_size {
+            additional = additional.max(decode_buffer_size);
+        }
+
+        buf.reserve(additional);
+    }
+
     fn decode_header(&mut self, src: &mut BytesMut) -> io::Result<Option<Header>> {
         if src.len() < Self::HEADER_LEN {
-            src.reserve(Self::HEADER_LEN);
+            self.reserve(src, Self::HEADER_LEN);
             return Ok(None);
         }
 
@@ -97,7 +114,7 @@ impl IntegrityCodec {
         if length > self.max_frame_len {
             return Err(io::Error::new(io::ErrorKind::InvalidData, IntegrityError::PacketTooBig));
         }
-        src.reserve((length as usize).saturating_sub(src.len()));
+        self.reserve(src, (length as usize + size_of::<u16>() + size_of::<u32>()).saturating_sub(src.len()));
 
         let seq = src.get_u16();
         if seq != self.decode_seq {
@@ -148,17 +165,10 @@ impl Decoder for IntegrityCodec {
         match self.decode_data(header, src)? {
             Some(data) => {
                 self.state = DecodeState::Header;
-                if let Some(size) = self.decode_buffer_size {
-                    src.reserve(size);
-                }
+                self.reserve(src, src.len().saturating_sub(Self::HEADER_LEN));
                 Ok(Some(data))
             }
-            None => {
-                if let Some(size) = self.decode_buffer_size {
-                    src.reserve(size);
-                }
-                Ok(None)
-            }
+            None => Ok(None),
         }
     }
 }

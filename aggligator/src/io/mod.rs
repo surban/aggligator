@@ -13,7 +13,7 @@ mod codec;
 use bytes::Bytes;
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use std::{
-    io,
+    fmt, io,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -22,9 +22,49 @@ use tokio_util::codec::{FramedRead, FramedWrite};
 
 pub use codec::*;
 
+struct FilterFlush<W> {
+    inner: W,
+    pub flush_allowed: bool,
+}
+
+impl<W> FilterFlush<W> {
+    pub fn new(inner: W) -> Self {
+        Self { inner, flush_allowed: false }
+    }
+}
+
+impl<W> AsyncWrite for FilterFlush<W>
+where
+    W: AsyncWrite + Unpin,
+{
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8]) -> Poll<io::Result<usize>> {
+        Pin::new(&mut Pin::into_inner(self).inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
+        if !self.flush_allowed {
+            return Poll::Ready(Ok(()));
+        }
+
+        Pin::new(&mut Pin::into_inner(self).inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
+        Pin::new(&mut Pin::into_inner(self).inner).poll_shutdown(cx)
+    }
+}
+
 /// Transmit wrapper for using an IO-stream-based link.
-#[derive(Debug)]
-pub struct IoTx<W>(pub FramedWrite<W, IntegrityCodec>);
+pub struct IoTx<W>(FramedWrite<FilterFlush<W>, IntegrityCodec>);
+
+impl<W> fmt::Debug for IoTx<W>
+where
+    W: fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_tuple("IoTx").field(&self.0.get_ref().inner).finish()
+    }
+}
 
 impl<W> IoTx<W>
 where
@@ -43,12 +83,12 @@ where
 
     /// Wraps an IO writer using a customized integrity codec.
     pub fn with_codec(write: W, codec: IntegrityCodec) -> Self {
-        Self(FramedWrite::new(write, codec))
+        Self(FramedWrite::new(FilterFlush::new(write), codec))
     }
 
     /// Wraps an IO writer using a customized integrity codec and write buffer capacity.
     pub fn with_codec_and_capacity(write: W, codec: IntegrityCodec, capacity: usize) -> Self {
-        Self(FramedWrite::with_capacity(write, codec, capacity))
+        Self(FramedWrite::with_capacity(FilterFlush::new(write), codec, capacity))
     }
 }
 
@@ -70,17 +110,33 @@ where
 
     #[inline]
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        Pin::into_inner(self).0.poll_flush_unpin(cx)
+        let this = Pin::into_inner(self);
+        this.0.get_mut().flush_allowed = true;
+        let res = this.0.poll_flush_unpin(cx);
+        this.0.get_mut().flush_allowed = false;
+        res
     }
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
-        Pin::into_inner(self).0.poll_close_unpin(cx)
+        let this = Pin::into_inner(self);
+        this.0.get_mut().flush_allowed = true;
+        let res = this.0.poll_close_unpin(cx);
+        this.0.get_mut().flush_allowed = false;
+        res
     }
 }
 
 /// Receive wrapper for using an IO-stream-based link.
-#[derive(Debug)]
-pub struct IoRx<R>(pub FramedRead<R, IntegrityCodec>);
+pub struct IoRx<R>(FramedRead<R, IntegrityCodec>);
+
+impl<R> fmt::Debug for IoRx<R>
+where
+    R: fmt::Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_tuple("IoRx").field(&self.0.get_ref()).finish()
+    }
+}
 
 impl<R> IoRx<R>
 where
