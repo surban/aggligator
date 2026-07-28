@@ -141,6 +141,8 @@ enum SentReliableStatus {
     ResendQueued {
         /// Message for resending.
         msg: ReliableMsg,
+        /// Id of original link used to send the packet.
+        sent_link: LinkId,
     },
 }
 
@@ -571,9 +573,35 @@ where
                 }
             };
 
+            // Determine available links for (re-)sending.
+            let mut sendable_idle_link_id = None;
+            let mut resendable_idle_link_id = None;
+            let non_resendable_link = self.resend_queue.front().map(|sent| {
+                let SentReliableStatus::ResendQueued { sent_link, .. } = &*sent.status.borrow() else {
+                    unreachable!("message in wrong state in resend queue")
+                };
+                *sent_link
+            });
+            for &id in self.idle_links.iter().rev() {
+                if sendable_idle_link_id.is_some()
+                    && (resendable_idle_link_id.is_some() || non_resendable_link.is_none())
+                {
+                    break;
+                }
+
+                let link = self.links[id].as_ref().unwrap();
+                if link.is_sendable() {
+                    if sendable_idle_link_id.is_none() {
+                        sendable_idle_link_id = Some(id);
+                    }
+
+                    if resendable_idle_link_id.is_none() && non_resendable_link != Some(link.link_id()) {
+                        resendable_idle_link_id = Some(id);
+                    }
+                }
+            }
+
             // Task for receiving requests from sender.
-            let sendable_idle_link_id =
-                self.idle_links.iter().rev().cloned().find(|id| self.links[*id].as_ref().unwrap().is_sendable());
             let write_rx_task = async {
                 if links_idling && is_consume_ack_required {
                     TaskEvent::SendConsumed
@@ -633,7 +661,7 @@ where
 
             // Task for resending unacknowledged messages.
             let resend_task = async {
-                if resending && sendable_idle_link_id.is_some() {
+                if resending && resendable_idle_link_id.is_some() {
                     self.resend_queue.pop_front().unwrap()
                 } else {
                     future::pending().await
@@ -789,7 +817,10 @@ where
                                     self.send_reliable_over_link(id, ReliableMsg::Consumed(consumed));
                                     self.rxed_reliable_consumed_since_last_ack = 0;
                                     self.rxed_reliable_consumed_force_ack = false;
-                                } else if resending && link.is_sendable() {
+                                } else if resending
+                                    && link.is_sendable()
+                                    && Some(link.link_id()) != non_resendable_link
+                                {
                                     let packet = self.resend_queue.pop_front().unwrap();
                                     tracing::trace!(
                                         ?link_id,
@@ -965,7 +996,7 @@ where
                     self.unconfirm_link(id, NotWorkingReason::AckTimeout);
                 }
                 TaskEvent::Resend(packet) => {
-                    let id = sendable_idle_link_id.unwrap();
+                    let id = resendable_idle_link_id.unwrap();
                     let link_id = self.links[id].as_ref().unwrap().link_id();
                     self.idle_links.retain(|&idle_id| idle_id != id);
                     tracing::trace!(?link_id, "resending message {} over idle link", packet.seq);
@@ -1575,9 +1606,10 @@ where
 
         // Extract message and link used for sending.
         let mut status = packet.status.borrow_mut();
-        let SentReliableStatus::ResendQueued { msg: reliable_msg } = &*status else {
+        let SentReliableStatus::ResendQueued { msg: reliable_msg, sent_link } = &*status else {
             unreachable!("message was not queued for resending")
         };
+        assert_ne!(link.link_id(), *sent_link, "message must not be resent over original link");
 
         // Send data.
         tracing::trace!(link_id =? link.link_id(), "resending reliable message {} over link: {:?}", packet.seq, reliable_msg);
@@ -1628,11 +1660,10 @@ where
                 SentReliableStatus::Sent { link_id, msg, .. } if *link_id == id => {
                     // Update link statistics.
                     if let ReliableMsg::Data(data) = &msg {
-                        let old_link = self.links[*link_id].as_mut().unwrap();
-                        old_link.txed_unacked_data -= data.len();
+                        link.txed_unacked_data -= data.len();
                     }
 
-                    *status = SentReliableStatus::ResendQueued { msg: msg.clone() };
+                    *status = SentReliableStatus::ResendQueued { msg: msg.clone(), sent_link: link.link_id() };
                     self.resend_queue.push_back(p.clone());
                 }
                 _ => (),
@@ -1975,7 +2006,7 @@ where
 
                     *status = SentReliableStatus::Received { size };
                 }
-                SentReliableStatus::ResendQueued { msg } => {
+                SentReliableStatus::ResendQueued { msg, .. } => {
                     let size = if let ReliableMsg::Data(data) = &msg { data.len() } else { 0 };
 
                     self.txed_unacked -= size;
