@@ -1335,7 +1335,7 @@ where
             .min();
         let (limit_ping, good_ping) =
             if let (Some(link_max_ping_spread), Some(min_ping)) = (self.cfg.link_max_ping_spread, min_ping) {
-                let limit_ping = min_ping * link_max_ping_spread;
+                let limit_ping = min_ping * link_max_ping_spread.get();
                 let good_ping = (min_ping + 3 * limit_ping) / 4;
                 (Some(limit_ping), Some(good_ping))
             } else {

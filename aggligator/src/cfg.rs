@@ -74,7 +74,7 @@ pub struct Cfg {
     /// A link is used anyways if all links have a ping higher than the specified value.
     pub link_max_ping: Option<Duration>,
     /// Maximum factor by which highest ping may exceed lowest ping.
-    pub link_max_ping_spread: Option<u32>,
+    pub link_max_ping_spread: Option<NonZeroU32>,
     /// Maximum amount of data to send to test the functionality of a link before using it.
     pub link_test_data_limit: usize,
     /// Time to wait before link is tested again after a test has failed.
@@ -114,7 +114,7 @@ impl Default for Cfg {
             recv_buffer: NonZeroU32::new(134_217_728).unwrap(),
             recv_queue: NonZeroUsize::new(16).unwrap(),
             link_ack_timeout_min: Duration::from_secs(1),
-            link_ack_timeout_roundtrip_factor: NonZeroU32::new(10).unwrap(),
+            link_ack_timeout_roundtrip_factor: NonZeroU32::new(2).unwrap(),
             link_ack_timeout_max: Duration::from_secs(30),
             link_unacked_init: NonZeroUsize::new(8192).unwrap(),
             link_unacked_limit: NonZeroUsize::new(134_217_728).unwrap(),
