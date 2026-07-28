@@ -252,7 +252,7 @@ impl RawClientCli {
                             }
                             Ok(Err(err)) => {
                                 if iface_speeds_tx.is_none() {
-                                    eprintln!("TCP connection from {iface} failed: {}", &err);
+                                    eprintln!("TCP connection from {iface} failed: {}", err);
                                 }
                             }
                             Err(_) => {
@@ -356,7 +356,7 @@ impl RawClientCli {
         }
 
         let target = self.resolve_target().await.context("cannot resolve target")?;
-        let header = format!("Connecting to raw speed test server at {:?}", &target);
+        let header = format!("Connecting to raw speed test server at {:?}", target);
 
         let limit = self.limit.map(|mb| mb * 1_048_576);
         let time = self.time.map(Duration::from_secs);
