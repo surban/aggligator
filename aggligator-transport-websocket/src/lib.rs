@@ -69,8 +69,8 @@ impl fmt::Display for OutgoingWebSocketLinkTag {
             f,
             "{} -> {} ({})",
             String::from_utf8_lossy(self.interface.as_deref().unwrap_or_default()),
-            &self.remote,
-            &self.url
+            self.remote,
+            self.url
         )
     }
 }
@@ -138,7 +138,7 @@ impl fmt::Display for WebSocketConnector {
         if self.urls.len() > 1 {
             write!(f, "[{}]", urls.join(", "))
         } else {
-            write!(f, "{}", &urls[0])
+            write!(f, "{}", urls[0])
         }
     }
 }
@@ -421,8 +421,8 @@ impl fmt::Display for IncomingWebSocketLinkTag {
         write!(
             f,
             "{} <- {}{}",
-            &self.local,
-            &self.remote,
+            self.local,
+            self.remote,
             match &self.protocol {
                 Some(protocol) => format!(" ({protocol})"),
                 None => String::new(),

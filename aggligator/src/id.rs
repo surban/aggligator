@@ -78,13 +78,13 @@ struct OwnedConnIdInner {
 
 impl fmt::Display for OwnedConnId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", &self.0.id)
+        write!(f, "{}", self.0.id)
     }
 }
 
 impl fmt::Debug for OwnedConnId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", &self.0.id)
+        write!(f, "{:?}", self.0.id)
     }
 }
 

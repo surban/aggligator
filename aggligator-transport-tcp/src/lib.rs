@@ -194,7 +194,7 @@ impl fmt::Display for TcpConnector {
         if self.hosts.len() > 1 {
             write!(f, "[{}]", self.hosts.join(", "))
         } else {
-            write!(f, "{}", &self.hosts[0])
+            write!(f, "{}", self.hosts[0])
         }
     }
 }
