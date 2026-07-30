@@ -33,7 +33,7 @@ use std::{
 use tokio::{
     net::TcpSocket,
     sync::{mpsc, watch, Mutex},
-    time::sleep,
+    time::{sleep, Instant},
 };
 use tokio_tungstenite::{client_async_tls_with_config, tungstenite::protocol::WebSocketConfig, Connector};
 use tokio_util::io::{CopyToBytes, SinkWriter, StreamReader};
@@ -46,15 +46,15 @@ use aggligator::{
     Link,
 };
 use aggligator_transport_tcp::util::{self, NetworkInterface};
-pub use aggligator_transport_tcp::IpVersion;
+pub use aggligator_transport_tcp::{IpVersion, Local};
 
 static NAME: &str = "websocket";
 
 /// Link tag for outgoing WebSocket link.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct OutgoingWebSocketLinkTag {
-    /// Local interface name.
-    pub interface: Option<Vec<u8>>,
+    /// Local source.
+    pub local: Local,
     /// Remote socket address.
     pub remote: SocketAddr,
     /// Remote URL.
@@ -65,13 +65,7 @@ pub struct OutgoingWebSocketLinkTag {
 
 impl fmt::Display for OutgoingWebSocketLinkTag {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "{} -> {} ({})",
-            String::from_utf8_lossy(self.interface.as_deref().unwrap_or_default()),
-            self.remote,
-            self.url
-        )
+        write!(f, "{} -> {} ({})", self.local, self.remote, self.url)
     }
 }
 
@@ -85,7 +79,7 @@ impl LinkTag for OutgoingWebSocketLinkTag {
     }
 
     fn user_data(&self) -> Vec<u8> {
-        self.interface.clone().unwrap_or_default()
+        self.local.user_data()
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -271,6 +265,9 @@ impl ConnectingTransport for WebSocketConnector {
     }
 
     async fn link_tags(&self, tx: watch::Sender<HashSet<LinkTagBox>>) -> Result<()> {
+        let mut url_addrs = HashMap::new();
+        let mut url_addrs_resolved: Option<Instant> = None;
+
         loop {
             let interfaces: Option<Vec<NetworkInterface>> = match self.multi_interface {
                 true => Some(
@@ -282,15 +279,20 @@ impl ConnectingTransport for WebSocketConnector {
                 false => None,
             };
 
+            if url_addrs_resolved.is_none_or(|t| t.elapsed() >= self.resolve_interval) {
+                url_addrs = self.resolve().await;
+                url_addrs_resolved = Some(Instant::now());
+            }
+
             let mut tags: HashSet<LinkTagBox> = HashSet::new();
-            for (url, addrs) in self.resolve().await {
+            for (url, addrs) in &url_addrs {
                 for addr in addrs {
                     match &interfaces {
                         Some(interfaces) => {
-                            for interface in util::interface_names_for_target(interfaces, addr) {
+                            for interface in util::interface_names_for_target(interfaces, addr.ip()) {
                                 let tag = OutgoingWebSocketLinkTag {
-                                    interface: Some(interface),
-                                    remote: addr,
+                                    local: Local::Interface(interface),
+                                    remote: *addr,
                                     url: url.to_string(),
                                     tls: url.scheme() == "wss",
                                 };
@@ -298,13 +300,15 @@ impl ConnectingTransport for WebSocketConnector {
                             }
                         }
                         None => {
-                            let tag = OutgoingWebSocketLinkTag {
-                                interface: None,
-                                remote: addr,
-                                url: url.to_string(),
-                                tls: url.scheme() == "wss",
-                            };
-                            tags.insert(Box::new(tag));
+                            if let Ok(src) = util::local_address_for_target(*addr) {
+                                let tag = OutgoingWebSocketLinkTag {
+                                    local: Local::Address(src),
+                                    remote: *addr,
+                                    url: url.to_string(),
+                                    tls: url.scheme() == "wss",
+                                };
+                                tags.insert(Box::new(tag));
+                            }
                         }
                     }
                 }
@@ -319,7 +323,7 @@ impl ConnectingTransport for WebSocketConnector {
                 }
             });
 
-            sleep(self.resolve_interval).await;
+            sleep(Duration::from_secs(1)).await;
         }
     }
 
@@ -332,12 +336,22 @@ impl ConnectingTransport for WebSocketConnector {
             IpAddr::V6(_) => TcpSocket::new_v6(),
         }?;
 
-        if let Some(interface) = &tag.interface {
+        if let Local::Interface(interface) = &tag.local {
             util::bind_socket_to_interface(&socket, interface, tag.remote.ip())?;
         }
 
         let stream = socket.connect(tag.remote).await?;
         let _ = stream.set_nodelay(true);
+
+        if let Local::Address(req_addr) = &tag.local {
+            let local_addr = stream.local_addr()?.ip().to_canonical();
+            if local_addr != *req_addr {
+                return Err(Error::new(
+                    ErrorKind::AddrNotAvailable,
+                    format!("wanted to connect from {req_addr} but connected from {local_addr}"),
+                ));
+            }
+        }
 
         // Convert into WebSocket.
         let connector = if tag.tls { self.connector.clone() } else { Some(Connector::Plain) };
@@ -385,12 +399,12 @@ impl ConnectingTransport for WebSocketConnector {
             },
             new_tag.remote,
             String::from_utf8_lossy(new.remote_user_data()),
-            String::from_utf8_lossy(new_tag.interface.as_deref().unwrap_or(b"any interface"))
+            new_tag.local,
         );
 
         match existing.iter().find(|link| {
             let Some(tag) = link.tag().as_any().downcast_ref::<OutgoingWebSocketLinkTag>() else { return false };
-            tag.interface == new_tag.interface && link.remote_user_data() == new.remote_user_data()
+            tag.local == new_tag.local && link.remote_user_data() == new.remote_user_data()
         }) {
             Some(other) => {
                 let other_tag = other.tag().as_any().downcast_ref::<OutgoingWebSocketLinkTag>().unwrap();

@@ -4,7 +4,7 @@ use network_interface::NetworkInterfaceConfig;
 use std::{
     collections::HashSet,
     io::{Error, Result},
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, SocketAddr, UdpSocket},
 };
 use tokio::net::{lookup_host, TcpSocket};
 
@@ -63,7 +63,7 @@ pub async fn resolve_hosts(
 ///
 /// Filters interfaces out that either have no IP address or only support
 /// an IP protocol version that does not match the target address.
-pub fn interface_names_for_target(interfaces: &[NetworkInterface], target: SocketAddr) -> HashSet<Vec<u8>> {
+pub fn interface_names_for_target(interfaces: &[NetworkInterface], target: IpAddr) -> HashSet<Vec<u8>> {
     interfaces
         .iter()
         .cloned()
@@ -73,13 +73,24 @@ pub fn interface_names_for_target(interfaces: &[NetworkInterface], target: Socke
                 .iter()
                 .any(|addr| {
                     !addr.ip().is_unspecified()
-                        && addr.ip().is_loopback() == target.ip().is_loopback()
+                        && addr.ip().is_loopback() == target.is_loopback()
                         && addr.ip().is_ipv4() == target.is_ipv4()
                         && addr.ip().is_ipv6() == target.is_ipv6()
                 })
                 .then(|| iface.name.as_bytes().to_vec())
         })
         .collect()
+}
+
+/// Gets the IP address the system would use to connect to the specified target.
+pub fn local_address_for_target(target: SocketAddr) -> Result<IpAddr> {
+    let sock = match &target.ip() {
+        IpAddr::V4(_) => UdpSocket::bind("0.0.0.0:0"),
+        IpAddr::V6(_) => UdpSocket::bind("[::]:0"),
+    }?;
+    sock.connect(target)?;
+    let local = sock.local_addr()?;
+    Ok(local.ip().to_canonical())
 }
 
 /// Binds the socket the the specifed network interface.
