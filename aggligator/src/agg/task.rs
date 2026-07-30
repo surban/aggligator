@@ -36,6 +36,9 @@ use crate::{
     seq::Seq,
 };
 
+/// Number of roundtrip estimates to treat as reliable.
+const RELIABLE_ROUNDTRIP_ESTIMATES: usize = 10;
+
 /// Error indicating why a connection of aggregated links failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskError {
@@ -990,7 +993,8 @@ where
                 TaskEvent::ConfirmTimedOut(id) => {
                     let link = self.links[id].as_mut().unwrap();
                     tracing::debug!(
-                        "acknowledgement timeout on link {id} with ping {} ms",
+                        link_id =? link.link_id(),
+                        "acknowledgement timeout on link with ping {} ms",
                         link.roundtrip.as_millis()
                     );
                     self.unconfirm_link(id, NotWorkingReason::AckTimeout);
@@ -1352,7 +1356,6 @@ where
         }
 
         // Determine minimum ping and calculate allowable ping spread.
-        const MIN_ROUNDTRIP_ESTIMATES: usize = 10;
         let min_ping = self
             .links
             .iter()
@@ -1381,7 +1384,7 @@ where
                         if link.unconfirmed.is_none()
                             && !link.is_blocked()
                             && link.roundtrip > limit_ping
-                            && link.roundtrip_estimates.is_some_and(|n| n >= MIN_ROUNDTRIP_ESTIMATES) =>
+                            && link.roundtrip_estimates.is_some_and(|n| n >= RELIABLE_ROUNDTRIP_ESTIMATES) =>
                     {
                         // Decrease limit.
                         let current = link.txed_unacked_data.min(link.txed_unacked_data_limit);
@@ -1441,7 +1444,7 @@ where
                                 .is_none_or(|max_ping| link.roundtrip <= max_ping / 2 || all_links_slow)
                             && good_ping.is_none_or(|good_ping| {
                                 link.roundtrip <= good_ping
-                                    && link.roundtrip_estimates.is_some_and(|n| n >= MIN_ROUNDTRIP_ESTIMATES)
+                                    && link.roundtrip_estimates.is_some_and(|n| n >= RELIABLE_ROUNDTRIP_ESTIMATES)
                             }) =>
                     {
                         // Increase limit, faster if done many times consecutively.
@@ -1517,7 +1520,10 @@ where
             if let SentReliableStatus::Sent { link_id, sent, flushed, resent, .. } = &*p.status.borrow() {
                 let link = self.links[*link_id].as_ref().unwrap();
                 let definitely_sent = flushed.unwrap_or(*sent);
-                let dur_factor = if *resent { 3 } else { 1 };
+                let mut dur_factor = if *resent { 3 } else { 1 };
+                if link.roundtrip_estimates.unwrap_or_default() < RELIABLE_ROUNDTRIP_ESTIMATES {
+                    dur_factor *= 3;
+                }
                 let dur = (link.roundtrip * self.cfg.link_ack_timeout_roundtrip_factor.get() * dur_factor)
                     .clamp(self.cfg.link_ack_timeout_min, self.cfg.link_ack_timeout_max);
                 return Some((*link_id, definitely_sent + dur, flushed.is_some()));
@@ -1995,7 +2001,7 @@ where
                     if link.roundtrip_estimates == Some(0) {
                         link.roundtrip = sent.elapsed();
                     } else if sent.elapsed() > link.roundtrip {
-                        link.roundtrip = (link.roundtrip + sent.elapsed()) / 2;
+                        link.roundtrip = (link.roundtrip + 3 * sent.elapsed()) / 4;
                     } else {
                         link.roundtrip = (99 * link.roundtrip + sent.elapsed()) / 100;
                     }
