@@ -708,13 +708,13 @@ where
         self.stats.current.hangs += 1;
 
         // Reset unacked data limit.
-        self.txed_unacked_data_limit = self.txed_unacked_data_limit.clamp(128, self.cfg.link_unacked_init.get());
+        self.txed_unacked_data_limit = (self.txed_unacked_data_limit / 2).max(128);
         self.txed_unacked_data_limit_increased = None;
         self.txed_unacked_data_limit_increased_consecutively = 0;
 
         tracing::trace!(
-            link_id =? self.link_id(), tag =% self.tag(),
-            "decreasing unacked limit of link to {} bytes",
+            link_id =? self.link_id(), tag =% self.tag(), hangs =% self.stats.current.hangs,
+            "decreasing unacked limit of link to {} bytes due to hang",
             self.txed_unacked_data_limit
         );
     }
