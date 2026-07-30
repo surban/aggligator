@@ -214,7 +214,7 @@ impl<TX, RX, TAG> Incoming<TX, RX, TAG>
 where
     RX: Stream<Item = Result<Bytes, io::Error>> + Unpin + Send + 'static,
     TX: Sink<Bytes, Error = io::Error> + Unpin + Send + 'static,
-    TAG: Send + Sync + 'static,
+    TAG: fmt::Display + Send + Sync + 'static,
 {
     /// Accepts the incoming connection.
     ///
@@ -303,7 +303,7 @@ impl<TX, RX, TAG> Clone for Server<TX, RX, TAG> {
 
 impl<TX, RX, TAG> Server<TX, RX, TAG>
 where
-    TAG: Send + Sync + 'static,
+    TAG: fmt::Display + Send + Sync + 'static,
     RX: Stream<Item = Result<Bytes, io::Error>> + Unpin + Send + 'static,
     TX: Sink<Bytes, Error = io::Error> + Unpin + Send + 'static,
 {
@@ -577,7 +577,7 @@ impl<R, W, TAG> Server<IoTx<W>, IoRx<R>, TAG>
 where
     R: AsyncRead + Send + Unpin + 'static,
     W: AsyncWrite + Send + Unpin + 'static,
-    TAG: Send + Sync + 'static,
+    TAG: fmt::Display + Send + Sync + 'static,
 {
     /// Adds an incoming, stream-based link.
     ///
@@ -627,7 +627,7 @@ impl<N, R, W> fmt::Debug for Listener<N, R, W> {
 
 impl<TX, RX, TAG> Listener<TX, RX, TAG>
 where
-    TAG: Send + Sync + 'static,
+    TAG: fmt::Display + Send + Sync + 'static,
     RX: Stream<Item = Result<Bytes, io::Error>> + Unpin + Send + 'static,
     TX: Sink<Bytes, Error = io::Error> + Unpin + Send + 'static,
 {
@@ -711,7 +711,7 @@ pub fn connect<TX, RX, TAG>(cfg: Cfg) -> (Task<TX, RX, TAG>, Outgoing, Control<T
 where
     RX: Stream<Item = Result<Bytes, io::Error>> + Unpin + Send + 'static,
     TX: Sink<Bytes, Error = io::Error> + Unpin + Send + 'static,
-    TAG: Send + Sync + 'static,
+    TAG: fmt::Display + Send + Sync + 'static,
 {
     let AggParts { task, channel, control, connected_rx } = AggParts::new(
         Arc::new(cfg),

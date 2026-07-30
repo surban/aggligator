@@ -245,6 +245,7 @@ impl<TX, RX, TAG> LinkInt<TX, RX, TAG>
 where
     RX: Stream<Item = Result<Bytes, io::Error>> + Unpin,
     TX: Sink<Bytes, Error = io::Error> + Unpin,
+    TAG: fmt::Display,
 {
     /// Creates new internal link data.
     #[allow(clippy::too_many_arguments)]
@@ -330,6 +331,7 @@ where
     /// Returns the next event for this link.
     pub(crate) async fn event(&mut self) -> LinkIntEvent {
         let link_id = self.link_id();
+        let tag = self.tag.clone();
 
         if let Some(err) = self.tx_error.take() {
             return LinkIntEvent::TxError(err);
@@ -393,7 +395,7 @@ where
                             }
                         },
                         Err(err) => {
-                            tracing::debug!(?link_id, %err, "link poll ready failure");
+                            tracing::debug!(?link_id, %tag, %err, "link poll ready failure");
                             self.tx_failed = true;
                             break LinkIntEvent::TxError(err);
                         }
@@ -435,11 +437,11 @@ where
                         }
                     }
                     Some(Err(err)) => {
-                        tracing::debug!(?link_id, %err, "link receive failure");
+                        tracing::debug!(?link_id, %tag, %err, "link receive failure");
                         break LinkIntEvent::RxError(err);
                     }
                     None => {
-                        tracing::debug!(?link_id, "link receive end");
+                        tracing::debug!(?link_id, %tag, "link receive end");
                         break LinkIntEvent::RxError(io::ErrorKind::BrokenPipe.into());
                     }
                 }
@@ -510,7 +512,10 @@ where
         let data_len = data.as_ref().map(|data| data.len()).unwrap_or_default();
 
         if let Err(err) = self.tx.start_send_unpin(encoded) {
-            tracing::debug!(link_id =? self.link_id, %err, "link send failure");
+            tracing::debug!(
+                link_id =? self.link_id, tag =% self.tag(),
+                %err, "link send failure"
+            );
             self.tx_error = Some(err);
             self.tx_failed = true;
             return;
@@ -620,7 +625,10 @@ where
         let link_id = self.link_id();
 
         // Wait for link to become ready.
-        tracing::debug!(?link_id, "waiting for link to become ready for termination");
+        tracing::debug!(
+            ?link_id, tag =% self.tag(),
+            "waiting for link to become ready for termination"
+        );
         self.report_ready();
         loop {
             match self.event().await {
@@ -631,25 +639,45 @@ where
         }
 
         // Send termination message.
-        tracing::debug!(?link_id, "sending forceful connection termination");
+        tracing::debug!(
+            ?link_id, tag =% self.tag(),
+            "sending forceful connection termination"
+        );
         match self.send_msg_and_flush(LinkMsg::Terminate).await {
-            Ok(()) => tracing::debug!(?link_id, "forceful connection termination sent"),
+            Ok(()) => {
+                tracing::debug!(
+                    ?link_id, tag =% self.tag(),
+                    "forceful connection termination sent"
+                );
+            }
             Err(err) => {
-                tracing::warn!(?link_id, %err, "sending forceful connection termination failed");
+                tracing::warn!(
+                    ?link_id, tag =% self.tag(),
+                    %err, "sending forceful connection termination failed"
+                );
             }
         }
 
         // Wait for termination message, if required.
         if expect_reply {
-            tracing::debug!(?link_id, "waiting for forceful connection termination reply");
+            tracing::debug!(
+                ?link_id, tag =% self.tag(),
+                "waiting for forceful connection termination reply"
+            );
             loop {
                 match self.event().await {
                     LinkIntEvent::RxError(err) => {
-                        tracing::warn!(?link_id, %err, "receiving forceful connection termination reply failed");
+                        tracing::warn!(
+                            ?link_id, tag =% self.tag(),
+                            %err, "receiving forceful connection termination reply failed"
+                        );
                         break;
                     }
                     LinkIntEvent::Rx { msg: LinkMsg::Terminate, .. } => {
-                        tracing::debug!(?link_id, "forceful connection termination reply received");
+                        tracing::debug!(
+                            ?link_id, tag =% self.tag(),
+                            "forceful connection termination reply received"
+                        );
                         break;
                     }
                     _ => (),
@@ -684,7 +712,8 @@ where
         self.txed_unacked_data_limit_increased = None;
         self.txed_unacked_data_limit_increased_consecutively = 0;
 
-        tracing::trace!(link_id =? self.link_id(),
+        tracing::trace!(
+            link_id =? self.link_id(), tag =% self.tag(),
             "decreasing unacked limit of link to {} bytes",
             self.txed_unacked_data_limit
         );

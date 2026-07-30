@@ -339,7 +339,7 @@ impl<TX, RX, TAG> Task<TX, RX, TAG>
 where
     RX: Stream<Item = Result<Bytes, io::Error>> + Unpin + Send + 'static,
     TX: Sink<Bytes, Error = io::Error> + Unpin + Send + 'static,
-    TAG: Send + Sync + 'static,
+    TAG: fmt::Display + Send + Sync + 'static,
 {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
@@ -725,8 +725,10 @@ where
                     send_terminate = SendTerminate::Initiate;
                     break;
                 }
+
                 TaskEvent::NewLink(mut link) => {
                     let link_id = link.link_id();
+                    let tag = link.tag();
                     if self.remote_cfg.is_none() {
                         let remote_cfg = link.remote_cfg();
                         tracing::debug!(?remote_cfg, "obtained remote configuration");
@@ -735,10 +737,10 @@ where
                     let others =
                         self.links.iter().filter_map(|link_opt| link_opt.as_ref().map(Link::from)).collect();
                     if (self.link_filter)(Link::from(&*link), others).await {
+                        tracing::info!(?link_id, %tag, "adding new link");
                         self.add_link(*link);
-                        tracing::info!(?link_id, "added new link");
                     } else {
-                        tracing::debug!(?link_id, "link was refused by link filter");
+                        tracing::debug!(?link_id, %tag, "link was refused by link filter");
                         let link_non_working_timeout = self.cfg.link_non_working_timeout;
                         if link.needs_tx_accepted {
                             self.refused_links_tasks.push(
@@ -759,52 +761,55 @@ where
                         }
                     }
                 }
+
                 TaskEvent::NoNewLinks => {
                     tracing::debug!("no new links can be added");
                     self.link_rx = None;
                 }
+
                 TaskEvent::LinkEvent { id, event } => {
-                    let link_id = self.links[id].as_ref().unwrap().link_id();
+                    let link = self.links[id].as_ref().unwrap();
+                    let link_id = link.link_id();
                     match event {
                         LinkIntEvent::TxReady => {
                             // Link is ready to send more data.
                             let link = self.links[id].as_mut().unwrap();
                             let link_blocked = link.blocked.load(Ordering::SeqCst);
                             if link.needs_tx_accepted {
-                                tracing::debug!(?link_id, "sending Accepted over link");
+                                tracing::debug!(?link_id, tag =% link.tag(), "sending Accepted over link");
                                 self.idle_links.retain(|&idle_id| idle_id != id);
                                 link.start_send_msg(LinkMsg::Accepted, None);
                                 link.needs_tx_accepted = false;
                             } else if link.send_pong {
-                                tracing::trace!(?link_id, "sending Pong over link");
+                                tracing::trace!(?link_id, tag =% link.tag(), "sending Pong over link");
                                 self.idle_links.retain(|&idle_id| idle_id != id);
                                 link.start_send_msg(LinkMsg::Pong, None);
                                 link.send_pong = false;
                             } else if let Some(initiator) = link.disconnecting {
                                 if !link.goodbye_sent {
-                                    tracing::debug!(?link_id, "sending GoodBye over link");
+                                    tracing::debug!(?link_id, tag =% link.tag(), "sending GoodBye over link");
                                     self.idle_links.retain(|&idle_id| idle_id != id);
                                     link.start_send_msg(LinkMsg::Goodbye, None);
                                     link.goodbye_sent = true;
                                 } else if initiator == DisconnectInitiator::Remote {
                                     // All outstanding messages and Goodbye have been sent and flushed,
                                     // thus we can now disconnect the link.
-                                    tracing::info!(?link_id, "removing link by remote request");
+                                    tracing::info!(?link_id, tag =% link.tag(), "removing link by remote request");
                                     self.remove_link(id, DisconnectReason::RemotelyRequested);
                                 }
                             } else if link.send_ping {
-                                tracing::trace!(?link_id, "sending Ping over link");
+                                tracing::trace!(?link_id, tag =% link.tag(), "sending Ping over link");
                                 self.idle_links.retain(|&idle_id| idle_id != id);
                                 link.start_send_msg(LinkMsg::Ping, None);
                                 link.current_ping_sent = Some(Instant::now());
                                 link.send_ping = false;
                             } else if link_blocked != link.blocked_sent {
-                                tracing::debug!(?link_id, %link_blocked, "local block status of link changed");
+                                tracing::debug!(?link_id, tag =% link.tag(), %link_blocked, "local block status of link changed");
                                 self.idle_links.retain(|&idle_id| idle_id != id);
                                 link.start_send_msg(LinkMsg::SetBlock { blocked: link_blocked }, None);
                                 link.blocked_sent = link_blocked;
                             } else if let Some(recved_seq) = link.tx_ack_queue.pop_front() {
-                                tracing::trace!(?link_id, "acking sequence {recved_seq} over non-idle link");
+                                tracing::trace!(?link_id, tag =% link.tag(), "acking sequence {recved_seq} over non-idle link");
                                 self.idle_links.retain(|&idle_id| idle_id != id);
                                 link.start_send_msg(LinkMsg::Ack { received: recved_seq }, None);
                             } else if link.unconfirmed.is_none() && !link.is_blocked() {
@@ -813,7 +818,7 @@ where
                                 if is_consume_ack_required {
                                     let consumed = self.rxed_reliable_consumed_since_last_ack as u32;
                                     tracing::trace!(
-                                        ?link_id,
+                                        ?link_id, tag =% link.tag(),
                                         "acking {consumed} consumed bytes over non-idle link"
                                     );
                                     self.idle_links.retain(|&idle_id| idle_id != id);
@@ -826,24 +831,24 @@ where
                                 {
                                     let packet = self.resend_queue.pop_front().unwrap();
                                     tracing::trace!(
-                                        ?link_id,
+                                        ?link_id, tag =% link.tag(),
                                         "resending packet {} over non-idle link",
                                         packet.seq
                                     );
                                     self.idle_links.retain(|idle_id| *idle_id != id);
                                     self.resend_reliable_over_link(id, packet);
                                 } else if self.read_closed_rx.is_none() && !self.receive_close_sent {
-                                    tracing::trace!(?link_id, "sending ReceiveClose over non-idle link");
+                                    tracing::trace!(?link_id, tag =% link.tag(), "sending ReceiveClose over non-idle link");
                                     self.idle_links.retain(|&idle_id| idle_id != id);
                                     self.send_reliable_over_link(id, ReliableMsg::ReceiveClose);
                                     self.receive_close_sent = true;
                                 } else if self.read_tx.is_none() && !self.receive_finish_sent {
-                                    tracing::trace!(?link_id, "sending ReceiveFinish over non-idle link");
+                                    tracing::trace!(?link_id, tag =% link.tag(), "sending ReceiveFinish over non-idle link");
                                     self.idle_links.retain(|&idle_id| idle_id != id);
                                     self.send_reliable_over_link(id, ReliableMsg::ReceiveFinish);
                                     self.receive_finish_sent = true;
                                 } else if self.write_rx.is_none() && !self.send_finish_sent {
-                                    tracing::trace!(?link_id, "sending SendFinish over non-idle link");
+                                    tracing::trace!(?link_id, tag =% link.tag(), "sending SendFinish over non-idle link");
                                     self.idle_links.retain(|&idle_id| idle_id != id);
                                     self.send_reliable_over_link(id, ReliableMsg::SendFinish);
                                     self.send_finish_sent = true;
@@ -859,34 +864,36 @@ where
                                     })
                                 {
                                     tracing::trace!(
-                                        ?link_id,
+                                        ?link_id, tag =% link.tag(),
                                         "sending data of size {} over non-idle link",
                                         data.len()
                                     );
                                     self.idle_links.retain(|idle_id| *idle_id != id);
                                     self.send_reliable_over_link(id, ReliableMsg::Data(data));
                                 } else if link.needs_flush() && !link.is_sendable() {
-                                    tracing::trace!(?link_id, "flushing link because it is not sendable");
+                                    tracing::trace!(?link_id, tag =% link.tag(), "flushing link because it is not sendable");
                                     self.flush_link(id);
                                 } else if !self.idle_links.contains(&id) {
                                     // Store link in idle list.
-                                    tracing::trace!(?link_id, "link has become idle");
+                                    tracing::trace!(?link_id, tag =% link.tag(), "link has become idle");
                                     link.mark_idle();
                                     self.idle_links.push(id);
                                 }
                             } else {
                                 // Link is unconfirmed, make sure it is flushed.
                                 if link.needs_flush() || link.need_ack_flush() {
-                                    tracing::trace!(?link_id, "flushing link because it is now unconfirmed");
+                                    tracing::trace!(?link_id, tag =% link.tag(), "flushing link because it is now unconfirmed");
                                     self.flush_link(id);
                                 }
                             }
                         }
+
                         LinkIntEvent::TxFlushed => {
                             // Link has completed flushing.
                             self.unflushed_links.remove(&id);
                             self.mark_txed_packets_flushed(id);
                         }
+
                         LinkIntEvent::Rx { msg, data } => {
                             // Link has received a message.
                             match self.handle_received_msg(id, msg, data) {
@@ -901,7 +908,11 @@ where
                                     break;
                                 }
                                 Err(err) => {
-                                    tracing::warn!(?link_id, %err, "link caused protocol error");
+                                    let link = self.links[id].as_ref().unwrap();
+                                    tracing::warn!(
+                                        link_id =? link.link_id(), tag =% link.tag(),
+                                        %err, "link caused protocol error"
+                                    );
                                     result = Err(TaskError::ProtocolError { link_id, error: err.to_string() });
                                     read_term = Some(RecvError::ProtocolError);
                                     write_term = SendError::ProtocolError;
@@ -910,14 +921,16 @@ where
                                 }
                             }
                         }
+
                         LinkIntEvent::FlushRequired => {
                             // Link requires send buffer flushing.
-                            tracing::trace!(?link_id, "flushing link");
+                            tracing::trace!(?link_id, tag =% link.tag(), "flushing link");
                             self.flush_link(id);
                         }
+
                         LinkIntEvent::TxError(err) | LinkIntEvent::RxError(err) => {
                             // Link has failed.
-                            tracing::warn!(?link_id, %err, "disconnecting link due to IO error");
+                            tracing::warn!(?link_id, tag =% link.tag(), %err, "disconnecting link due to IO error");
                             let reason = if self.read_tx.is_none() && self.write_rx.is_none() {
                                 DisconnectReason::ConnectionClosed
                             } else {
@@ -925,6 +938,7 @@ where
                             };
                             self.remove_link(id, reason);
                         }
+
                         LinkIntEvent::BlockedChanged => {
                             // Local link blocking has changed.
                             let link = self.links[id].as_mut().unwrap();
@@ -932,44 +946,58 @@ where
                             link.report_ready();
                             link.blocked_changed_out_tx.send_replace(());
                         }
+
                         LinkIntEvent::Disconnect => {
                             // Local request to disconnect link.
                             let link = self.links[id].as_mut().unwrap();
                             if link.disconnecting.is_none() {
-                                tracing::info!(?link_id, "starting disconnection of link by local request");
+                                tracing::info!(?link_id, tag =% link.tag(), "starting disconnection of link by local request");
                                 link.disconnecting = Some(DisconnectInitiator::Local);
                                 self.flush_link(id);
                             }
                         }
                     }
                 }
+
                 TaskEvent::WriteRx { id, data } => {
-                    let link_id = self.links[id].as_ref().unwrap().link_id();
-                    tracing::trace!(?link_id, "sending data of size {} bytes over idle link", data.len());
+                    let link = self.links[id].as_ref().unwrap();
+                    tracing::trace!(
+                        link_id =? link.link_id(), tag =% link.tag(),
+                        "sending data of size {} bytes over idle link", data.len()
+                    );
                     self.idle_links.retain(|&idle_id| idle_id != id);
                     self.send_reliable_over_link(id, ReliableMsg::Data(data));
                 }
+
                 TaskEvent::SendConsumed => {
                     let id = self.idle_links.pop().unwrap();
-                    let link_id = self.links[id].as_ref().unwrap().link_id();
+                    let link = self.links[id].as_ref().unwrap();
                     let consumed = self.rxed_reliable_consumed_since_last_ack as u32;
-                    tracing::trace!(?link_id, "acking {consumed} consumed bytes over idle link");
+                    tracing::trace!(
+                        link_id =? link.link_id(), tag =% link.tag(),
+                        "acking {consumed} consumed bytes over idle link"
+                    );
                     self.send_reliable_over_link(id, ReliableMsg::Consumed(consumed));
                     self.rxed_reliable_consumed_since_last_ack = 0;
                     self.rxed_reliable_consumed_force_ack = false;
                 }
+
                 TaskEvent::WriteEnd => {
                     tracing::debug!("sender was dropped");
                     self.write_rx = None;
                     if let Some(id) = self.idle_links.pop() {
-                        let link_id = self.links[id].as_mut().unwrap().link_id();
-                        tracing::debug!(?link_id, "sending SendFinish over idle link");
+                        let link = self.links[id].as_ref().unwrap();
+                        tracing::debug!(
+                            link_id =? link.link_id(), tag =% link.tag(),
+                            "sending SendFinish over idle link"
+                        );
                         self.send_reliable_over_link(id, ReliableMsg::SendFinish);
                         self.send_finish_sent = true;
                     } else {
                         tracing::debug!("queueing sending of SendFinish");
                     }
                 }
+
                 TaskEvent::Flush(tx) => {
                     tracing::trace!("starting flush of all links");
                     self.unflushed_links = self
@@ -990,35 +1018,45 @@ where
                     self.idle_links.retain(|idle_id| !self.unflushed_links.contains(idle_id));
                     self.flushed_tx = Some(tx);
                 }
+
                 TaskEvent::ConfirmTimedOut(id) => {
-                    let link = self.links[id].as_mut().unwrap();
+                    let link = self.links[id].as_ref().unwrap();
                     tracing::debug!(
-                        link_id =? link.link_id(),
+                        link_id =? link.link_id(), tag =% link.tag(),
                         "acknowledgement timeout on link with ping {} ms",
                         link.roundtrip.as_millis()
                     );
                     self.unconfirm_link(id, NotWorkingReason::AckTimeout);
                 }
+
                 TaskEvent::Resend(packet) => {
                     let id = resendable_idle_link_id.unwrap();
-                    let link_id = self.links[id].as_ref().unwrap().link_id();
+                    let link = self.links[id].as_ref().unwrap();
                     self.idle_links.retain(|&idle_id| idle_id != id);
-                    tracing::trace!(?link_id, "resending message {} over idle link", packet.seq);
+                    tracing::trace!(
+                        link_id =? link.link_id(), tag =% link.tag(),
+                        "resending message {} over idle link", packet.seq
+                    );
                     self.resend_reliable_over_link(id, packet);
                 }
+
                 TaskEvent::ReadDropped => {
                     tracing::debug!("receiver was dropped");
                     self.read_tx = None;
                     self.read_closed_rx = None;
                     if let Some(id) = self.idle_links.pop() {
-                        let link_id = self.links[id].as_mut().unwrap().link_id();
-                        tracing::debug!(?link_id, "sending ReceiveFinish over idle link");
+                        let link = self.links[id].as_ref().unwrap();
+                        tracing::debug!(
+                            link_id =? link.link_id(), tag =% link.tag(),
+                            "sending ReceiveFinish over idle link"
+                        );
                         self.send_reliable_over_link(id, ReliableMsg::ReceiveFinish);
                         self.receive_finish_sent = true;
                     } else {
                         tracing::debug!("queueing sending of ReceiveFinish");
                     }
                 }
+
                 TaskEvent::ReadClosed => {
                     tracing::debug!("receiver was closed");
                     self.read_closed_rx = None;
@@ -1027,6 +1065,7 @@ where
                         self.receive_close_sent = true;
                     }
                 }
+
                 TaskEvent::ConsumeReceived { received, permit } => {
                     tracing::trace!("consuming received data message {:?}", &received.msg);
                     match received.msg {
@@ -1049,28 +1088,45 @@ where
                         }
                     }
                 }
+
                 TaskEvent::PingLink(id) => {
                     let link = self.links[id].as_mut().unwrap();
-                    tracing::trace!(link_id =? link.link_id(), "requesting ping of link");
+                    tracing::trace!(
+                        link_id =? link.link_id(), tag =% link.tag(),
+                        "requesting ping of link"
+                    );
                     link.send_ping = true;
                     self.flush_link(id);
                 }
+
                 TaskEvent::LinkPingTimeout(id) => {
-                    let link_id = self.links[id].as_mut().unwrap().link_id();
-                    tracing::warn!(?link_id, "removing link due to ping timeout");
+                    let link = self.links[id].as_ref().unwrap();
+                    tracing::warn!(
+                        link_id =? link.link_id(), tag =% link.tag(),
+                         "removing link due to ping timeout"
+                    );
                     self.remove_link(id, DisconnectReason::PingTimeout);
                 }
+
                 TaskEvent::LinkUnconfirmedTimeout(id) => {
-                    let link_id = self.links[id].as_mut().unwrap().link_id();
-                    tracing::warn!(?link_id, "removing link due to unconfirmed timeout");
+                    let link = self.links[id].as_ref().unwrap();
+                    tracing::warn!(
+                        link_id =? link.link_id(), tag =% link.tag(),
+                        "removing link due to unconfirmed timeout"
+                    );
                     self.remove_link(id, DisconnectReason::UnconfirmedTimeout);
                 }
+
                 TaskEvent::LinkSendTimeout(id) => {
-                    let link_id = self.links[id].as_mut().unwrap().link_id();
-                    tracing::warn!(?link_id, "removing link due to send timeout");
+                    let link = self.links[id].as_ref().unwrap();
+                    tracing::warn!(link_id =? link.link_id(), tag =% link.tag(),
+                        "removing link due to send timeout"
+                    );
                     self.remove_link(id, DisconnectReason::SendTimeout);
                 }
+
                 TaskEvent::LinkTesting => (),
+
                 TaskEvent::NoLinksTimeout => {
                     tracing::warn!("disconnecting because no links are available for too long");
                     result = Err(TaskError::NoLinksTimeout);
@@ -1079,6 +1135,7 @@ where
                     link_term = DisconnectReason::AllUnconfirmedTimeout;
                     break;
                 }
+
                 TaskEvent::PublishLinkStats => {
                     for link_opt in &mut self.links {
                         if let Some(link) = link_opt.as_mut() {
@@ -1086,7 +1143,9 @@ where
                         }
                     }
                 }
+
                 TaskEvent::RefusedLinkTask => (),
+
                 TaskEvent::ServerChanged => {
                     tracing::warn!("disconnecting because server id changed");
                     result = Err(TaskError::ServerIdMismatch);
@@ -1114,7 +1173,7 @@ where
                         .filter_map(|(id, link_opt)| match link_opt {
                             Some(link) if link.unconfirmed.is_none() && link.roundtrip > max_ping => {
                                 tracing::debug!(
-                                    link_id =? link.link_id(),
+                                    link_id =? link.link_id(), tag =% link.tag(),
                                     "unconfirming link due to slow ping of {} ms",
                                     link.roundtrip.as_millis()
                                 );
@@ -1195,8 +1254,11 @@ where
 
     /// Removes the link with the specified index.
     fn remove_link(&mut self, id: usize, reason: DisconnectReason) {
-        let link_id = self.links[id].as_mut().unwrap().link_id();
-        tracing::debug!(?link_id, ?reason, "removing link");
+        let link = self.links[id].as_ref().unwrap();
+        tracing::debug!(
+            link_id =? link.link_id(), tag =% link.tag(), ?reason,
+            "removing link"
+        );
 
         // Queue unconfirmed packets for resending.
         self.unconfirm_link(id, NotWorkingReason::Disconnecting);
@@ -1289,7 +1351,8 @@ where
                     self.tx_overrun = SendOverrun::Soft;
                 }
                 self.tx_overrun_since = Some(Instant::now());
-                tracing::trace!(link_id =? link.link_id(),
+                tracing::trace!(
+                    link_id =? link.link_id(), tag =% link.tag(),
                     "decreasing unacked limit of link to {} bytes",
                     link.txed_unacked_data_limit
                 );
@@ -1338,7 +1401,8 @@ where
                                 // Decrease limit.
                                 let current = link.txed_unacked_data.min(link.txed_unacked_data_limit);
                                 link.txed_unacked_data_limit = current * 95 / 100;
-                                tracing::trace!(link_id =? link.link_id(),
+                                tracing::trace!(
+                                    link_id =? link.link_id(), tag =% link.tag(),
                                     "decreasing unacked limit of link to {} bytes due to ping",
                                     link.txed_unacked_data_limit
                                 );
@@ -1389,7 +1453,8 @@ where
                         // Decrease limit.
                         let current = link.txed_unacked_data.min(link.txed_unacked_data_limit);
                         link.txed_unacked_data_limit = current * 95 / 100;
-                        tracing::trace!(link_id =? link.link_id(),
+                        tracing::trace!(
+                            link_id =? link.link_id(), tag =% link.tag(),
                             "decreasing unacked limit of link to {} bytes due to ping spread limit ({} ms, limit={} ms)",
                             link.txed_unacked_data_limit,
                             link.roundtrip.as_millis(),
@@ -1463,7 +1528,8 @@ where
                         }
                         .max(100);
 
-                        tracing::trace!(link_id =? link.link_id(),
+                        tracing::trace!(
+                            link_id =? link.link_id(), tag =% link.tag(),
                             "increasing unacked limit of link to {} bytes (done {} times without overrun)",
                             link.txed_unacked_data_limit,
                             link.txed_unacked_data_limit_increased_consecutively
@@ -1579,7 +1645,10 @@ where
         let link = self.links[id].as_mut().unwrap();
 
         // Send message.
-        tracing::trace!(link_id =? link.link_id(), "sending reliable message {seq} over link: {reliable_msg:?}");
+        tracing::trace!(
+            link_id =? link.link_id(), tag =% link.tag(),
+            "sending reliable message {seq} over link: {reliable_msg:?}"
+        );
         let (msg, data) = reliable_msg.to_link_msg(seq);
         link.start_send_msg(msg, data);
 
@@ -1618,7 +1687,11 @@ where
         assert_ne!(link.link_id(), *sent_link, "message must not be resent over original link");
 
         // Send data.
-        tracing::trace!(link_id =? link.link_id(), "resending reliable message {} over link: {:?}", packet.seq, reliable_msg);
+        tracing::trace!(
+            link_id =? link.link_id(), tag =% link.tag(),
+            "resending reliable message {} over link: {:?}",
+            packet.seq, reliable_msg
+        );
         let (msg, data) = reliable_msg.to_link_msg(packet.seq);
         link.start_send_msg(msg, data);
 
@@ -1706,85 +1779,82 @@ where
             None => false,
         };
 
-        if let Some(link) = self.links[id].as_mut() {
-            let link_id = link.link_id();
+        let link = self.links[id].as_mut()?;
+        let link_id = link.link_id();
 
-            match link.test {
-                LinkTest::Failed(when) if when.elapsed() >= self.cfg.link_retest_interval => {
-                    tracing::trace!("link {id} is ready for retry of test");
-                    link.test = LinkTest::Inactive;
-                }
-                _ => (),
+        match link.test {
+            LinkTest::Failed(when) if when.elapsed() >= self.cfg.link_retest_interval => {
+                tracing::trace!(?link_id, tag =% link.tag(), "link {id} is ready for retry of test");
+                link.test = LinkTest::Inactive;
             }
+            _ => (),
+        }
 
-            match link.test {
-                LinkTest::Inactive => {
-                    if link.unconfirmed.is_some()
-                        && link.tx_polling().is_none()
-                        && link.current_ping_sent.is_none()
-                        && !link.has_outstanding_ack()
-                    {
-                        let test_data_limit = if self.cfg.link_max_ping.is_some() {
-                            self.cfg.link_unacked_init.get()
-                        } else {
-                            self.cfg.link_unacked_limit.get().min(self.cfg.send_buffer.get() as usize)
-                        }
-                        .min(self.cfg.link_test_data_limit);
-                        let test_data = link.send_test_data(self.cfg.io_write_size.get(), test_data_limit);
-                        link.send_ping = true;
-                        link.test = LinkTest::InProgress;
-                        tracing::debug!(?link_id, "started test of link using {test_data} bytes of test data");
+        match link.test {
+            LinkTest::Inactive => {
+                if link.unconfirmed.is_some()
+                    && link.tx_polling().is_none()
+                    && link.current_ping_sent.is_none()
+                    && !link.has_outstanding_ack()
+                {
+                    let test_data_limit = if self.cfg.link_max_ping.is_some() {
+                        self.cfg.link_unacked_init.get()
+                    } else {
+                        self.cfg.link_unacked_limit.get().min(self.cfg.send_buffer.get() as usize)
                     }
+                    .min(self.cfg.link_test_data_limit);
+                    let test_data = link.send_test_data(self.cfg.io_write_size.get(), test_data_limit);
+                    link.send_ping = true;
+                    link.test = LinkTest::InProgress;
+                    tracing::debug!(?link_id, tag =% link.tag(), "started test of link using {test_data} bytes of test data");
+                }
+                None
+            }
+            LinkTest::InProgress => {
+                if link.current_ping_sent.is_none() && !link.send_ping {
+                    // Ping has completed.
+
+                    if link.roundtrip <= self.cfg.link_ack_timeout_max / 2
+                        && self
+                            .cfg
+                            .link_max_ping
+                            .map(|max_ping| link.roundtrip <= max_ping || others_slow)
+                            .unwrap_or(true)
+                    {
+                        // Ping response arrived quickly enough, thus mark link as confirmed.
+                        tracing::debug!(
+                            ?link_id, tag =% link.tag(),
+                            "link successfully completed test with ping {} ms",
+                            link.roundtrip.as_millis()
+                        );
+                        link.unconfirmed = None;
+                        link.test = LinkTest::Inactive;
+
+                        self.idle_links.retain(|&idle_id| idle_id != id);
+                        link.report_ready();
+
+                        None
+                    } else {
+                        // Link is too slow, schedule retest.
+                        tracing::debug!(
+                            ?link_id, tag =% link.tag(),
+                            "link failed test with ping {} ms, retrying in {} s",
+                            link.roundtrip.as_millis(),
+                            self.cfg.link_retest_interval.as_secs()
+                        );
+                        let when = Instant::now();
+                        link.test = LinkTest::Failed(when);
+                        match &mut link.unconfirmed {
+                            Some((_since, reason)) => *reason = NotWorkingReason::TestFailed,
+                            None => link.unconfirmed = Some((Instant::now(), NotWorkingReason::TestFailed)),
+                        }
+                        Some(when + self.cfg.link_retest_interval)
+                    }
+                } else {
                     None
                 }
-                LinkTest::InProgress => {
-                    if link.current_ping_sent.is_none() && !link.send_ping {
-                        // Ping has completed.
-
-                        if link.roundtrip <= self.cfg.link_ack_timeout_max / 2
-                            && self
-                                .cfg
-                                .link_max_ping
-                                .map(|max_ping| link.roundtrip <= max_ping || others_slow)
-                                .unwrap_or(true)
-                        {
-                            // Ping response arrived quickly enough, thus mark link as confirmed.
-                            tracing::debug!(
-                                ?link_id,
-                                "link successfully completed test with ping {} ms",
-                                link.roundtrip.as_millis()
-                            );
-                            link.unconfirmed = None;
-                            link.test = LinkTest::Inactive;
-
-                            self.idle_links.retain(|&idle_id| idle_id != id);
-                            link.report_ready();
-
-                            None
-                        } else {
-                            // Link is too slow, schedule retest.
-                            tracing::debug!(
-                                ?link_id,
-                                "link failed test with ping {} ms, retrying in {} s",
-                                link.roundtrip.as_millis(),
-                                self.cfg.link_retest_interval.as_secs()
-                            );
-                            let when = Instant::now();
-                            link.test = LinkTest::Failed(when);
-                            match &mut link.unconfirmed {
-                                Some((_since, reason)) => *reason = NotWorkingReason::TestFailed,
-                                None => link.unconfirmed = Some((Instant::now(), NotWorkingReason::TestFailed)),
-                            }
-                            Some(when + self.cfg.link_retest_interval)
-                        }
-                    } else {
-                        None
-                    }
-                }
-                LinkTest::Failed(when) => Some(when + self.cfg.link_retest_interval),
             }
-        } else {
-            None
+            LinkTest::Failed(when) => Some(when + self.cfg.link_retest_interval),
         }
     }
 
@@ -1809,18 +1879,19 @@ where
     fn handle_received_msg(&mut self, id: usize, msg: LinkMsg, data: Option<Bytes>) -> Result<bool, io::Error> {
         let link = self.links[id].as_mut().unwrap();
         let link_id = link.link_id();
+        let tag = link.tag();
 
         match msg {
             LinkMsg::Ping => {
                 // Respond with pong on same link.
-                tracing::trace!(?link_id, "ping received, requesting sending resposne");
+                tracing::trace!(?link_id, tag =% link.tag(), "ping received, requesting sending resposne");
                 link.send_pong = true;
                 self.flush_link(id);
             }
             LinkMsg::Pong => {
                 if let Some(current_ping_sent) = link.current_ping_sent.take() {
                     let elapsed = current_ping_sent.elapsed();
-                    tracing::trace!(?link_id, "ping round-trip time is {} ms", elapsed.as_millis());
+                    tracing::trace!(?link_id, tag =% link.tag(), "ping round-trip time is {} ms", elapsed.as_millis());
                     link.roundtrip = elapsed;
                     link.roundtrip_estimates = Some(1);
                     link.last_ping = Some(Instant::now());
@@ -1833,18 +1904,18 @@ where
             | LinkMsg::ReceiveClose { .. }
             | LinkMsg::ReceiveFinish { .. }) => {
                 let (reliable_msg, seq) = ReliableMsg::from_link_msg(msg, data);
-                tracing::trace!(?link_id, "received reliable message {seq}: {reliable_msg:?}");
+                tracing::trace!(?link_id, %tag, "received reliable message {seq}: {reliable_msg:?}");
                 self.handle_received_reliable_msg(id, seq, reliable_msg)?;
             }
             LinkMsg::Ack { received } => {
-                tracing::trace!(?link_id, "link acked reception up to {received}");
+                tracing::trace!(?link_id, %tag, "link acked reception up to {received}");
                 self.handle_ack(id, received);
             }
             LinkMsg::TestData { size } => {
-                tracing::trace!(?link_id, "link received {size} bytes of test data");
+                tracing::trace!(?link_id, %tag, "link received {size} bytes of test data");
             }
             LinkMsg::SetBlock { blocked } => {
-                tracing::debug!(?link_id, %blocked, "remote block status of link changed");
+                tracing::debug!(?link_id, %tag, %blocked, "remote block status of link changed");
                 link.remotely_blocked.store(blocked, Ordering::SeqCst);
                 self.idle_links.retain(|&idle_id| idle_id != id);
                 link.report_ready();
@@ -1856,7 +1927,7 @@ where
                         if link.goodbye_sent {
                             // Remote endpoint has received all our previous message, our goodbye and
                             // finished sending all outstanding messages.
-                            tracing::info!(?link_id, "removing link due to local request");
+                            tracing::info!(?link_id, %tag, "removing link due to local request");
                             self.remove_link(id, DisconnectReason::LocallyRequested);
                         }
                     }
@@ -1865,13 +1936,13 @@ where
                     }
                     None => {
                         // Remote endpoint is initiating disconnection.
-                        tracing::debug!(?link_id, "remote requests disconnection of link");
+                        tracing::debug!(?link_id, %tag, "remote requests disconnection of link");
                         link.disconnecting = Some(DisconnectInitiator::Remote);
                     }
                 }
             }
             LinkMsg::Terminate => {
-                tracing::trace!(?link_id, "link recevied forceful connection termination request");
+                tracing::trace!(?link_id, %tag, "link recevied forceful connection termination request");
                 return Ok(true);
             }
             LinkMsg::Welcome { .. } | LinkMsg::Connect { .. } | LinkMsg::Accepted | LinkMsg::Refused { .. } => {
@@ -1885,18 +1956,20 @@ where
     /// Handle received data.
     fn handle_received_reliable_msg(&mut self, id: usize, seq: Seq, msg: ReliableMsg) -> Result<(), io::Error> {
         let link = self.links[id].as_mut().unwrap();
-        let link_id = link.link_id();
 
         // Update link and queue sending of ack.
         link.tx_ack_queue.push_back(seq);
         self.idle_links.retain(|&idle_id| idle_id != id);
         link.report_ready();
 
+        let link_id = link.link_id();
+        let tag = link.tag();
+
         if seq < self.rx_seq {
             // The sequence number belongs to a packet that has already been
             // received and consumed. Thus the acknowledgement has been
             // lost and must be resend.
-            tracing::trace!(?link_id, "rereceived consumed reliable message {}", seq);
+            tracing::trace!(?link_id, %tag, "rereceived consumed reliable message {}", seq);
         } else {
             let offset = (seq - self.rx_seq) as usize;
             if self.rxed_reliable.len() <= offset {
@@ -1904,7 +1977,7 @@ where
             }
 
             if self.rxed_reliable[offset].is_none() {
-                tracing::trace!(?link_id, "received reliable message {}", seq);
+                tracing::trace!(?link_id, %tag, "received reliable message {}", seq);
 
                 match &msg {
                     ReliableMsg::Data(data) => {
@@ -1917,7 +1990,7 @@ where
                         // Handled during consumption.
                     }
                     ReliableMsg::Consumed(consumed) => {
-                        tracing::trace!(?link_id, "remote consumed {consumed} bytes");
+                        tracing::trace!(?link_id, %tag, "remote consumed {consumed} bytes");
                         match self.txed_unconsumed.checked_sub(*consumed as usize) {
                             Some(txed_unconsumed) => self.txed_unconsumed = txed_unconsumed,
                             None => return Err(protocol_err!("txed_unconsumed underflow")),
@@ -1940,7 +2013,7 @@ where
             } else {
                 // The sequence number belongs to a packet that has alredy been
                 // received. Thus the acknowledgement has been lost and must be resend.
-                tracing::trace!(?link_id, "rereceived unconsumed reliable message {}", seq);
+                tracing::trace!(?link_id, %tag, "rereceived unconsumed reliable message {}", seq);
             }
         }
 
@@ -1969,13 +2042,14 @@ where
     fn handle_ack(&mut self, id: usize, rxed_seq: Seq) {
         let link = self.links[id].as_mut().unwrap();
         let link_id = link.link_id();
+        let tag = link.tag();
 
-        tracing::trace!(?link_id, "processing received ack for {rxed_seq} on link");
+        tracing::trace!(?link_id, %tag, "processing received ack for {rxed_seq} on link");
 
         // Possibly unblock send buffer increase.
         if let Some(last_increased) = link.txed_unacked_data_limit_increased {
             if last_increased <= rxed_seq {
-                tracing::trace!(?link_id, "re-allowing increase of send limit of link");
+                tracing::trace!(?link_id, %tag, "re-allowing increase of send limit of link");
                 link.txed_unacked_data_limit_increased = None;
             } else {
                 link.roundtrip_estimates = Some(0);
@@ -2143,7 +2217,7 @@ impl<TX, RX, TAG> IntoFuture for Task<TX, RX, TAG>
 where
     RX: Stream<Item = Result<Bytes, io::Error>> + Unpin + Send + Sync + 'static,
     TX: Sink<Bytes, Error = io::Error> + Unpin + Send + Sync + 'static,
-    TAG: Send + Sync + 'static,
+    TAG: fmt::Display + Send + Sync + 'static,
 {
     type Output = Result<(), TaskError>;
 

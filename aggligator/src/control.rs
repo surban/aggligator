@@ -306,7 +306,7 @@ impl<TX, RX, TAG> Control<TX, RX, TAG>
 where
     RX: Stream<Item = Result<Bytes, io::Error>> + Unpin,
     TX: Sink<Bytes, Error = io::Error> + Unpin,
-    TAG: Send + Sync + 'static,
+    TAG: fmt::Display + Send + Sync + 'static,
 {
     /// Adds a new outgoing, packet-based link to the connection.
     ///
@@ -413,7 +413,7 @@ impl<R, W, TAG> Control<IoTx<W>, IoRx<R>, TAG>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
-    TAG: Send + Sync + 'static,
+    TAG: fmt::Display + Send + Sync + 'static,
 {
     /// Adds a new outgoing, stream-based link to the connection.
     ///

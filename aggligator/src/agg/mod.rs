@@ -3,7 +3,7 @@
 use bytes::Bytes;
 use futures::{Sink, Stream};
 use std::{
-    io,
+    fmt, io,
     sync::{atomic::AtomicBool, Arc},
 };
 use tokio::sync::{mpsc, oneshot, watch, Mutex};
@@ -36,7 +36,7 @@ impl<TX, RX, TAG> AggParts<TX, RX, TAG>
 where
     RX: Stream<Item = Result<Bytes, io::Error>> + Unpin + Send + 'static,
     TX: Sink<Bytes, Error = io::Error> + Unpin + Send + 'static,
-    TAG: Send + Sync + 'static,
+    TAG: fmt::Display + Send + Sync + 'static,
 {
     /// Creates a new aggregated connection and returns its parts.
     #[allow(clippy::type_complexity)]
