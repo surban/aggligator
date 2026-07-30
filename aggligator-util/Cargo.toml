@@ -41,9 +41,9 @@ tracing-subscriber = { workspace = true, default-features = false, features = [
 ] }
 
 anyhow = "1"
-axum-server = "0.7"
+axum-server = "0.8"
 clap = { version = "4", features = ["derive"] }
-clap_mangen = "0.2"
+clap_mangen = "0.3"
 clap-markdown = "0.1"
 gethostname = "1"
 network-interface = "2"

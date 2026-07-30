@@ -22,9 +22,9 @@ tokio = { workspace = true, features = ["net", "sync"] }
 
 axum = { version = "0.8", features = ["ws"] }
 bytes = "1"
-tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-webpki-roots"] }
 tokio-util = { version = "0.7", features = ["io"] }
-tungstenite = "0.28"
+tungstenite = "0.30"
 url = "2"
 
 [package.metadata.docs.rs]
