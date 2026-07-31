@@ -103,11 +103,11 @@ enum SendOverrun {
 
 /// A sent reliable packet.
 #[derive(Clone)]
-struct SentReliable {
+pub(super) struct SentReliable {
     /// Sequence number.
-    seq: Seq,
+    pub seq: Seq,
     /// Status.
-    status: AtomicRefCell<SentReliableStatus>,
+    pub status: AtomicRefCell<SentReliableStatus>,
 }
 
 impl fmt::Debug for SentReliable {
@@ -121,7 +121,7 @@ impl fmt::Debug for SentReliable {
 
 /// Status of a sent reliable packet.
 #[derive(Debug, Clone)]
-enum SentReliableStatus {
+pub(super) enum SentReliableStatus {
     /// Message was sent, but its reception is not yet confirmed.
     Sent {
         /// Time packet was sent.
@@ -130,6 +130,8 @@ enum SentReliableStatus {
         flushed: Option<Instant>,
         /// Index of link used to send the packet.
         link_id: usize,
+        /// Id of link used to send the packet.
+        link: LinkId,
         /// Sent message.
         msg: ReliableMsg,
         /// Whether packet has been resent.
@@ -891,7 +893,6 @@ where
                         LinkIntEvent::TxFlushed => {
                             // Link has completed flushing.
                             self.unflushed_links.remove(&id);
-                            self.mark_txed_packets_flushed(id);
                         }
 
                         LinkIntEvent::Rx { msg, data } => {
@@ -1599,18 +1600,6 @@ where
         None
     }
 
-    /// Marks reliably transmitted packets as flushed at the current time.
-    fn mark_txed_packets_flushed(&self, id: usize) {
-        for packet in &self.txed_packets {
-            match &mut *packet.status.borrow_mut() {
-                SentReliableStatus::Sent { flushed: flushed @ None, link_id, .. } if *link_id == id => {
-                    *flushed = Some(Instant::now());
-                }
-                _ => (),
-            }
-        }
-    }
-
     /// Time when next link must be pinged.
     fn next_link_ping(&self) -> Option<(usize, Instant)> {
         self.links
@@ -1666,11 +1655,14 @@ where
                 sent: Instant::now(),
                 flushed: None,
                 link_id: id,
+                link: link.link_id(),
                 msg: reliable_msg,
                 resent: false,
             }),
         };
-        self.txed_packets.push_back(Arc::new(packet));
+        let packet = Arc::new(packet);
+        link.txed_packets.push_back(Arc::downgrade(&packet));
+        self.txed_packets.push_back(packet);
 
         seq
     }
@@ -1713,9 +1705,12 @@ where
             sent: Instant::now(),
             flushed: None,
             link_id: id,
+            link: link.link_id(),
             msg: reliable_msg.clone(),
             resent: true,
         };
+
+        link.txed_packets.push_back(Arc::downgrade(&packet));
     }
 
     /// Unconfirms a link.
@@ -1736,18 +1731,19 @@ where
         for p in &mut self.txed_packets {
             let mut status = p.status.borrow_mut();
             match &*status {
-                SentReliableStatus::Sent { link_id, msg, .. } if *link_id == id => {
+                SentReliableStatus::Sent { link_id, link: sent_link, msg, .. } if *link_id == id => {
                     // Update link statistics.
                     if let ReliableMsg::Data(data) = &msg {
                         link.txed_unacked_data -= data.len();
                     }
 
-                    *status = SentReliableStatus::ResendQueued { msg: msg.clone(), sent_link: link.link_id() };
+                    *status = SentReliableStatus::ResendQueued { msg: msg.clone(), sent_link: *sent_link };
                     self.resend_queue.push_back(p.clone());
                 }
                 _ => (),
             };
         }
+        link.clean_txed_packets();
 
         // Sort resend queue, so that oldest packets are resend first.
         self.resend_queue.make_contiguous().sort_by_key(|packet| packet.seq);
@@ -1870,7 +1866,6 @@ where
         let link = self.links[id].as_mut().unwrap();
         link.start_flush();
         self.idle_links.retain(|&idle_id| idle_id != id);
-        self.mark_txed_packets_flushed(id);
     }
 
     /// Handle a received message.
@@ -2103,16 +2098,16 @@ where
         while let Some(packet) = self.txed_packets.front() {
             self.txed_last_consumed = packet.seq;
 
-            let status = packet.status.borrow();
-            if let SentReliableStatus::Received { size, .. } = &*status {
+            if let SentReliableStatus::Received { size, .. } = &*packet.status.borrow() {
                 self.txed_unconsumable -= size;
-
-                drop(status);
-                self.txed_packets.pop_front();
             } else {
                 break;
             }
+
+            self.txed_packets.pop_front();
         }
+
+        link.clean_txed_packets();
     }
 
     /// Sends statistics data.

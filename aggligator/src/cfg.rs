@@ -87,6 +87,8 @@ pub struct Cfg {
     pub link_flush_interval: Option<Duration>,
     /// Maximum age of unflushed acknowledgements.
     pub link_ack_flush_interval: Option<Duration>,
+    /// Maximum amount of sent data on a link before triggering a flush.
+    pub link_unflushed_limit: Option<NonZeroUsize>,
     /// Target packet size for [IO-stream-based links](crate::io).
     pub link_io_packet_size: NonZeroUsize,
     /// Timeout after which connection is closed when no working links are present.
@@ -128,6 +130,7 @@ impl Default for Cfg {
             link_flush_delay: Duration::from_millis(50),
             link_flush_interval: None,
             link_ack_flush_interval: Some(Duration::from_millis(50)),
+            link_unflushed_limit: Some(NonZeroUsize::new(131_072).unwrap()),
             link_io_packet_size: NonZeroUsize::new(65_536).unwrap(),
             no_link_timeout: Duration::from_secs(90),
             termination_timeout: Duration::from_secs(300),

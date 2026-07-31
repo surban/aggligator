@@ -9,7 +9,7 @@ use std::{
     mem,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Weak,
     },
     task::{Context, Poll},
     time::Duration,
@@ -20,6 +20,7 @@ use tokio::{
 };
 
 use crate::{
+    agg::task::{SentReliable, SentReliableStatus},
     cfg::{Cfg, ExchangedCfg},
     control::{Direction, DisconnectReason, Link, LinkIntervalStats, LinkStats, NotWorkingReason},
     exec::time::{sleep_until, Instant},
@@ -54,7 +55,7 @@ impl Deadline {
         match self.instant {
             None => future::pending().await,
             Some(deadline) => sleep_until(deadline).await,
-            }
+        }
 
         self.reason
     }
@@ -138,8 +139,12 @@ pub(crate) struct LinkInt<TX, RX, TAG> {
     pub(crate) tx_last_msg: Option<Instant>,
     /// Sequence number of sent and not yet acknowledged packet.
     txed_unacked: Option<Seq>,
+    /// Packets that have been sent over this link but not yet become consumable by the remote endpoint.
+    pub(super) txed_packets: VecDeque<Weak<SentReliable>>,
     /// Since when the transmit part of the link is idle.
     tx_idle_since: Option<Instant>,
+    /// Number of bytes sent that are not yet flushed.
+    txed_unflushed: usize,
     /// Performing flushing of sink `tx`.
     tx_flushing: bool,
     /// When a data message was first sent over link after it was flushed.
@@ -288,11 +293,13 @@ where
             unconfirmed_tx,
             unconfirmed_rx,
             test: LinkTest::Inactive,
+            txed_unflushed: 0,
             tx_flushing: false,
             txed_first_unflushed_data: None,
             rxed_data_msg: None,
             tx_last_msg: None,
             txed_unacked: None,
+            txed_packets: VecDeque::new(),
             last_ping: None,
             current_ping_sent: None,
             send_ping: false,
@@ -510,6 +517,7 @@ where
         let encoded = msg.encode();
         let msg_len = encoded.len();
         let data_len = data.as_ref().map(|data| data.len()).unwrap_or_default();
+        let total_len = msg_len + data_len;
 
         if let Err(err) = self.tx.start_send_unpin(encoded) {
             tracing::debug!(
@@ -521,10 +529,11 @@ where
             return;
         }
 
-        self.stats.record(msg_len + data_len, 0);
+        self.stats.record(total_len, 0);
 
         self.tx_data = data;
         self.tx_last_msg = Some(Instant::now());
+        self.txed_unflushed = self.txed_unflushed.saturating_add(total_len);
 
         match &msg {
             LinkMsg::Ack { .. } | LinkMsg::Consumed { .. } => {
@@ -544,12 +553,22 @@ where
             | LinkMsg::Goodbye => self.start_flush(),
             _ => (),
         }
+
+        if let Some(link_unflushed_limit) = self.cfg.link_unflushed_limit {
+            if self.txed_unflushed >= link_unflushed_limit.get() {
+                self.start_flush();
+            }
+        }
     }
 
     /// Flush the send buffer of the link.
     pub(crate) fn start_flush(&mut self) {
         self.txed_acks_unflushed = 0;
         self.txed_first_unflushed_ack = None;
+        self.txed_unflushed = 0;
+
+        self.mark_txed_packets_flushed();
+
         self.tx_flushing = true;
         self.tx_polling = Some(Instant::now());
     }
@@ -690,6 +709,35 @@ where
     pub(crate) fn mark_idle(&mut self) {
         self.tx_idle_since = Some(Instant::now());
         self.stats.mark_idle();
+    }
+
+    /// Marks reliably transmitted packets on this link as flushed.
+    pub(crate) fn mark_txed_packets_flushed(&self) {
+        for packet in self.txed_packets.iter().rev() {
+            let Some(packet) = packet.upgrade() else { continue };
+            let mut status = packet.status.borrow_mut();
+            match &mut *status {
+                SentReliableStatus::Sent { flushed, link, .. } if *link == self.link_id => match flushed {
+                    None => *flushed = Some(Instant::now()),
+                    Some(_) => break,
+                },
+                _ => (),
+            }
+        }
+    }
+
+    /// Removes stale references to transmitted packets.
+    pub(crate) fn clean_txed_packets(&mut self) {
+        while let Some(packet) = self.txed_packets.front() {
+            if let Some(packet) = packet.upgrade() {
+                match &*packet.status.borrow() {
+                    SentReliableStatus::Sent { link, .. } if *link == self.link_id => break,
+                    _ => (),
+                }
+            }
+
+            self.txed_packets.pop_front();
+        }
     }
 
     /// Returns whether unacknowledged sent data is under the limit.
