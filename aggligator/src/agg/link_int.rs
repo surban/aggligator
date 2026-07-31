@@ -50,14 +50,13 @@ impl Deadline {
     }
 
     /// Wait until deadline elapses or forever, if unset.
-    pub async fn wait(&self) {
+    pub async fn wait(&self) -> &'static str {
         match self.instant {
             None => future::pending().await,
-            Some(deadline) => {
-                sleep_until(deadline).await;
-                tracing::trace!("deadline for {} elapsed", self.reason);
+            Some(deadline) => sleep_until(deadline).await,
             }
-        }
+
+        self.reason
     }
 }
 
@@ -469,7 +468,8 @@ where
                 deadline.require("link ack flush interval", txed_first_unflushed_ack + link_ack_flush_interval);
             }
 
-            deadline.wait().await;
+            let reason = deadline.wait().await;
+            tracing::trace!(?link_id, %tag, "deadline for {reason} elapsed");
         };
 
         select! {

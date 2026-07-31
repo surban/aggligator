@@ -1969,7 +1969,7 @@ where
             // The sequence number belongs to a packet that has already been
             // received and consumed. Thus the acknowledgement has been
             // lost and must be resend.
-            tracing::trace!(?link_id, %tag, "rereceived consumed reliable message {}", seq);
+            tracing::trace!(?link_id, %tag, "re-received consumed reliable message {}", seq);
         } else {
             let offset = (seq - self.rx_seq) as usize;
             if self.rxed_reliable.len() <= offset {
@@ -2013,7 +2013,7 @@ where
             } else {
                 // The sequence number belongs to a packet that has alredy been
                 // received. Thus the acknowledgement has been lost and must be resend.
-                tracing::trace!(?link_id, %tag, "rereceived unconsumed reliable message {}", seq);
+                tracing::trace!(?link_id, %tag, "re-received unconsumed reliable message {}", seq);
             }
         }
 
@@ -2200,14 +2200,22 @@ where
         }
 
         if self.read_tx.is_none() || self.write_rx.is_none() {
-            tracing::trace!("direction={:?} read_tx_none={} write_tx_none={} txed_packets={} txed_packets_front={:?} \
-                resend_queue={} resend_queue_front={:?} txed_unconsumed={} rxed_reliable={} rxed_reliable_front={:?} \
-                rxed_reliable_size={} rxed_reliable_consumed_since_last_ack={}, send_finish_sent={} receive_finish_sent={}",
-                &self.direction, self.read_tx.is_none(), self.write_rx.is_none(),
-                self.txed_packets.len(), self.txed_packets.front(), self.resend_queue.len(),
-                self.resend_queue.front(), self.txed_unconsumed, self.rxed_reliable.len(),
-                self.rxed_reliable.front(), self.rxed_reliable_size, self.rxed_reliable_consumed_since_last_ack,
-                self.send_finish_sent, self.receive_finish_sent,
+            tracing::trace!(
+                direction = ?self.direction,
+                read_tx_none = self.read_tx.is_none(),
+                write_rx_none = self.write_rx.is_none(),
+                txed_packets = self.txed_packets.len(),
+                txed_packets_front = ?self.txed_packets.front(),
+                resend_queue = self.resend_queue.len(),
+                resend_queue_front = ?self.resend_queue.front(),
+                txed_unconsumed = self.txed_unconsumed,
+                rxed_reliable = self.rxed_reliable.len(),
+                rxed_reliable_front = ?self.rxed_reliable.front(),
+                rxed_reliable_size = self.rxed_reliable_size,
+                rxed_reliable_consumed_since_last_ack = self.rxed_reliable_consumed_since_last_ack,
+                self.send_finish_sent,
+                self.receive_finish_sent,
+                "connection state while a channel side is closed"
             );
         }
     }
