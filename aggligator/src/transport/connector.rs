@@ -44,14 +44,24 @@ pub trait ConnectingTransport: Send + Sync + 'static {
     async fn connect(&self, tag: &dyn LinkTag) -> Result<StreamBox>;
 
     /// Checks whether a new link can be added given existing links.
-    async fn link_filter(&self, _new: &Link<LinkTagBox>, _existing: &[Link<LinkTagBox>]) -> bool {
+    async fn link_filter(&self, new: &Link<LinkTagBox>, existing: &[Link<LinkTagBox>]) -> bool {
+        let _ = new;
+        let _ = existing;
         true
     }
 
     /// Notifies the transport of all currently connected links of the connection.
     ///
     /// This includes links by other transports as well.
-    async fn connected_links(&self, _links: &[Link<LinkTagBox>]) {}
+    async fn connected_links(&self, links: &[Link<LinkTagBox>]) {
+        let _ = links;
+    }
+
+    /// Notifies the transport that one of its links was disconnected or failed to connect.
+    async fn link_disconnected(&self, tag: &dyn LinkTag, result: std::result::Result<DisconnectReason, &Error>) {
+        let _ = tag;
+        let _ = result;
+    }
 }
 
 type ArcConnectingTransport = Arc<dyn ConnectingTransport>;
@@ -416,6 +426,7 @@ impl Connector {
                                 Ok(wrapped) => stream_box = wrapped,
                                 Err(err) => {
                                     tracing::debug!(%tag, wrapper =% name, %err, "wrapping tag failed");
+                                    transport.link_disconnected(&*tag, Err(&err)).await;
                                     let _ = link_error_tx.send(BoxLinkError::outgoing(conn_id, &tag, err));
                                     sleep(reconnect_delay).await;
                                     return (tag, None);
@@ -431,7 +442,9 @@ impl Connector {
                             Ok(link) => link,
                             Err(err) => {
                                 tracing::warn!(%tag, %err, "adding link to connection failed");
-                                let _ = link_error_tx.send(BoxLinkError::outgoing(conn_id, &tag, err.into()));
+                                let err = Error::from(err);
+                                transport.link_disconnected(&*tag, Err(&err)).await;
+                                let _ = link_error_tx.send(BoxLinkError::outgoing(conn_id, &tag, err));
                                 sleep(reconnect_delay).await;
                                 return (tag, None);
                             }
@@ -451,6 +464,7 @@ impl Connector {
                         let sleep_until = sleep(reconnect_delay);
                         let reason = link.disconnected().await;
                         tracing::info!(link_id =? link.id(), %tag, %reason, "link disconnected");
+                        transport.link_disconnected(&*tag, Ok(reason.clone())).await;
                         let _ = link_error_tx.send(BoxLinkError::outgoing(conn_id, &tag, reason.clone().into()));
                         sleep_until.await;
 
