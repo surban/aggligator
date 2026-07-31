@@ -492,6 +492,9 @@ where
                 }
             }
 
+            // Check link limits and unconfirm if exceeded.
+            self.check_link_limits();
+
             // Adjust link transmit buffer limits.
             self.adjust_link_tx_limits();
 
@@ -1156,39 +1159,6 @@ where
                     break;
                 }
             }
-
-            // Check for link ping exceeding configured limit.
-            if let Some(max_ping) = self.cfg.link_max_ping {
-                let all_links_slow = self.links.iter().all(|link_opt| {
-                    link_opt
-                        .as_ref()
-                        .map(|link| link.unconfirmed.is_some() || link.is_blocked() || link.roundtrip > max_ping)
-                        .unwrap_or(true)
-                });
-
-                if !all_links_slow {
-                    let slow: Vec<_> = self
-                        .links
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(id, link_opt)| match link_opt {
-                            Some(link) if link.unconfirmed.is_none() && link.roundtrip > max_ping => {
-                                tracing::debug!(
-                                    link_id =? link.link_id(), tag =% link.tag(),
-                                    "unconfirming link due to slow ping of {} ms",
-                                    link.roundtrip.as_millis()
-                                );
-                                Some(id)
-                            }
-                            _ => None,
-                        })
-                        .collect();
-
-                    for id in slow {
-                        self.unconfirm_link(id, NotWorkingReason::MaxPingExceeded);
-                    }
-                }
-            }
         }
 
         // Terminate aggregated links channel.
@@ -1314,6 +1284,77 @@ where
         self.txed_packets.front().map(|p| self.tx_seq - p.seq <= Seq::USABLE_INTERVAL).unwrap_or(true)
     }
 
+    /// Returns the limit ping and good ping as given by the link ping spread limits, if configured.
+    fn ping_spread_limits(&self) -> Option<(Duration, Duration)> {
+        let min_ping = self
+            .links
+            .iter()
+            .filter_map(|link_opt| link_opt.as_ref())
+            .filter(|link| {
+                link.unconfirmed.is_none()
+                    && !link.is_blocked()
+                    && link.roundtrip_estimates.is_some_and(|n| n >= RELIABLE_ROUNDTRIP_ESTIMATES)
+            })
+            .map(|link| link.roundtrip)
+            .min()?;
+
+        let limit_ping = min_ping * self.cfg.link_max_ping_spread?.get();
+        let good_ping = (min_ping + 3 * limit_ping) / 4;
+
+        Some((limit_ping, good_ping))
+    }
+
+    /// Checks that links behave within limits and unconfirm links that do not.
+    fn check_link_limits(&mut self) {
+        let mut to_unconfirm = Vec::new();
+        let confirmed_links: Vec<_> = self
+            .links
+            .iter()
+            .enumerate()
+            .filter_map(|(id, link)| link.as_ref().map(|link| (id, link)))
+            .filter(|(_id, link)| link.unconfirmed.is_none())
+            .collect();
+
+        // Check for link ping exceeding configured limit.
+        if let Some(max_ping) = self.cfg.link_max_ping {
+            let all_links_slow =
+                confirmed_links.iter().all(|(_id, link)| link.is_blocked() || link.roundtrip > max_ping);
+
+            if !all_links_slow {
+                for (id, link) in &confirmed_links {
+                    if link.roundtrip > max_ping {
+                        tracing::debug!(
+                            link_id =? link.link_id(), tag =% link.tag(),
+                            "unconfirming link due to slow ping of {} ms",
+                            link.roundtrip.as_millis(),
+                        );
+                        to_unconfirm.push((*id, NotWorkingReason::MaxPingExceeded));
+                    }
+                }
+            }
+        }
+
+        // Check for link ping exceeds ping spread limit.
+        if let Some((limit_ping, _good_ping)) = self.ping_spread_limits() {
+            for (id, link) in &confirmed_links {
+                if link.roundtrip > 2 * limit_ping
+                    && link.roundtrip_estimates.is_some_and(|n| n >= RELIABLE_ROUNDTRIP_ESTIMATES)
+                {
+                    tracing::debug!(
+                        link_id =? link.link_id(), tag =% link.tag(),
+                        "unconfirming link due to ping of {} ms twice above ping spread limit of {} ms",
+                        link.roundtrip.as_millis(), limit_ping.as_millis(),
+                    );
+                    to_unconfirm.push((*id, NotWorkingReason::MaxPingExceeded));
+                }
+            }
+        }
+
+        for (id, reason) in to_unconfirm {
+            self.unconfirm_link(id, reason);
+        }
+    }
+
     /// Adjusts the link transmission buffer limits to ensure that no link stalls the channel.
     fn adjust_link_tx_limits(&mut self) {
         let Some(remote_recv_buffer) = self.remote_recv_buffer() else { return };
@@ -1421,25 +1462,7 @@ where
         }
 
         // Determine minimum ping and calculate allowable ping spread.
-        let min_ping = self
-            .links
-            .iter()
-            .filter_map(|link_opt| link_opt.as_ref())
-            .filter(|link| {
-                link.unconfirmed.is_none()
-                    && !link.is_blocked()
-                    && link.roundtrip_estimates.is_some_and(|n| n >= 10)
-            })
-            .map(|link| link.roundtrip)
-            .min();
-        let (limit_ping, good_ping) =
-            if let (Some(link_max_ping_spread), Some(min_ping)) = (self.cfg.link_max_ping_spread, min_ping) {
-                let limit_ping = min_ping * link_max_ping_spread.get();
-                let good_ping = (min_ping + 3 * limit_ping) / 4;
-                (Some(limit_ping), Some(good_ping))
-            } else {
-                (None, None)
-            };
+        let (limit_ping, good_ping) = self.ping_spread_limits().unzip();
 
         // Decrease limit of links with ping above allowable ping spread.
         if let Some(limit_ping) = limit_ping {
@@ -1760,6 +1783,7 @@ where
     ///
     /// Returns time when next testing step is due.
     fn link_testing_step(&mut self, id: usize) -> Option<Instant> {
+        let (limit_ping, _good_ping) = self.ping_spread_limits().unzip();
         let others_slow = match self.cfg.link_max_ping {
             Some(max_ping) => self.links.iter().enumerate().all(|(link_id, link_opt)| {
                 link_opt
@@ -1788,34 +1812,48 @@ where
 
         match link.test {
             LinkTest::Inactive => {
-                if link.unconfirmed.is_some()
-                    && link.tx_polling().is_none()
-                    && link.current_ping_sent.is_none()
-                    && !link.has_outstanding_ack()
-                {
-                    let test_data_limit = if self.cfg.link_max_ping.is_some() {
-                        self.cfg.link_unacked_init.get()
-                    } else {
-                        self.cfg.link_unacked_limit.get().min(self.cfg.send_buffer.get() as usize)
+                if let Some((since, reason)) = &link.unconfirmed {
+                    if link.tx_polling().is_none()
+                        && link.current_ping_sent.is_none()
+                        && !link.has_outstanding_ack()
+                    {
+                        if *reason != NotWorkingReason::AckTimeout || self.cfg.link_test_after_ack_timeout {
+                            let test_data_limit = if self.cfg.link_max_ping.is_some() {
+                                self.cfg.link_unacked_init.get()
+                            } else {
+                                self.cfg.link_unacked_limit.get().min(self.cfg.send_buffer.get() as usize)
+                            }
+                            .min(self.cfg.link_test_data_limit);
+                            let test_data = link.send_test_data(self.cfg.io_write_size.get(), test_data_limit);
+                            link.send_ping = true;
+                            link.test = LinkTest::InProgress;
+                            tracing::debug!(
+                                ?link_id, tag =% link.tag(),
+                                "started test of link using {test_data} bytes of test data"
+                            );
+                        } else {
+                            tracing::debug!(
+                                ?link_id, tag =% link.tag(),
+                                "link recovered after {} ms with ping {} ms",
+                                since.elapsed().as_millis(), link.roundtrip.as_millis()
+                            );
+                            link.unconfirmed = None;
+
+                            self.idle_links.retain(|&idle_id| idle_id != id);
+                            link.report_ready();
+                        }
                     }
-                    .min(self.cfg.link_test_data_limit);
-                    let test_data = link.send_test_data(self.cfg.io_write_size.get(), test_data_limit);
-                    link.send_ping = true;
-                    link.test = LinkTest::InProgress;
-                    tracing::debug!(?link_id, tag =% link.tag(), "started test of link using {test_data} bytes of test data");
                 }
+
                 None
             }
+
             LinkTest::InProgress => {
                 if link.current_ping_sent.is_none() && !link.send_ping {
                     // Ping has completed.
-
                     if link.roundtrip <= self.cfg.link_ack_timeout_max / 2
-                        && self
-                            .cfg
-                            .link_max_ping
-                            .map(|max_ping| link.roundtrip <= max_ping || others_slow)
-                            .unwrap_or(true)
+                        && self.cfg.link_max_ping.is_none_or(|max_ping| link.roundtrip <= max_ping || others_slow)
+                        && limit_ping.is_none_or(|limit| link.roundtrip <= limit)
                     {
                         // Ping response arrived quickly enough, thus mark link as confirmed.
                         tracing::debug!(
@@ -1850,6 +1888,7 @@ where
                     None
                 }
             }
+
             LinkTest::Failed(when) => Some(when + self.cfg.link_retest_interval),
         }
     }
