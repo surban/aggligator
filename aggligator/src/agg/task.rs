@@ -791,7 +791,7 @@ where
                         LinkIntEvent::TxReady => {
                             // Link is ready to send more data.
                             let link = self.links[id].as_mut().unwrap();
-                            let link_blocked = link.blocked.load(Ordering::SeqCst);
+                            let link_blocked = link.blocked.load(Ordering::Relaxed);
                             if link.needs_tx_accepted {
                                 tracing::debug!(?link_id, tag =% link.tag(), "sending Accepted over link");
                                 self.idle_links.retain(|&idle_id| idle_id != id);
@@ -1971,7 +1971,7 @@ where
             }
             LinkMsg::SetBlock { blocked } => {
                 tracing::debug!(?link_id, %tag, %blocked, "remote block status of link changed");
-                link.remotely_blocked.store(blocked, Ordering::SeqCst);
+                link.remotely_blocked.store(blocked, Ordering::Relaxed);
                 self.idle_links.retain(|&idle_id| idle_id != id);
                 link.report_ready();
                 link.blocked_changed_out_tx.send_replace(());

@@ -769,7 +769,7 @@ where
 
     /// Whether link is blocked locally or remotely.
     pub(crate) fn is_blocked(&self) -> bool {
-        self.blocked.load(Ordering::SeqCst) || self.remotely_blocked.load(Ordering::SeqCst)
+        self.blocked.load(Ordering::Relaxed) || self.remotely_blocked.load(Ordering::Relaxed)
     }
 
     /// Publishes link statistics.

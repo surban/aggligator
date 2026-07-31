@@ -375,7 +375,7 @@ where
                 public_key: client_public_key,
                 server_id: self.server_id,
                 connection_id: EncryptedConnId::new(self.conn_id, &shared_secret),
-                existing_connection: self.connected.load(Ordering::Acquire),
+                existing_connection: self.connected.load(Ordering::Relaxed),
                 user_data: user_data.to_vec(),
                 cfg: (&*self.cfg).into(),
             }
@@ -384,7 +384,7 @@ where
 
             match LinkMsg::recv(&mut rx).await? {
                 LinkMsg::Accepted => {
-                    self.connected.store(true, Ordering::Release);
+                    self.connected.store(true, Ordering::Relaxed);
                     Ok((cfg, start.elapsed(), remote_user_data))
                 }
                 LinkMsg::Refused { reason } => {
@@ -629,20 +629,20 @@ impl<TAG> Link<TAG> {
 
     /// Returns whether the link is blocked locally.
     pub fn is_blocked(&self) -> bool {
-        self.blocked.load(Ordering::SeqCst)
+        self.blocked.load(Ordering::Relaxed)
     }
 
     /// Blocks or unblocks the link.
     ///
     /// If the link is blocked it stays connected but not data will be exchanged over it.
     pub fn set_blocked(&self, blocked: bool) {
-        self.blocked.store(blocked, Ordering::SeqCst);
+        self.blocked.store(blocked, Ordering::Relaxed);
         let _ = self.blocked_changed_tx.try_send(());
     }
 
     /// Returns whether the link is blocked by the remote endpoint.
     pub fn is_remotely_blocked(&self) -> bool {
-        self.remotely_blocked.load(Ordering::SeqCst)
+        self.remotely_blocked.load(Ordering::Relaxed)
     }
 
     /// Waits until the blocked status (local or remotely) changes.

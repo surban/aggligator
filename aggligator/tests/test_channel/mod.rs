@@ -132,13 +132,13 @@ pub fn channel(mut cfg: Cfg) -> (Sender, Receiver, Control) {
                                 ControlReq::PauseFor (dur) => sleep(dur).await,
                                 ControlReq::PauseThenDisconnect (dur) => {
                                     sleep(dur).await;
-                                    disconnected.store(true, Ordering::SeqCst);
+                                    disconnected.store(true, Ordering::Relaxed);
                                     break;
                                 }
                                 ControlReq::SetLatency (latency) => cfg.latency = latency,
                                 ControlReq::SetSpeed (speed) => cfg.speed = speed,
                                 ControlReq::Disconnect => {
-                                    disconnected.store(true, Ordering::SeqCst);
+                                    disconnected.store(true, Ordering::Relaxed);
                                     break;
                                 }
                             }
@@ -210,7 +210,7 @@ impl Sink<Bytes> for Sender {
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
         let this = Pin::into_inner(self);
 
-        while this.buffer_size.load(Ordering::SeqCst) >= this.cfg.buffer_size {
+        while this.buffer_size.load(Ordering::Relaxed) >= this.cfg.buffer_size {
             match ready!(this.buffer_consumed.poll_acquire(cx)) {
                 Some(permit) => permit.forget(),
                 None => return Poll::Ready(Err(ErrorKind::BrokenPipe.into())),
@@ -251,7 +251,7 @@ impl Sink<Bytes> for Sender {
             .start_send_unpin(Packet { data: item, sent: Instant::now() })
             .map_err(|_| ErrorKind::BrokenPipe)?;
 
-        this.buffer_size.fetch_add(size, Ordering::SeqCst);
+        this.buffer_size.fetch_add(size, Ordering::Relaxed);
 
         Ok(())
     }
@@ -290,7 +290,7 @@ impl Stream for Receiver {
         let packet = match ready!(this.rx.poll_next_unpin(cx)) {
             Some(packet) => packet,
             None => {
-                if this.disconnected.load(Ordering::SeqCst) {
+                if this.disconnected.load(Ordering::Relaxed) {
                     return Poll::Ready(Some(Err(ErrorKind::BrokenPipe.into())));
                 } else {
                     return Poll::Ready(None);
@@ -298,7 +298,7 @@ impl Stream for Receiver {
             }
         };
 
-        this.buffer_size.fetch_sub(packet.data.len(), Ordering::SeqCst);
+        this.buffer_size.fetch_sub(packet.data.len(), Ordering::Relaxed);
         if this.buffer_consumed.available_permits() == 0 {
             this.buffer_consumed.add_permits(1);
         }
