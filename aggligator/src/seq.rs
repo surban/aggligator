@@ -9,8 +9,7 @@ use std::{
 /// A 32-bit sequence number that wraps around.
 ///
 /// The difference between the lowest and highest used sequence number
-/// must not exceed [Self::USABLE_INTERVAL], otherwise comparision
-/// will produce faulty results.
+/// must not exceed [Self::USABLE_INTERVAL].
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct Seq(pub u32);
 
@@ -25,8 +24,10 @@ impl Seq {
     const THREE_QUARTERS: u32 = Self::ONE_QUARTER * 3;
 
     /// Useable interval.
-    pub const USABLE_INTERVAL: i32 = Self::ONE_QUARTER as i32;
+    pub const USABLE_INTERVAL: i32 = 65_536;
 }
+
+const _: () = assert!(Seq::USABLE_INTERVAL as u32 <= Seq::ONE_QUARTER);
 
 impl fmt::Display for Seq {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
