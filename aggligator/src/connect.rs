@@ -445,7 +445,7 @@ where
             })
             .await??;
 
-        tracing::debug!(?server_id, ?conn_id, ?existing, "handling incoming link");
+        tracing::debug!(?server_id, ?conn_id, %tag, ?existing, "handling incoming link");
 
         enum Connection<TX, RX, TAG> {
             Existing {
@@ -519,11 +519,15 @@ where
                     let link = Link::from(&link_int);
                     link_tx_permit.send(link_int);
 
-                    tracing::debug!(?conn_id, "link joins existing connection");
+                    tracing::info!(
+                        ?conn_id, link_id =? link.id(), tag =% link.tag(),
+                        "link joins existing connection"
+                    );
+
                     Ok(link)
                 }
                 Err(_) => {
-                    tracing::debug!("refusing link that belongs to closed connection");
+                    tracing::debug!(?conn_id, %tag, "refusing link that belongs to closed connection");
                     timeout(
                         cfg.link_ping_timeout,
                         LinkMsg::Refused { reason: RefusedReason::Closed }.send(&mut tx),
@@ -559,13 +563,17 @@ where
                     links: Vec::new(),
                 });
 
-                tracing::debug!(?conn_id, "link starts new connection");
+                tracing::info!(
+                    ?conn_id, link_id =? link.id(), tag =% link.tag(),
+                    "link starts new connection"
+                );
+
                 Ok(link)
             }
 
             // Link cannot be accepted.
             Connection::Refuse { reason, err } => {
-                tracing::debug!(?reason, %err, "refusing link");
+                tracing::debug!(?conn_id, %tag, ?reason, %err, "refusing link");
                 timeout(cfg.link_ping_timeout, LinkMsg::Refused { reason }.send(&mut tx)).await??;
                 Err(err)
             }

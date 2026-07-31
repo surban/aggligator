@@ -332,71 +332,72 @@ where
         assert!(user_data.len() <= u16::MAX as usize, "user_data is too big");
 
         // Perform protocol handshake.
-        let (remote_cfg, roundtrip, remote_user_data) = timeout(self.cfg.link_ping_timeout, async {
-            let random: [u8; 32] = rand::random();
-            let client_secret = StaticSecret::from(random);
-            let client_public_key = PublicKey::from(&client_secret);
+        let (remote_cfg, roundtrip, remote_user_data, was_connected) =
+            timeout(self.cfg.link_ping_timeout, async {
+                let random: [u8; 32] = rand::random();
+                let client_secret = StaticSecret::from(random);
+                let client_public_key = PublicKey::from(&client_secret);
 
-            let LinkMsg::Welcome {
-                extensions: _,
-                public_key: server_public_key,
-                server_id,
-                cfg,
-                user_data: remote_user_data,
-            } = LinkMsg::recv(&mut rx).await?
-            else {
-                return Err::<_, AddLinkError>(protocol_err!("expected Welcome message").into());
-            };
+                let LinkMsg::Welcome {
+                    extensions: _,
+                    public_key: server_public_key,
+                    server_id,
+                    cfg,
+                    user_data: remote_user_data,
+                } = LinkMsg::recv(&mut rx).await?
+                else {
+                    return Err::<_, AddLinkError>(protocol_err!("expected Welcome message").into());
+                };
 
-            let shared_secret = client_secret.diffie_hellman(&server_public_key);
+                let shared_secret = client_secret.diffie_hellman(&server_public_key);
 
-            {
-                let mut remote_server_id = self.remote_server_id.lock().await;
-                match &*remote_server_id {
-                    Some(remote_server_id) if *remote_server_id != server_id => {
-                        if self.cfg.disconnect_on_server_id_mismatch {
-                            let _ = self.fatal_connect_error_tx.try_send(FatalConnectError::ServerIdMismatch);
+                {
+                    let mut remote_server_id = self.remote_server_id.lock().await;
+                    match &*remote_server_id {
+                        Some(remote_server_id) if *remote_server_id != server_id => {
+                            if self.cfg.disconnect_on_server_id_mismatch {
+                                let _ = self.fatal_connect_error_tx.try_send(FatalConnectError::ServerIdMismatch);
+                            }
+                            return Err(AddLinkError::ServerIdMismatch {
+                                expected: *remote_server_id,
+                                present: server_id,
+                            });
                         }
-                        return Err(AddLinkError::ServerIdMismatch {
-                            expected: *remote_server_id,
-                            present: server_id,
-                        });
-                    }
-                    Some(_) => (),
-                    None => {
-                        *remote_server_id = Some(server_id);
+                        Some(_) => (),
+                        None => {
+                            *remote_server_id = Some(server_id);
+                        }
                     }
                 }
-            }
 
-            let start = Instant::now();
-            LinkMsg::Connect {
-                extensions: 0,
-                public_key: client_public_key,
-                server_id: self.server_id,
-                connection_id: EncryptedConnId::new(self.conn_id, &shared_secret),
-                existing_connection: self.connected.load(Ordering::Relaxed),
-                user_data: user_data.to_vec(),
-                cfg: (&*self.cfg).into(),
-            }
-            .send(&mut tx)
-            .await?;
+                let start = Instant::now();
+                LinkMsg::Connect {
+                    extensions: 0,
+                    public_key: client_public_key,
+                    server_id: self.server_id,
+                    connection_id: EncryptedConnId::new(self.conn_id, &shared_secret),
+                    existing_connection: self.connected.load(Ordering::Relaxed),
+                    user_data: user_data.to_vec(),
+                    cfg: (&*self.cfg).into(),
+                }
+                .send(&mut tx)
+                .await?;
 
-            match LinkMsg::recv(&mut rx).await? {
-                LinkMsg::Accepted => {
-                    self.connected.store(true, Ordering::Relaxed);
-                    Ok((cfg, start.elapsed(), remote_user_data))
-                }
-                LinkMsg::Refused { reason } => {
-                    if reason == RefusedReason::Closed {
-                        let _ = self.fatal_connect_error_tx.try_send(FatalConnectError::Closed);
+                match LinkMsg::recv(&mut rx).await? {
+                    LinkMsg::Accepted => {
+                        let was_connected = self.connected.swap(true, Ordering::Relaxed);
+                        Ok((cfg, start.elapsed(), remote_user_data, was_connected))
                     }
-                    Err(reason.into())
+                    LinkMsg::Refused { reason } => {
+                        if reason == RefusedReason::Closed {
+                            let _ = self.fatal_connect_error_tx.try_send(FatalConnectError::Closed);
+                        }
+                        Err(reason.into())
+                    }
+                    _ => Err(protocol_err!("expected Accepted or Refused message").into()),
                 }
-                _ => Err(protocol_err!("expected Accepted or Refused message").into()),
-            }
-        })
-        .await??;
+            })
+            .await??;
 
         // Create link.
         let link_int = LinkInt::new(
@@ -412,6 +413,12 @@ where
         );
         let link = Link::from(&link_int);
         self.link_tx.send(link_int).await.map_err(|_| AddLinkError::ConnectionClosed)?;
+
+        tracing::info!(
+            conn_id =? self.conn_id, link_id =? link.id(), tag =% link.tag(),
+            "link {} connection",
+            if was_connected {"joins existing"} else {"starts new"},
+        );
 
         Ok(link)
     }
