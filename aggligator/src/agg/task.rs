@@ -453,6 +453,10 @@ where
             #[cfg(feature = "dump")]
             self.send_dump();
 
+            if !tx_seq_avail {
+                tracing::debug!("no sequence number available for sending");
+            }
+
             // Check for graceful disconnection because sender and receiver have both been dropped,
             // either locally or remotely.
             if self.read_tx.is_none() && self.write_rx.is_none() {
@@ -2050,6 +2054,10 @@ where
             tracing::trace!(?link_id, %tag, "re-received consumed reliable message {}", seq);
         } else {
             let offset = (seq - self.rx_seq) as usize;
+            if offset > Seq::USABLE_INTERVAL as usize {
+                return Err(protocol_err!("sequence number underflow"));
+            }
+
             if self.rxed_reliable.len() <= offset {
                 self.rxed_reliable.resize(offset + 1, None);
             }
@@ -2271,10 +2279,6 @@ where
             if closed {
                 self.dump_tx = None;
             }
-        }
-
-        if !self.tx_seq_avail() {
-            tracing::warn!("no sequence number available for sending");
         }
 
         if self.read_tx.is_none() || self.write_rx.is_none() {
