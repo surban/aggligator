@@ -975,7 +975,7 @@ where
                             if link.disconnecting.is_none() {
                                 tracing::info!(?link_id, tag =% link.tag(), "starting disconnection of link by local request");
                                 link.disconnecting = Some(DisconnectInitiator::Local);
-                                self.flush_link(id);
+                                self.unconfirm_link(id, NotWorkingReason::Disconnecting);
                             }
                         }
                     }
@@ -2020,6 +2020,7 @@ where
                         // Remote endpoint is initiating disconnection.
                         tracing::debug!(?link_id, %tag, "remote requests disconnection of link");
                         link.disconnecting = Some(DisconnectInitiator::Remote);
+                        self.unconfirm_link(id, NotWorkingReason::Disconnecting);
                     }
                 }
             }
