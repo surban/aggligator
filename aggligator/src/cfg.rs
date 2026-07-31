@@ -135,7 +135,7 @@ impl Default for Cfg {
             link_ack_flush_interval: Some(Duration::from_millis(50)),
             link_unflushed_limit: Some(NonZeroUsize::new(131_072).unwrap()),
             link_io_packet_size: NonZeroUsize::new(65_536).unwrap(),
-            no_link_timeout: Duration::from_secs(90),
+            no_link_timeout: Duration::from_secs(120),
             termination_timeout: Duration::from_secs(300),
             connect_queue: NonZeroUsize::new(32).unwrap(),
             disconnect_on_server_id_mismatch: true,
