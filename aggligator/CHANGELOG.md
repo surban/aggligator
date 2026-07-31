@@ -5,6 +5,13 @@ All notable changes to Aggligator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.9.12 - 2026-07-31
+### Fixed
+- Denial of service due to remotely triggered memory exhaustion:
+  a malicious remote endpoint could send a reliable message with a large
+  sequence number offset, triggering a huge memory allocation.
+  This is fixed by limiting the receive queue size to roughly 1 MB.
+
 ## 0.9.11 - 2026-04-13
 ### Fixed
 - panic in SenderSink::poll_flush during teardown

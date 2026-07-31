@@ -5,6 +5,11 @@ All notable changes to aggligator utilities will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.18.12 - 2026-07-31
+### Changed
+- update Aggligator to 0.9.12 to close a potential denial of service attack
+  by a malicious remote endpoint causing memory exhaustion
+
 ## 0.18.11 - 2026-04-13
 ### Changed
 - update Aggligator to 0.9.11
