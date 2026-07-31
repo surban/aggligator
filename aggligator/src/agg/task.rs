@@ -537,9 +537,11 @@ where
                 self.earliest_link_specific_timeout(self.cfg.link_ping_timeout, |link| link.current_ping_sent);
 
             // Timeout for removing an unconfirmed link.
-            let next_unconfirmed_timeout = self
-                .earliest_link_specific_timeout(self.cfg.link_non_working_timeout, |link| {
-                    link.unconfirmed.as_ref().map(|(since, _)| *since)
+            let next_unconfirmed_timeout =
+                self.earliest_link_specific_timeout(self.cfg.link_non_working_timeout, |link| {
+                    link.unconfirmed.as_ref().and_then(|(since, reason)| {
+                        (*reason != NotWorkingReason::MaxPingExceeded).then_some(*since)
+                    })
                 });
 
             // Timeout for removing a link that takes too long to send data.
@@ -1833,12 +1835,27 @@ where
 
         match link.test {
             LinkTest::Inactive => {
-                if let Some((since, reason)) = &link.unconfirmed {
+                if let Some((mut since, reason)) = &link.unconfirmed {
                     if link.tx_polling().is_none()
                         && link.current_ping_sent.is_none()
                         && !link.has_outstanding_ack()
                     {
                         if *reason != NotWorkingReason::AckTimeout || self.cfg.link_test_after_ack_timeout {
+                            if link.is_blocked() {
+                                // We do not test links that are blocked; however, to prevent them from
+                                // being disconnected due to the non-working timeout we regularly update
+                                // the unconfirmed timestamp.
+                                if since.elapsed() >= self.cfg.link_non_working_timeout / 2 {
+                                    tracing::trace!(
+                                        ?link_id, tag =% link.tag(),
+                                        "postponing test of link that is currently blocked"
+                                    );
+                                    since = Instant::now();
+                                    link.unconfirmed = Some((since, reason.clone()));
+                                }
+                                return Some(since + self.cfg.link_non_working_timeout / 2);
+                            }
+
                             let test_data_limit = if self.cfg.link_max_ping.is_some() {
                                 self.cfg.link_unacked_init.get()
                             } else {
@@ -1872,10 +1889,17 @@ where
             LinkTest::InProgress => {
                 if link.current_ping_sent.is_none() && !link.send_ping {
                     // Ping has completed.
-                    if link.roundtrip <= self.cfg.link_ack_timeout_max / 2
-                        && self.cfg.link_max_ping.is_none_or(|max_ping| link.roundtrip <= max_ping || others_slow)
-                        && limit_ping.is_none_or(|limit| link.roundtrip <= limit)
-                    {
+                    let mut limits = vec![self.cfg.link_ack_timeout_max / 2];
+                    match self.cfg.link_max_ping {
+                        Some(link_max_ping) if !others_slow => limits.push(link_max_ping),
+                        _ => (),
+                    }
+                    if let Some(limit_ping) = limit_ping {
+                        limits.push(limit_ping);
+                    }
+                    let roundtrip_limit = limits.into_iter().min().unwrap();
+
+                    if link.roundtrip <= roundtrip_limit {
                         // Ping response arrived quickly enough, thus mark link as confirmed.
                         tracing::debug!(
                             ?link_id, tag =% link.tag(),
@@ -1893,15 +1917,14 @@ where
                         // Link is too slow, schedule retest.
                         tracing::debug!(
                             ?link_id, tag =% link.tag(),
-                            "link failed test with ping {} ms, retrying in {} s",
-                            link.roundtrip.as_millis(),
-                            self.cfg.link_retest_interval.as_secs()
+                            "link failed test with ping {} ms (limit={} ms)",
+                            link.roundtrip.as_millis(), roundtrip_limit.as_millis(),
                         );
                         let when = Instant::now();
                         link.test = LinkTest::Failed(when);
                         match &mut link.unconfirmed {
-                            Some((_since, reason)) => *reason = NotWorkingReason::TestFailed,
-                            None => link.unconfirmed = Some((Instant::now(), NotWorkingReason::TestFailed)),
+                            Some((_since, reason)) => *reason = NotWorkingReason::MaxPingExceeded,
+                            None => link.unconfirmed = Some((Instant::now(), NotWorkingReason::MaxPingExceeded)),
                         }
                         Some(when + self.cfg.link_retest_interval)
                     }

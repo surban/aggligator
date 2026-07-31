@@ -128,7 +128,7 @@ impl Default for Cfg {
             link_max_ping_spread: Some(NonZeroU32::new(5).unwrap()),
             link_test_data_limit: 65_536,
             link_test_after_ack_timeout: false,
-            link_retest_interval: Duration::from_secs(15),
+            link_retest_interval: Duration::from_secs(5),
             link_non_working_timeout: Duration::from_secs(600),
             link_flush_delay: Duration::from_millis(50),
             link_flush_interval: None,

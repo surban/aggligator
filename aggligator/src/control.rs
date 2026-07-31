@@ -771,8 +771,6 @@ pub enum NotWorkingReason {
     AckTimeout,
     /// Maximum ping was exceeded.
     MaxPingExceeded,
-    /// The link test failed and will be retried.
-    TestFailed,
 }
 
 impl fmt::Display for NotWorkingReason {
@@ -782,7 +780,6 @@ impl fmt::Display for NotWorkingReason {
             Self::Disconnecting => write!(f, "disconnecting"),
             Self::AckTimeout => write!(f, "ack timeout"),
             Self::MaxPingExceeded => write!(f, "max ping exceeded"),
-            Self::TestFailed => write!(f, "test failed"),
         }
     }
 }
