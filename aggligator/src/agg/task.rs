@@ -59,6 +59,8 @@ pub enum TaskError {
     ServerIdMismatch,
     /// The connection was forcefully terminated.
     Terminated,
+    /// The server aborted the connection while no link was working.
+    AbortedByServer,
 }
 
 impl fmt::Display for TaskError {
@@ -69,6 +71,7 @@ impl fmt::Display for TaskError {
             Self::ProtocolError { link_id, error } => write!(f, "protocol error on link {link_id}: {error}"),
             Self::ServerIdMismatch => write!(f, "a new link connected to another server"),
             Self::Terminated => write!(f, "connection forcefully terminated"),
+            Self::AbortedByServer => write!(f, "connection aborted by server"),
         }
     }
 }
@@ -77,8 +80,17 @@ impl Error for TaskError {}
 
 impl From<TaskError> for std::io::Error {
     fn from(err: TaskError) -> Self {
-        io::Error::new(io::ErrorKind::ConnectionReset, err)
+        io::Error::new(io::ErrorKind::ConnectionAborted, err)
     }
+}
+
+/// Fatal error during connecting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FatalConnectError {
+    /// A link connected to another server than the other links.
+    ServerIdMismatch,
+    /// The remote endpoint indicated that the connection is already closed.
+    Closed,
 }
 
 /// A send request to the link aggregator task.
@@ -204,8 +216,8 @@ enum TaskEvent<TX, RX, TAG> {
     PublishLinkStats,
     /// A refused link task completed.
     RefusedLinkTask,
-    /// The server id changed.
-    ServerChanged,
+    /// A fatal connect error occurred.
+    FatalConnectError(FatalConnectError),
 }
 
 /// Forceful connection termination.
@@ -322,8 +334,8 @@ pub struct Task<TX, RX, TAG> {
     init_links: VecDeque<LinkInt<TX, RX, TAG>>,
     /// Tasks handling refused links.
     refused_links_tasks: FuturesUnordered<BoxFuture<'static, ()>>,
-    /// Server changed notification.
-    server_changed_rx: mpsc::Receiver<()>,
+    /// Fatal error notification.
+    fatal_connect_error_rx: mpsc::Receiver<FatalConnectError>,
     /// Result of task sender.
     result_tx: watch::Sender<Result<(), TaskError>>,
     /// Channel for sending analysis data.
@@ -350,7 +362,7 @@ where
         link_rx: mpsc::Receiver<LinkInt<TX, RX, TAG>>, connected_tx: oneshot::Sender<Arc<ExchangedCfg>>,
         read_tx: mpsc::Sender<Bytes>, read_closed_rx: mpsc::Receiver<()>, write_rx: mpsc::Receiver<SendReq>,
         read_error_tx: watch::Sender<Option<RecvError>>, write_error_tx: watch::Sender<SendError>,
-        stats_tx: watch::Sender<Stats>, server_changed_rx: mpsc::Receiver<()>,
+        stats_tx: watch::Sender<Stats>, fatal_connect_error_rx: mpsc::Receiver<FatalConnectError>,
         result_tx: watch::Sender<Result<(), TaskError>>, links: Vec<LinkInt<TX, RX, TAG>>,
     ) -> Self {
         Self {
@@ -399,7 +411,7 @@ where
             link_filter: Box::new(|_, _| async { true }.boxed()),
             init_links: links.into(),
             refused_links_tasks: FuturesUnordered::new(),
-            server_changed_rx,
+            fatal_connect_error_rx,
             result_tx,
             #[cfg(feature = "dump")]
             dump_tx: None,
@@ -716,7 +728,7 @@ where
                 Some(_) = stat_timers.next() => TaskEvent::PublishLinkStats,
                 Some(()) = self.refused_links_tasks.next(), if !self.refused_links_tasks.is_empty()
                     => TaskEvent::RefusedLinkTask,
-                Some(()) = self.server_changed_rx.recv() => TaskEvent::ServerChanged,
+                Some(err) = self.fatal_connect_error_rx.recv() => TaskEvent::FatalConnectError(err),
             };
 
             // Handle event.
@@ -1150,12 +1162,21 @@ where
 
                 TaskEvent::RefusedLinkTask => (),
 
-                TaskEvent::ServerChanged => {
+                TaskEvent::FatalConnectError(FatalConnectError::ServerIdMismatch) => {
                     tracing::warn!("disconnecting because server id changed");
                     result = Err(TaskError::ServerIdMismatch);
                     read_term = Some(RecvError::ServerIdMismatch);
                     write_term = SendError::ServerIdMismatch;
                     link_term = DisconnectReason::ServerIdMismatch;
+                    break;
+                }
+
+                TaskEvent::FatalConnectError(FatalConnectError::Closed) => {
+                    tracing::warn!("disconnecting because server closed connection");
+                    result = Err(TaskError::AbortedByServer);
+                    read_term = Some(RecvError::AbortedByServer);
+                    write_term = SendError::AbortedByServer;
+                    link_term = DisconnectReason::AbortedByServer;
                     break;
                 }
             }

@@ -25,6 +25,8 @@ pub enum RecvError {
     ServerIdMismatch,
     /// The connection was forcefully terminated.
     TaskTerminated,
+    /// The server aborted the connection while no link was working.
+    AbortedByServer,
 }
 
 impl fmt::Display for RecvError {
@@ -34,6 +36,7 @@ impl fmt::Display for RecvError {
             Self::ProtocolError => write!(f, "protocol error"),
             Self::ServerIdMismatch => write!(f, "a new link connected to another server"),
             Self::TaskTerminated => write!(f, "connection forcefully terminated"),
+            Self::AbortedByServer => write!(f, "connection aborted by server"),
         }
     }
 }

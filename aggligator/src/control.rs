@@ -20,7 +20,7 @@ use tokio::{
 use x25519_dalek::{PublicKey, StaticSecret};
 
 use crate::{
-    agg::link_int::LinkInt,
+    agg::{link_int::LinkInt, task::FatalConnectError},
     cfg::Cfg,
     exec::time::{error::Elapsed, timeout, Instant},
     id::{ConnId, EncryptedConnId, LinkId, ServerId},
@@ -52,6 +52,8 @@ pub enum AddLinkError {
     ConnectionRefused,
     /// The link was actively refused by the link filter.
     LinkRefused,
+    /// The server aborted the connection while no link was working.
+    AbortedByServer,
 }
 
 impl From<io::Error> for AddLinkError {
@@ -86,6 +88,7 @@ impl fmt::Display for AddLinkError {
             AddLinkError::ConnectionClosed => write!(f, "connection closed"),
             AddLinkError::ConnectionRefused => write!(f, "connection refused"),
             AddLinkError::LinkRefused => write!(f, "link refused"),
+            AddLinkError::AbortedByServer => write!(f, "connection aborted by server"),
         }
     }
 }
@@ -95,7 +98,7 @@ impl std::error::Error for AddLinkError {}
 impl From<RefusedReason> for AddLinkError {
     fn from(reason: RefusedReason) -> Self {
         match reason {
-            RefusedReason::Closed => Self::ConnectionClosed,
+            RefusedReason::Closed => Self::AbortedByServer,
             RefusedReason::NotListening => Self::NotListening,
             RefusedReason::ConnectionRefused => Self::ConnectionRefused,
             RefusedReason::LinkRefused => Self::LinkRefused,
@@ -155,7 +158,7 @@ pub struct Control<TX, RX, TAG> {
     pub(crate) link_tx: mpsc::Sender<LinkInt<TX, RX, TAG>>,
     pub(crate) links_rx: watch::Receiver<Vec<Link<TAG>>>,
     pub(crate) stats_rx: watch::Receiver<Stats>,
-    pub(crate) server_changed_tx: mpsc::Sender<()>,
+    pub(crate) fatal_connect_error_tx: mpsc::Sender<FatalConnectError>,
     pub(crate) result_rx: watch::Receiver<Result<(), TaskError>>,
 }
 
@@ -172,7 +175,7 @@ impl<TX, RX, TAG> Clone for Control<TX, RX, TAG> {
             link_tx: self.link_tx.clone(),
             links_rx: self.links_rx.clone(),
             stats_rx: self.stats_rx.clone(),
-            server_changed_tx: self.server_changed_tx.clone(),
+            fatal_connect_error_tx: self.fatal_connect_error_tx.clone(),
             result_rx: self.result_rx.clone(),
         }
     }
@@ -352,7 +355,7 @@ where
                 match &*remote_server_id {
                     Some(remote_server_id) if *remote_server_id != server_id => {
                         if self.cfg.disconnect_on_server_id_mismatch {
-                            let _ = self.server_changed_tx.try_send(());
+                            let _ = self.fatal_connect_error_tx.try_send(FatalConnectError::ServerIdMismatch);
                         }
                         return Err(AddLinkError::ServerIdMismatch {
                             expected: *remote_server_id,
@@ -384,7 +387,12 @@ where
                     self.connected.store(true, Ordering::Release);
                     Ok((cfg, start.elapsed(), remote_user_data))
                 }
-                LinkMsg::Refused { reason } => Err(reason.into()),
+                LinkMsg::Refused { reason } => {
+                    if reason == RefusedReason::Closed {
+                        let _ = self.fatal_connect_error_tx.try_send(FatalConnectError::Closed);
+                    }
+                    Err(reason.into())
+                }
                 _ => Err(protocol_err!("expected Accepted or Refused message").into()),
             }
         })
@@ -816,6 +824,8 @@ pub enum DisconnectReason {
     ProtocolError(String),
     /// The connection was forcefully terminated.
     TaskTerminated,
+    /// The server aborted the connection while no link was working.
+    AbortedByServer,
 }
 
 impl fmt::Display for DisconnectReason {
@@ -833,6 +843,7 @@ impl fmt::Display for DisconnectReason {
             Self::ServerIdMismatch => write!(f, "link connected to another server"),
             Self::ProtocolError(err) => write!(f, "protocol error: {err}"),
             Self::TaskTerminated => write!(f, "connection forcefully terminated"),
+            Self::AbortedByServer => write!(f, "connection aborted by server"),
         }
     }
 }
@@ -841,7 +852,22 @@ impl Error for DisconnectReason {}
 
 impl From<DisconnectReason> for std::io::Error {
     fn from(err: DisconnectReason) -> Self {
-        io::Error::new(io::ErrorKind::ConnectionReset, err)
+        let kind = match &err {
+            DisconnectReason::SendTimeout
+            | DisconnectReason::PingTimeout
+            | DisconnectReason::UnconfirmedTimeout
+            | DisconnectReason::AllUnconfirmedTimeout
+            | DisconnectReason::LocallyRequested
+            | DisconnectReason::RemotelyRequested
+            | DisconnectReason::LinkFilter
+            | DisconnectReason::ServerIdMismatch
+            | DisconnectReason::ProtocolError(_)
+            | DisconnectReason::TaskTerminated
+            | DisconnectReason::AbortedByServer => io::ErrorKind::ConnectionAborted,
+            DisconnectReason::IoError(err) => err.kind(),
+            DisconnectReason::ConnectionClosed => io::ErrorKind::ConnectionReset,
+        };
+        io::Error::new(kind, err)
     }
 }
 

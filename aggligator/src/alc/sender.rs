@@ -39,6 +39,8 @@ pub enum SendError {
     ServerIdMismatch,
     /// The connection was forcefully terminated.
     TaskTerminated,
+    /// The server aborted the connection while no link was working.
+    AbortedByServer,
 }
 
 impl fmt::Display for SendError {
@@ -52,6 +54,7 @@ impl fmt::Display for SendError {
             Self::ProtocolError => write!(f, "protocol error"),
             Self::ServerIdMismatch => write!(f, "a new link connected to another server"),
             Self::TaskTerminated => write!(f, "connection forcefully terminated"),
+            Self::AbortedByServer => write!(f, "connection aborted by server"),
         }
     }
 }
@@ -67,7 +70,8 @@ impl From<SendError> for io::Error {
             SendError::AllLinksFailed
             | SendError::TaskTerminated
             | SendError::ProtocolError
-            | SendError::ServerIdMismatch => io::ErrorKind::ConnectionAborted,
+            | SendError::ServerIdMismatch
+            | SendError::AbortedByServer => io::ErrorKind::ConnectionAborted,
         };
         io::Error::new(kind, err)
     }
