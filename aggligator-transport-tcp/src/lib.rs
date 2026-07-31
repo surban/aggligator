@@ -12,7 +12,10 @@
 //! Use the [tcp_connect](simple::tcp_connect) and [tcp_server](simple::tcp_server) functions
 //! from the [simple module](simple).
 
-use aggligator::io::{IoBox, StreamBox};
+use aggligator::{
+    control::DisconnectReason,
+    io::{IoBox, StreamBox},
+};
 use async_trait::async_trait;
 use futures::{future, FutureExt};
 use network_interface::Addr;
@@ -30,7 +33,7 @@ use std::{
 };
 use tokio::{
     net::{TcpListener, TcpSocket},
-    sync::{mpsc, watch},
+    sync::{mpsc, watch, Notify},
     time::{sleep, Instant},
 };
 
@@ -198,6 +201,7 @@ pub struct TcpConnector {
     link_filter: TcpLinkFilter,
     multi_interface: bool,
     interface_filter: Arc<dyn Fn(&NetworkInterface) -> bool + Send + Sync>,
+    link_disconnected: Arc<Notify>,
 }
 
 impl fmt::Debug for TcpConnector {
@@ -271,6 +275,7 @@ impl TcpConnector {
             link_filter: TcpLinkFilter::default(),
             multi_interface: !cfg!(target_os = "android"),
             interface_filter: Arc::new(|_| true),
+            link_disconnected: Arc::new(Notify::new()),
         })
     }
 
@@ -375,7 +380,10 @@ impl ConnectingTransport for TcpConnector {
                 }
             });
 
-            sleep(Duration::from_secs(1)).await;
+            tokio::select! {
+                () = sleep(Duration::from_secs(1)) => (),
+                () = self.link_disconnected.notified() => (),
+            }
         }
     }
 
@@ -445,6 +453,12 @@ impl ConnectingTransport for TcpConnector {
                 true
             }
         }
+    }
+
+    async fn link_disconnected(
+        &self, _tag: &dyn LinkTag, _result: std::result::Result<DisconnectReason, &Error>,
+    ) {
+        self.link_disconnected.notify_waiters();
     }
 }
 

@@ -32,7 +32,7 @@ use std::{
 };
 use tokio::{
     net::TcpSocket,
-    sync::{mpsc, watch, Mutex},
+    sync::{mpsc, watch, Mutex, Notify},
     time::{sleep, Instant},
 };
 use tokio_tungstenite::{client_async_tls_with_config, tungstenite::protocol::WebSocketConfig, Connector};
@@ -40,7 +40,7 @@ use tokio_util::io::{CopyToBytes, SinkWriter, StreamReader};
 use url::Url;
 
 use aggligator::{
-    control::Direction,
+    control::{Direction, DisconnectReason},
     io::{IoBox, StreamBox},
     transport::{AcceptedStreamBox, AcceptingTransport, ConnectingTransport, LinkTag, LinkTagBox},
     Link,
@@ -112,6 +112,7 @@ pub struct WebSocketConnector {
     web_socket_config: Option<WebSocketConfig>,
     multi_interface: bool,
     interface_filter: Arc<dyn Fn(&NetworkInterface) -> bool + Send + Sync>,
+    link_disconnected: Arc<Notify>,
 }
 
 impl fmt::Debug for WebSocketConnector {
@@ -191,6 +192,7 @@ impl WebSocketConnector {
             web_socket_config: None,
             multi_interface: !cfg!(target_os = "android"),
             interface_filter: Arc::new(|_| true),
+            link_disconnected: Arc::new(Notify::new()),
         })
     }
 
@@ -323,7 +325,10 @@ impl ConnectingTransport for WebSocketConnector {
                 }
             });
 
-            sleep(Duration::from_secs(1)).await;
+            tokio::select! {
+                () = sleep(Duration::from_secs(1)) => (),
+                () = self.link_disconnected.notified() => (),
+            }
         }
     }
 
@@ -416,6 +421,12 @@ impl ConnectingTransport for WebSocketConnector {
                 true
             }
         }
+    }
+
+    async fn link_disconnected(
+        &self, _tag: &dyn LinkTag, _result: std::result::Result<DisconnectReason, &Error>,
+    ) {
+        self.link_disconnected.notify_waiters();
     }
 }
 
