@@ -337,7 +337,7 @@ where
     /// Returns the next event for this link.
     pub(crate) async fn event(&mut self) -> LinkIntEvent {
         let link_id = self.link_id();
-        let tag = self.tag.clone();
+        let tag = &self.tag;
 
         if let Some(err) = self.tx_error.take() {
             return LinkIntEvent::TxError(err);
