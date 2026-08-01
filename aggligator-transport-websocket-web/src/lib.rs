@@ -13,7 +13,7 @@ compile_error!("aggligator-transport-websocket-web requires a WebAssembly target
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use futures::{future, StreamExt};
+use futures::{StreamExt, future};
 use std::{
     any::Any,
     cmp::Ordering,
@@ -23,7 +23,7 @@ use std::{
     io::{Error, ErrorKind, Result},
     sync::Arc,
 };
-use threadporter::{thread_bound, ThreadBound};
+use threadporter::{ThreadBound, thread_bound};
 use tokio::sync::watch;
 use tokio_util::io::{SinkWriter, StreamReader};
 
@@ -31,6 +31,7 @@ use tokio_util::io::{SinkWriter, StreamReader};
 pub use websocket_web::{Interface, WebSocketBuilder};
 
 use aggligator::{
+    LinkCfg,
     control::Direction,
     io::{IoBox, StreamBox},
     transport::{ConnectingTransport, LinkTag, LinkTagBox},
@@ -62,6 +63,11 @@ impl LinkTag for OutgoingWebSocketLinkTag {
 
     fn user_data(&self) -> Vec<u8> {
         "web".into()
+    }
+
+    fn link_cfg(&self) -> Option<LinkCfg> {
+        // Web browser connections tend to lag.
+        Some(LinkCfg { ack_timeout_min: Duration::from_secs(3), ..Default::default() })
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -100,11 +106,7 @@ impl fmt::Debug for WebSocketConnector {
 impl fmt::Display for WebSocketConnector {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let urls: Vec<_> = self.urls.iter().map(|url| url.to_string()).collect();
-        if self.urls.len() > 1 {
-            write!(f, "[{}]", urls.join(", "))
-        } else {
-            write!(f, "{}", &urls[0])
-        }
+        if self.urls.len() > 1 { write!(f, "[{}]", urls.join(", ")) } else { write!(f, "{}", &urls[0]) }
     }
 }
 

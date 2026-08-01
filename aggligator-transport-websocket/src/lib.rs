@@ -40,7 +40,7 @@ use tokio_util::io::{CopyToBytes, SinkWriter, StreamReader};
 use url::Url;
 
 use aggligator::{
-    Link,
+    Link, LinkCfg,
     control::{Direction, DisconnectReason},
     io::{IoBox, StreamBox},
     transport::{AcceptedStreamBox, AcceptingTransport, ConnectingTransport, LinkTag, LinkTagBox},
@@ -80,6 +80,11 @@ impl LinkTag for OutgoingWebSocketLinkTag {
 
     fn user_data(&self) -> Vec<u8> {
         self.local.user_data()
+    }
+
+    fn link_cfg(&self) -> Option<LinkCfg> {
+        // Web browser connections tend to lag.
+        Some(LinkCfg { ack_timeout_min: Duration::from_secs(3), ..Default::default() })
     }
 
     fn as_any(&self) -> &dyn Any {
