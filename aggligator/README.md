@@ -46,6 +46,7 @@ native event queue.
 
 The following [crates provide transports]:
   * [aggligator-transport-bluer] — transport over Bluetooth on Linux,
+  * [aggligator-transport-socks] — transport through SOCKS5 proxies,
   * [aggligator-transport-tcp] — transport over TCP with optional TLS encryption,
   * [aggligator-transport-usb] — transport over USB for native platforms,
   * [aggligator-transport-webusb] — transport over WebUSB for the web targeting WebAssembly, 
@@ -54,6 +55,7 @@ The following [crates provide transports]:
 
 [crates provide transports]: https://crates.io/keywords/aggligator-transport
 [aggligator-transport-bluer]: https://crates.io/crates/aggligator-transport-bluer
+[aggligator-transport-socks]: https://crates.io/crates/aggligator-transport-socks
 [aggligator-transport-tcp]: https://crates.io/crates/aggligator-transport-tcp
 [aggligator-transport-usb]: https://crates.io/crates/aggligator-transport-usb
 [aggligator-transport-webusb]: https://crates.io/crates/aggligator-transport-webusb

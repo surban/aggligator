@@ -1,0 +1,27 @@
+[package]
+name = "aggligator-transport-socks"
+version = "0.1.0"
+description = "Aggligator transport: SOCKS5"
+categories = ["asynchronous", "network-programming"]
+keywords = ["aggligator", "aggligator-transport", "socks", "proxy"]
+readme = "README.md"
+authors = ["Guflly", "Sebastian Urban <surban@surban.net>"]
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+aggligator = { version = "0.9.11", path = "../aggligator" }
+
+async-trait = { workspace = true }
+tokio = { workspace = true, features = ["net", "sync"] }
+
+tokio-socks = "0.5"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["io-util", "macros", "rt-multi-thread"] }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
