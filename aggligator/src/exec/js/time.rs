@@ -7,7 +7,7 @@ use std::{
     fmt,
     future::{Future, IntoFuture},
     pin::Pin,
-    task::{ready, Context, Poll},
+    task::{Context, Poll, ready},
     time::Duration,
 };
 
@@ -23,7 +23,7 @@ mod js {
         task::{Context, Poll, Waker},
         time::Duration,
     };
-    use wasm_bindgen::{prelude::*, JsCast};
+    use wasm_bindgen::{JsCast, prelude::*};
     use web_sys::{Window, WorkerGlobalScope};
 
     /// JavaScript sleep.
@@ -133,7 +133,7 @@ pub use js::JsSleep as Sleep;
 /// Thread-safe sleep.
 #[cfg(all(target_family = "wasm", target_feature = "atomics"))]
 mod threads {
-    use futures::{ready, FutureExt};
+    use futures::{FutureExt, ready};
     use std::{
         fmt,
         future::Future,
@@ -278,11 +278,7 @@ mod js_instant {
         type Output = Duration;
 
         fn sub(self, rhs: Self) -> Self::Output {
-            if self > rhs {
-                Duration::from_millis(self.0 - rhs.0)
-            } else {
-                Duration::ZERO
-            }
+            if self > rhs { Duration::from_millis(self.0 - rhs.0) } else { Duration::ZERO }
         }
     }
 }
@@ -293,11 +289,7 @@ pub use js_instant::Instant;
 /// Waits until `deadline` is reached.
 pub fn sleep_until(deadline: Instant) -> Sleep {
     let now = Instant::now();
-    if deadline > now {
-        sleep(deadline - now)
-    } else {
-        sleep(Duration::ZERO)
-    }
+    if deadline > now { sleep(deadline - now) } else { sleep(Duration::ZERO) }
 }
 
 /// A stream that produces an event at a fixed time interval.

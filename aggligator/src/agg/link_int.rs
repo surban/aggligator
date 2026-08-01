@@ -1,15 +1,15 @@
 //! Internal link data.
 
 use bytes::Bytes;
-use futures::{future, future::poll_fn, FutureExt, Sink, SinkExt, Stream, StreamExt};
+use futures::{FutureExt, Sink, SinkExt, Stream, StreamExt, future, future::poll_fn};
 use std::{
     collections::VecDeque,
     fmt,
     io::{self, Error, ErrorKind},
     mem,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc, Weak,
+        atomic::{AtomicBool, Ordering},
     },
     task::{Context, Poll},
     time::Duration,
@@ -23,7 +23,7 @@ use crate::{
     agg::task::{SentReliable, SentReliableStatus},
     cfg::{Cfg, ExchangedCfg},
     control::{Direction, DisconnectReason, Link, LinkIntervalStats, LinkStats, NotWorkingReason},
-    exec::time::{sleep_until, Instant},
+    exec::time::{Instant, sleep_until},
     id::{ConnId, LinkId},
     msg::LinkMsg,
     seq::Seq,
@@ -554,10 +554,10 @@ where
             _ => (),
         }
 
-        if let Some(link_unflushed_limit) = self.cfg.link_unflushed_limit {
-            if self.txed_unflushed >= link_unflushed_limit.get() {
-                self.start_flush();
-            }
+        if let Some(link_unflushed_limit) = self.cfg.link_unflushed_limit
+            && self.txed_unflushed >= link_unflushed_limit.get()
+        {
+            self.start_flush();
         }
     }
 

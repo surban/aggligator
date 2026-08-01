@@ -12,15 +12,15 @@ use wasm_bindgen_test::wasm_bindgen_test;
 
 use crate::test_data::send_and_verify;
 use aggligator::{
+    TaskError,
     alc::{RecvError, SendError},
     cfg::{Cfg, LinkPing},
-    connect::{connect, Server},
+    connect::{Server, connect},
     control::DisconnectReason,
     exec::{
         self,
         time::{sleep, timeout},
     },
-    TaskError,
 };
 
 mod test_channel;
@@ -124,36 +124,36 @@ async fn multi_link_test(
             count,
             |i| {
                 for (n, desc) in link_descs.iter().enumerate() {
-                    if let Some((when, dur)) = desc.pause {
-                        if i == when {
-                            println!("pausing link a {n}");
-                            let ctrl = a_controls[n].clone();
-                            exec::spawn(async move {
-                                let _ = ctrl.pause_for(dur).await;
-                                println!("unpausing link a {n}");
-                            });
-                        }
+                    if let Some((when, dur)) = desc.pause
+                        && i == when
+                    {
+                        println!("pausing link a {n}");
+                        let ctrl = a_controls[n].clone();
+                        exec::spawn(async move {
+                            let _ = ctrl.pause_for(dur).await;
+                            println!("unpausing link a {n}");
+                        });
                     }
-                    if let Some(when) = desc.fail {
-                        if i == when {
-                            println!("failing link a {n}");
-                            let ctrl = a_controls[n].clone();
-                            exec::spawn(async move { ctrl.disconnect().await });
-                        }
+                    if let Some(when) = desc.fail
+                        && i == when
+                    {
+                        println!("failing link a {n}");
+                        let ctrl = a_controls[n].clone();
+                        exec::spawn(async move { ctrl.disconnect().await });
                     }
-                    if let Some((when, dur)) = desc.block {
-                        if i == when {
-                            println!("blocking link a {n}");
-                            let link = added_links[n].clone();
-                            link.set_blocked(true);
-                            assert!(link.is_blocked());
-                            exec::spawn(async move {
-                                sleep(dur).await;
-                                println!("unblocking link a {n}");
-                                link.set_blocked(false);
-                                assert!(!link.is_blocked());
-                            });
-                        }
+                    if let Some((when, dur)) = desc.block
+                        && i == when
+                    {
+                        println!("blocking link a {n}");
+                        let link = added_links[n].clone();
+                        link.set_blocked(true);
+                        assert!(link.is_blocked());
+                        exec::spawn(async move {
+                            sleep(dur).await;
+                            println!("unblocking link a {n}");
+                            link.set_blocked(false);
+                            assert!(!link.is_blocked());
+                        });
                     }
                 }
             },
@@ -286,22 +286,22 @@ async fn multi_link_test(
             count,
             |i| {
                 for (n, desc) in link_descs.iter().enumerate() {
-                    if let Some((when, dur)) = desc.pause {
-                        if i == when {
-                            println!("pausing link b {n}");
-                            let ctrl = b_controls[n].clone();
-                            exec::spawn(async move {
-                                let _ = ctrl.pause_for(dur).await;
-                                println!("unpausing link b {n}");
-                            });
-                        }
+                    if let Some((when, dur)) = desc.pause
+                        && i == when
+                    {
+                        println!("pausing link b {n}");
+                        let ctrl = b_controls[n].clone();
+                        exec::spawn(async move {
+                            let _ = ctrl.pause_for(dur).await;
+                            println!("unpausing link b {n}");
+                        });
                     }
-                    if let Some(when) = desc.fail {
-                        if i == when {
-                            println!("failing link b {n}");
-                            let ctrl = b_controls[n].clone();
-                            exec::spawn(async move { ctrl.disconnect().await });
-                        }
+                    if let Some(when) = desc.fail
+                        && i == when
+                    {
+                        println!("failing link b {n}");
+                        let ctrl = b_controls[n].clone();
+                        exec::spawn(async move { ctrl.disconnect().await });
                     }
                 }
 

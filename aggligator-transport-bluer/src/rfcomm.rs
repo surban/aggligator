@@ -20,7 +20,7 @@ use aggligator::{
 };
 
 #[doc(no_inline)]
-pub use bluer::{rfcomm::SocketAddr, Address};
+pub use bluer::{Address, rfcomm::SocketAddr};
 
 static NAME: &str = "rfcomm";
 

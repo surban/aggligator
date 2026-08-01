@@ -1,6 +1,6 @@
 //! Protocol messages.
 
-use byteorder::{ReadBytesExt, WriteBytesExt, BE};
+use byteorder::{BE, ReadBytesExt, WriteBytesExt};
 use bytes::Bytes;
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use std::{fmt, io, num::NonZeroU128};

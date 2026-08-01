@@ -4,7 +4,7 @@
 //! and managed internally.
 //!
 
-use byteorder::{ByteOrder, BE};
+use byteorder::{BE, ByteOrder};
 use std::{fmt, num::NonZeroU128, sync::Arc};
 use tokio::sync::mpsc;
 use x25519_dalek::SharedSecret;

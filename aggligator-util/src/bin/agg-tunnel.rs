@@ -1,9 +1,9 @@
 //! Tunnel TCP connections in aggregated connections.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{CommandFactory, Parser, Subcommand};
 use crossterm::{style::Stylize, tty::IsTty};
-use futures::{future, FutureExt};
+use futures::{FutureExt, future};
 use socket2::SockRef;
 use std::{
     collections::{HashMap, HashSet},
@@ -589,10 +589,9 @@ impl ServerCli {
                     let (client_read, client_write) = ch.into_stream().into_split();
                     if let Err(err) =
                         Self::handle_client(ports, client_write, client_read, !no_monitor, target_tx).await
+                        && no_monitor
                     {
-                        if no_monitor {
-                            eprintln!("Connection {id} failed: {err}");
-                        }
+                        eprintln!("Connection {id} failed: {err}");
                     }
                 });
             }

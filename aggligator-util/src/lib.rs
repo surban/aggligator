@@ -8,9 +8,9 @@
 
 //! Aggligator command line utilities.
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use std::path::PathBuf;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 use aggligator::cfg::Cfg;
 use aggligator_transport_tcp::TcpLinkFilter;
@@ -52,7 +52,7 @@ pub fn parse_tcp_link_filter(s: &str) -> anyhow::Result<TcpLinkFilter> {
 pub async fn wait_sigterm() {
     #[cfg(unix)]
     {
-        use tokio::signal::unix::{signal, SignalKind};
+        use tokio::signal::unix::{SignalKind, signal};
 
         let mut sigterm = signal(SignalKind::terminate()).unwrap();
         let mut sigint = signal(SignalKind::interrupt()).unwrap();

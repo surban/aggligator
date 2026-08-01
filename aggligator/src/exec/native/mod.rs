@@ -5,11 +5,11 @@ pub mod runtime {
 }
 
 pub mod task {
-    pub use tokio::task::{spawn, JoinError, JoinHandle};
+    pub use tokio::task::{JoinError, JoinHandle, spawn};
 }
 
 pub mod time {
-    pub use tokio::time::{sleep, sleep_until, timeout, Instant, Sleep, Timeout};
+    pub use tokio::time::{Instant, Sleep, Timeout, sleep, sleep_until, timeout};
     pub use tokio_stream::wrappers::IntervalStream;
 
     pub fn interval_stream(period: std::time::Duration) -> IntervalStream {

@@ -17,7 +17,7 @@ use aggligator::{
     io::{IoBox, StreamBox},
 };
 use async_trait::async_trait;
-use futures::{future, FutureExt};
+use futures::{FutureExt, future};
 use network_interface::Addr;
 use socket2::SockRef;
 use std::{
@@ -33,14 +33,14 @@ use std::{
 };
 use tokio::{
     net::{TcpListener, TcpSocket},
-    sync::{mpsc, watch, Notify},
-    time::{sleep, Instant},
+    sync::{Notify, mpsc, watch},
+    time::{Instant, sleep},
 };
 
 use aggligator::{
+    Link,
     control::Direction,
     transport::{AcceptedStreamBox, AcceptingTransport, ConnectingTransport, LinkTag, LinkTagBox},
-    Link,
 };
 use util::NetworkInterface;
 
@@ -477,11 +477,7 @@ impl fmt::Display for TcpAcceptor {
             .iter()
             .filter_map(|listener| listener.local_addr().ok().map(|addr| addr.to_string()))
             .collect();
-        if addrs.len() > 1 {
-            write!(f, "[{}]", addrs.join(", "))
-        } else {
-            write!(f, "{}", addrs[0])
-        }
+        if addrs.len() > 1 { write!(f, "[{}]", addrs.join(", ")) } else { write!(f, "{}", addrs[0]) }
     }
 }
 

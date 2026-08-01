@@ -125,10 +125,10 @@ pub async fn speed_test(
                     let speed = sent_interval as f64 / interval_start.elapsed().as_secs_f64();
 
                     tracing::info!("Send speed: {:.1} MB/s", speed / MB);
-                    if let Some(tx) = &send_tx {
-                        if tx.send(speed).is_err() {
-                            break;
-                        }
+                    if let Some(tx) = &send_tx
+                        && tx.send(speed).is_err()
+                    {
+                        break;
                     }
 
                     sent_interval = 0;
@@ -196,10 +196,10 @@ pub async fn speed_test(
                     let speed = recved_interval as f64 / interval_start.elapsed().as_secs_f64();
 
                     tracing::info!("Receive speed: {:.1} MB/s", speed / MB);
-                    if let Some(tx) = &recv_tx {
-                        if tx.send(speed).is_err() {
-                            break;
-                        }
+                    if let Some(tx) = &recv_tx
+                        && tx.send(speed).is_err()
+                    {
+                        break;
                     }
 
                     recved_interval = 0;

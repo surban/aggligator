@@ -1,19 +1,19 @@
 //! Raw connections for comparison of performance.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::{Args, Parser, Subcommand};
 use crossterm::{
     cursor::{MoveTo, MoveToNextLine},
-    event::{poll, read, Event, KeyCode, KeyEvent},
+    event::{Event, KeyCode, KeyEvent, poll, read},
     execute,
     style::{Print, Stylize},
     terminal,
-    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
+    terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode},
     tty::IsTty,
 };
 use futures::{
-    stream::{self, SelectAll},
     StreamExt,
+    stream::{self, SelectAll},
 };
 use network_interface::{NetworkInterface, NetworkInterfaceConfig};
 use std::{
@@ -24,7 +24,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    net::{lookup_host, TcpListener, TcpSocket, TcpStream},
+    net::{TcpListener, TcpSocket, TcpStream, lookup_host},
     sync::{mpsc, mpsc::error::TryRecvError, watch},
     task::block_in_place,
 };
@@ -120,11 +120,7 @@ impl RawClientCli {
             }
         }
 
-        if addrs.is_empty() {
-            Err(anyhow!("cannot resolve IP address of target"))
-        } else {
-            Ok(addrs)
-        }
+        if addrs.is_empty() { Err(anyhow!("cannot resolve IP address of target")) } else { Ok(addrs) }
     }
 
     async fn tcp_connect(iface: &[u8], ifaces: &[NetworkInterface], target: SocketAddr) -> Result<TcpStream> {
@@ -339,10 +335,10 @@ impl RawClientCli {
             )
             .unwrap();
 
-            if poll(Duration::from_secs(1))? {
-                if let Event::Key(KeyEvent { code: KeyCode::Char('q'), .. }) = read()? {
-                    break;
-                }
+            if poll(Duration::from_secs(1))?
+                && let Event::Key(KeyEvent { code: KeyCode::Char('q'), .. }) = read()?
+            {
+                break;
             }
         }
 

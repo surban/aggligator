@@ -1,6 +1,6 @@
 //! Connection configuration.
 
-use byteorder::{ReadBytesExt, WriteBytesExt, BE};
+use byteorder::{BE, ReadBytesExt, WriteBytesExt};
 use std::{
     io,
     num::{NonZeroU32, NonZeroUsize},

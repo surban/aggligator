@@ -31,7 +31,7 @@ mod host {
         time::Duration,
     };
     use tokio::{
-        sync::{watch, Mutex},
+        sync::{Mutex, watch},
         time::sleep,
     };
 
@@ -336,7 +336,7 @@ mod device {
         hash::{Hash, Hasher},
         io::Result,
     };
-    use tokio::sync::{mpsc, Mutex};
+    use tokio::sync::{Mutex, mpsc};
     use upc::device::UpcFunction;
 
     use aggligator::transport::{AcceptedStreamBox, AcceptingTransport, LinkTag, LinkTagBox};

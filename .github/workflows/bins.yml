@@ -2,9 +2,9 @@ name: Build binaries
 
 on:
   push:
-    branches: [ "master" ]
+    branches: ["master"]
   pull_request:
-    branches: [ "master" ]
+    branches: ["master"]
   release:
     types: [published]
 
@@ -12,7 +12,7 @@ jobs:
   bins:
     runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: false            
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-24.04
@@ -23,12 +23,12 @@ jobs:
           - os: windows-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v5
       - name: Install MUSL toolchain
         if: matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl'
         run: |
           sudo apt-get update
-          sudo apt-get install musl-tools        
+          sudo apt-get install musl-tools
       - name: Install cross toolchain
         if: matrix.target
         run: rustup target add ${{ matrix.target }}
@@ -65,7 +65,7 @@ jobs:
           Copy-Item .\target\release\agg-tunnel.exe .\bin\
         shell: pwsh
       - name: Upload binaries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: aggligator-${{ matrix.target || matrix.os }}
           path: bin

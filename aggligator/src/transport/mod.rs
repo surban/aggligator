@@ -71,10 +71,10 @@ use std::{
 };
 
 use crate::{
+    Control, Link, Listener, Server, Task,
     control::Direction,
     id::ConnId,
     io::{RxBox, TxBox},
-    Control, Link, Listener, Server, Task,
 };
 
 mod acceptor;
@@ -110,11 +110,7 @@ where
 
     /// Direction of link on which the error occured.
     pub fn direction(&self) -> Direction {
-        if self.id.is_some() {
-            Direction::Outgoing
-        } else {
-            Direction::Incoming
-        }
+        if self.id.is_some() { Direction::Outgoing } else { Direction::Incoming }
     }
 }
 

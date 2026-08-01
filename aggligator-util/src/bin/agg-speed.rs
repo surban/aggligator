@@ -1,18 +1,18 @@
 //! Aggligator speed test.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{CommandFactory, Parser, Subcommand};
 use crossterm::{style::Stylize, tty::IsTty};
 use rustls::{
+    ClientConfig, DigitallySignedStruct, RootCertStore, ServerConfig, SignatureScheme,
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
     pki_types::{CertificateDer, PrivateKeyDer, ServerName, UnixTime},
-    ClientConfig, DigitallySignedStruct, RootCertStore, ServerConfig, SignatureScheme,
 };
 use rustls_pemfile::{certs, private_key};
 use serde::Serialize;
 use std::{
     collections::HashSet,
-    io::{stdout, BufReader},
+    io::{BufReader, stdout},
     net::{Ipv6Addr, SocketAddr},
     path::PathBuf,
     process::exit,
@@ -33,7 +33,7 @@ use aggligator::{
 };
 use aggligator_monitor::{
     monitor::{format_speed, interactive_monitor},
-    speed::{speed_test, INTERVAL},
+    speed::{INTERVAL, speed_test},
 };
 use aggligator_transport_tcp::{IpVersion, TcpAcceptor, TcpConnector, TcpLinkFilter};
 use aggligator_transport_websocket::{WebSocketAcceptor, WebSocketConnector};

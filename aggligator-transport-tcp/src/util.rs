@@ -6,7 +6,7 @@ use std::{
     io::{Error, Result},
     net::{IpAddr, SocketAddr, UdpSocket},
 };
-use tokio::net::{lookup_host, TcpSocket};
+use tokio::net::{TcpSocket, lookup_host};
 
 pub use network_interface::{Addr, Netmask, NetworkInterface, V4IfAddr, V6IfAddr};
 
@@ -25,10 +25,10 @@ pub fn local_interfaces() -> Result<Vec<NetworkInterface>> {
 
 /// Translate IPv4 address mapped to an IPv6 alias into proper IPv4 address.
 pub fn use_proper_ipv4(sa: &mut SocketAddr) {
-    if let IpAddr::V6(addr) = sa.ip() {
-        if let Some(addr) = addr.to_ipv4_mapped() {
-            sa.set_ip(addr.into());
-        }
+    if let IpAddr::V6(addr) = sa.ip()
+        && let Some(addr) = addr.to_ipv4_mapped()
+    {
+        sa.set_ip(addr.into());
     }
 }
 

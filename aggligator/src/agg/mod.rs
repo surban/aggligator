@@ -4,17 +4,17 @@ use bytes::Bytes;
 use futures::{Sink, Stream};
 use std::{
     fmt, io,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
 };
-use tokio::sync::{mpsc, oneshot, watch, Mutex};
+use tokio::sync::{Mutex, mpsc, oneshot, watch};
 
 use crate::{
+    TaskError,
     agg::{link_int::LinkInt, task::Task},
     alc::{Channel, RecvError, SendError},
     cfg::{Cfg, ExchangedCfg},
     control::{Control, Direction, Link},
     id::{OwnedConnId, ServerId},
-    TaskError,
 };
 
 #[cfg(feature = "dump")]

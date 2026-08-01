@@ -10,12 +10,12 @@
 
 use async_trait::async_trait;
 use axum::{
+    Router,
     body::Body,
     extract::{ConnectInfo, WebSocketUpgrade},
     http::StatusCode,
     response::Response,
     routing::get,
-    Router,
 };
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt, TryStreamExt};
@@ -32,18 +32,18 @@ use std::{
 };
 use tokio::{
     net::TcpSocket,
-    sync::{mpsc, watch, Mutex, Notify},
-    time::{sleep, Instant},
+    sync::{Mutex, Notify, mpsc, watch},
+    time::{Instant, sleep},
 };
-use tokio_tungstenite::{client_async_tls_with_config, tungstenite::protocol::WebSocketConfig, Connector};
+use tokio_tungstenite::{Connector, client_async_tls_with_config, tungstenite::protocol::WebSocketConfig};
 use tokio_util::io::{CopyToBytes, SinkWriter, StreamReader};
 use url::Url;
 
 use aggligator::{
+    Link,
     control::{Direction, DisconnectReason},
     io::{IoBox, StreamBox},
     transport::{AcceptedStreamBox, AcceptingTransport, ConnectingTransport, LinkTag, LinkTagBox},
-    Link,
 };
 use aggligator_transport_tcp::util::{self, NetworkInterface};
 pub use aggligator_transport_tcp::{IpVersion, Local};
@@ -130,11 +130,7 @@ impl fmt::Debug for WebSocketConnector {
 impl fmt::Display for WebSocketConnector {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let urls: Vec<_> = self.urls.iter().map(|url| url.to_string()).collect();
-        if self.urls.len() > 1 {
-            write!(f, "[{}]", urls.join(", "))
-        } else {
-            write!(f, "{}", urls[0])
-        }
+        if self.urls.len() > 1 { write!(f, "[{}]", urls.join(", ")) } else { write!(f, "{}", urls[0]) }
     }
 }
 
@@ -379,11 +375,7 @@ impl ConnectingTransport for WebSocketConnector {
         let ws_rx = Box::pin(
             ws_rx
                 .try_filter_map(|msg: tungstenite::Message| async move {
-                    if let tungstenite::Message::Binary(data) = msg {
-                        Ok(Some(data))
-                    } else {
-                        Ok(None)
-                    }
+                    if let tungstenite::Message::Binary(data) = msg { Ok(Some(data)) } else { Ok(None) }
                 })
                 .map_err(Error::other),
         );
@@ -621,11 +613,7 @@ impl AcceptingTransport for WebSocketAcceptor {
             let ws_rx = Box::pin(
                 ws_rx
                     .try_filter_map(|msg: axum::extract::ws::Message| async move {
-                        if let axum::extract::ws::Message::Binary(data) = msg {
-                            Ok(Some(data))
-                        } else {
-                            Ok(None)
-                        }
+                        if let axum::extract::ws::Message::Binary(data) = msg { Ok(Some(data)) } else { Ok(None) }
                     })
                     .map_err(Error::other),
             );

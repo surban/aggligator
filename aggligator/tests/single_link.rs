@@ -14,7 +14,7 @@ use crate::test_data::send_and_verify;
 use aggligator::{
     alc::{RecvError, SendError},
     cfg::Cfg,
-    connect::{connect, Server},
+    connect::{Server, connect},
     exec,
     exec::time::timeout,
 };
@@ -71,19 +71,19 @@ async fn single_link_test(
             tx.max_size().min(max_size),
             count,
             |i| {
-                if let Some((interval, dur)) = pause {
-                    if i % interval == 0 {
-                        println!("pausing link a");
-                        let ctrl = link_a_control.clone();
-                        exec::spawn(async move { ctrl.pause_for(dur).await });
-                    }
+                if let Some((interval, dur)) = pause
+                    && i % interval == 0
+                {
+                    println!("pausing link a");
+                    let ctrl = link_a_control.clone();
+                    exec::spawn(async move { ctrl.pause_for(dur).await });
                 }
-                if let Some(when) = fail_link {
-                    if i == when {
-                        println!("failing link a");
-                        let ctrl = link_a_control.clone();
-                        exec::spawn(async move { ctrl.disconnect().await });
-                    }
+                if let Some(when) = fail_link
+                    && i == when
+                {
+                    println!("failing link a");
+                    let ctrl = link_a_control.clone();
+                    exec::spawn(async move { ctrl.disconnect().await });
                 }
             },
             expected_send_err,
@@ -176,19 +176,19 @@ async fn single_link_test(
             tx.max_size().min(max_size),
             count,
             |i| {
-                if let Some((interval, dur)) = pause {
-                    if i % interval == 0 {
-                        println!("pausing link b");
-                        let ctrl = link_b_control.clone();
-                        exec::spawn(async move { ctrl.pause_for(dur).await });
-                    }
+                if let Some((interval, dur)) = pause
+                    && i % interval == 0
+                {
+                    println!("pausing link b");
+                    let ctrl = link_b_control.clone();
+                    exec::spawn(async move { ctrl.pause_for(dur).await });
                 }
-                if let Some(when) = fail_link {
-                    if i == when {
-                        println!("failing link b");
-                        let ctrl = link_b_control.clone();
-                        exec::spawn(async move { ctrl.disconnect().await });
-                    }
+                if let Some(when) = fail_link
+                    && i == when
+                {
+                    println!("failing link b");
+                    let ctrl = link_b_control.clone();
+                    exec::spawn(async move { ctrl.disconnect().await });
                 }
             },
             expected_send_err,

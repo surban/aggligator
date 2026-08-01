@@ -1,7 +1,7 @@
 //! Receiver front-end of aggregated stream.
 
 use bytes::Bytes;
-use futures::{ready, Stream};
+use futures::{Stream, ready};
 use std::{
     fmt, io,
     pin::Pin,
@@ -166,10 +166,10 @@ impl AsyncRead for ReceiverStream {
     fn poll_read(self: Pin<&mut Self>, cx: &mut Context, buf: &mut ReadBuf) -> Poll<io::Result<()>> {
         let this = Pin::into_inner(self);
 
-        if this.buf.is_empty() {
-            if let Some(data) = ready!(this.receiver.poll_recv(cx))? {
-                this.buf = data;
-            }
+        if this.buf.is_empty()
+            && let Some(data) = ready!(this.receiver.poll_recv(cx))?
+        {
+            this.buf = data;
         }
 
         let len = buf.remaining().min(this.buf.len());

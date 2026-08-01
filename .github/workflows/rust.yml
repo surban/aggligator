@@ -6,13 +6,14 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  MSRV: 1.97.1
 
 jobs:
   build:
     name: Build with latest stable Rust
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       - name: Install dependencies
@@ -26,7 +27,7 @@ jobs:
       - name: Build aggligator-transport-webusb
         run: cd aggligator-transport-webusb && cargo build --quiet
       - name: Build aggligator-transport-websocket-web
-        run: cd aggligator-transport-websocket-web && cargo build --quiet        
+        run: cd aggligator-transport-websocket-web && cargo build --quiet
       - name: Build documentation
         run: cargo doc --no-deps --quiet
       - name: Code analysis
@@ -50,10 +51,11 @@ jobs:
     name: Build with latest stable Rust on Windows
     runs-on: windows-latest
     steps:
-      - uses: ilammy/setup-nasm@v1
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
+      - name: Install NASM
+        run: choco install nasm --no-progress --yes
       - name: Install latest stable Rust
         run: rustup set profile default && rustup default stable && rustup update
       - name: Build
@@ -62,15 +64,15 @@ jobs:
         run: cargo test --workspace --exclude aggligator-transport-bluer --quiet
 
   build-msrv:
-    name: Build with Rust 1.89
+    name: Build with MSRV Rust
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       - name: Install dependencies
         run: sudo apt-get update && sudo apt install libdbus-1-dev pkg-config
-      - name: Install Rust 1.89.0
-        run: rustup toolchain install 1.89.0
-      - name: Build aggligator and aggligator-util with Rust 1.89.0
-        run: cargo +1.89.0 build --features bluer,usb-device,usb-host,raw-speed-cli,dump --all-targets --quiet
+      - name: Install Rust
+        run: rustup toolchain install $MSRV
+      - name: Build aggligator and aggligator-util
+        run: cargo +$MSRV build --features bluer,usb-device,usb-host,raw-speed-cli,dump --all-targets --quiet

@@ -1,7 +1,7 @@
 //! Link acceptor.
 
 use async_trait::async_trait;
-use futures::{future, future::BoxFuture, pin_mut, stream::FuturesUnordered, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, future, future::BoxFuture, pin_mut, stream::FuturesUnordered};
 use std::{
     fmt,
     future::IntoFuture,
@@ -9,16 +9,16 @@ use std::{
     sync::{Arc, Weak},
     time::Duration,
 };
-use tokio::sync::{broadcast, mpsc, oneshot, watch, Mutex, OwnedSemaphorePermit, RwLock, Semaphore};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, Semaphore, broadcast, mpsc, oneshot, watch};
 use tracing::Instrument;
 
 use super::{BoxControl, BoxLink, BoxLinkError, BoxListener, BoxServer, BoxTask, LinkError, LinkTag, LinkTagBox};
 use crate::{
+    Cfg, Server,
     alc::Channel,
     exec,
-    exec::time::{sleep_until, Instant},
+    exec::time::{Instant, sleep_until},
     io::{StreamBox, TxRxBox},
-    Cfg, Server,
 };
 
 /// An accepted incoming stream.

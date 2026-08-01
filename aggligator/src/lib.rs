@@ -120,6 +120,6 @@ macro_rules! protocol_err {
 pub(crate) use protocol_err;
 
 pub use cfg::Cfg;
-pub use connect::{connect, Incoming, Listener, Outgoing, Server};
+pub use connect::{Incoming, Listener, Outgoing, Server, connect};
 pub use control::{Control, Link};
 pub use transport::{Acceptor, Connector};

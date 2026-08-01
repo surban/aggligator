@@ -17,7 +17,7 @@ use tokio::io::split;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 #[doc(no_inline)]
-pub use rustls::{pki_types::ServerName, ClientConfig, RootCertStore, ServerConfig};
+pub use rustls::{ClientConfig, RootCertStore, ServerConfig, pki_types::ServerName};
 
 use aggligator::{
     io::{IoBox, StreamBox},

@@ -67,11 +67,7 @@ impl<T> PeekableReceiver<T> {
 
     /// Receives the next messages if it is immediately available and the condition is fulfilled.
     pub fn try_recv_if(&mut self, cond: impl FnOnce(&T) -> bool) -> Result<T, TryRecvIfError> {
-        if cond(self.try_peek()?) {
-            Ok(self.try_recv().unwrap())
-        } else {
-            Err(TryRecvIfError::NoMatch)
-        }
+        if cond(self.try_peek()?) { Ok(self.try_recv().unwrap()) } else { Err(TryRecvIfError::NoMatch) }
     }
 }
 

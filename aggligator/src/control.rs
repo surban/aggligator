@@ -8,25 +8,26 @@ use std::{
     hash::Hash,
     io,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite},
-    sync::{mpsc, watch, Mutex},
+    sync::{Mutex, mpsc, watch},
 };
 use x25519_dalek::{PublicKey, StaticSecret};
 
 use crate::{
+    TaskError,
     agg::{link_int::LinkInt, task::FatalConnectError},
     cfg::Cfg,
-    exec::time::{error::Elapsed, timeout, Instant},
+    exec::time::{Instant, error::Elapsed, timeout},
     id::{ConnId, EncryptedConnId, LinkId, ServerId},
     io::{IoRx, IoTx},
     msg::{LinkMsg, RefusedReason},
-    protocol_err, TaskError,
+    protocol_err,
 };
 
 /// Error adding a link to a connection.

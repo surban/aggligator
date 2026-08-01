@@ -10,9 +10,9 @@
 //!
 
 use bytes::Bytes;
-use futures::{future, future::BoxFuture, FutureExt, Sink, Stream};
+use futures::{FutureExt, Sink, Stream, future, future::BoxFuture};
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{HashMap, hash_map::Entry},
     fmt,
     future::IntoFuture,
     io,
@@ -25,11 +25,11 @@ use tokio::{
 use x25519_dalek::{PublicKey, StaticSecret};
 
 use crate::{
-    agg::{link_int::LinkInt, task::Task, AggParts},
+    agg::{AggParts, link_int::LinkInt, task::Task},
     alc::Channel,
     cfg::{Cfg, ExchangedCfg},
     control::{Control, Direction, Link},
-    exec::time::{error::Elapsed, timeout, Instant},
+    exec::time::{Instant, error::Elapsed, timeout},
     id::{ConnId, OwnedConnId, ServerId},
     io::{IoRx, IoTx},
     msg::{LinkMsg, RefusedReason},
@@ -489,14 +489,14 @@ where
                         break Connection::Refuse {
                             reason: RefusedReason::NotListening,
                             err: IncomingError::NotListening,
-                        }
+                        };
                     }
                     None => need_listen_tx_permit = true,
                 },
 
                 // Link belongs to unknown connection, but existing connection was expected.
                 Entry::Vacant(_) => {
-                    break Connection::Refuse { reason: RefusedReason::Closed, err: IncomingError::Closed }
+                    break Connection::Refuse { reason: RefusedReason::Closed, err: IncomingError::Closed };
                 }
             }
         };

@@ -1,7 +1,7 @@
 //! Sender front-end of aggregated stream.
 
 use bytes::Bytes;
-use futures::{ready, FutureExt, Sink, SinkExt};
+use futures::{FutureExt, Sink, SinkExt, ready};
 use std::{
     fmt, io,
     pin::Pin,

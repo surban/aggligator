@@ -1,7 +1,7 @@
 //! Test data generator and verifier.
 #![allow(dead_code)]
 
-use byteorder::{ReadBytesExt, WriteBytesExt, BE};
+use byteorder::{BE, ReadBytesExt, WriteBytesExt};
 use bytes::{Buf, Bytes};
 use crc_fast::crc32_iso_hdlc;
 use futures::join;
@@ -129,7 +129,7 @@ pub async fn send_and_verify(
 ) -> f64 {
     let send_task = async {
         let start = Instant::now();
-        let mut gen = Generator::new(min_size, max_size);
+        let mut r#gen = Generator::new(min_size, max_size);
 
         for i in 0..count {
             if i % 100 == 0 {
@@ -137,13 +137,18 @@ pub async fn send_and_verify(
                 tx.flush().await?;
             }
             send_cb(i);
-            let data = gen.packet();
+            let data = r#gen.packet();
             tx.send(data).await?;
         }
 
         let elapsed = start.elapsed().as_secs_f64();
-        let speed = gen.total() as f64 / elapsed;
-        println!("{name}: sent {:.2} MB in {:.1} s => {:.1} MB/s", gen.total() as f64 / MB, elapsed, speed / MB);
+        let speed = r#gen.total() as f64 / elapsed;
+        println!(
+            "{name}: sent {:.2} MB in {:.1} s => {:.1} MB/s",
+            r#gen.total() as f64 / MB,
+            elapsed,
+            speed / MB
+        );
         Ok(speed)
     };
 

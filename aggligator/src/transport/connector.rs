@@ -2,9 +2,9 @@
 
 use async_trait::async_trait;
 use futures::{
+    FutureExt, StreamExt,
     future::{self, BoxFuture},
     stream::FuturesUnordered,
-    FutureExt, StreamExt,
 };
 use std::{
     collections::HashSet,
@@ -15,17 +15,16 @@ use std::{
     sync::{Arc, Weak},
     time::Duration,
 };
-use tokio::sync::{broadcast, mpsc, oneshot, watch, RwLock};
+use tokio::sync::{RwLock, broadcast, mpsc, oneshot, watch};
 use tracing::Instrument;
 
 use super::{BoxControl, BoxLink, BoxLinkError, BoxTask, LinkTag, LinkTagBox};
 use crate::{
-    connect,
+    Cfg, Link, Outgoing, connect,
     control::DisconnectReason,
     exec,
     exec::time::sleep,
     io::{StreamBox, TxRxBox},
-    Cfg, Link, Outgoing,
 };
 
 /// A transport for connecting to remote endpoints.

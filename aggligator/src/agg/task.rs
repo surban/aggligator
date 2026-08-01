@@ -3,7 +3,7 @@
 use atomic_refcell::AtomicRefCell;
 use bytes::Bytes;
 use futures::{
-    future, future::BoxFuture, stream, stream::FuturesUnordered, Future, FutureExt, Sink, Stream, StreamExt,
+    Future, FutureExt, Sink, Stream, StreamExt, future, future::BoxFuture, stream, stream::FuturesUnordered,
 };
 use rand::{prelude::*, rngs::SmallRng};
 use std::{
@@ -13,8 +13,8 @@ use std::{
     future::IntoFuture,
     io,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };
@@ -28,7 +28,7 @@ use crate::{
     alc::{RecvError, SendError},
     cfg::{Cfg, ExchangedCfg, LinkPing},
     control::{Direction, DisconnectReason, Link, NotWorkingReason, Stats},
-    exec::time::{interval_stream, sleep_until, timeout, Instant},
+    exec::time::{Instant, interval_stream, sleep_until, timeout},
     id::{ConnId, LinkId, OwnedConnId},
     msg::{LinkMsg, RefusedReason, ReliableMsg},
     peekable_mpsc::{PeekableReceiver, RecvIfError},
@@ -492,20 +492,18 @@ where
             }
 
             // Notify that connection has been established.
-            if links_available {
-                if let Some(connected_tx) = self.connected_tx.take() {
-                    tracing::debug!("sending connection established notification");
-                    let _ = connected_tx.send(self.remote_cfg.clone().unwrap());
-                    self.established = Some(Instant::now());
-                }
+            if links_available && let Some(connected_tx) = self.connected_tx.take() {
+                tracing::debug!("sending connection established notification");
+                let _ = connected_tx.send(self.remote_cfg.clone().unwrap());
+                self.established = Some(Instant::now());
             }
 
             // Notify that flushing has completed.
-            if self.unflushed_links.is_empty() {
-                if let Some(tx) = self.flushed_tx.take() {
-                    tracing::trace!("flush request completed");
-                    let _ = tx.send(());
-                }
+            if self.unflushed_links.is_empty()
+                && let Some(tx) = self.flushed_tx.take()
+            {
+                tracing::trace!("flush request completed");
+                let _ = tx.send(());
             }
 
             // Check link limits and unconfirm if exceeded.
@@ -1608,9 +1606,12 @@ where
     }
 
     /// Computes the earliest link-specific timeout.
-    fn earliest_link_specific_timeout(
-        &self, timeout: Duration, since_fn: impl Fn(&LinkInt<TX, RX, TAG>) -> Option<Instant>,
-    ) -> impl Future<Output = usize> {
+    fn earliest_link_specific_timeout<F>(
+        &self, timeout: Duration, since_fn: F,
+    ) -> impl Future<Output = usize> + use<TX, RX, TAG, F>
+    where
+        F: Fn(&LinkInt<TX, RX, TAG>) -> Option<Instant>,
+    {
         let earliest_timeout = self
             .links
             .iter()
@@ -1839,51 +1840,50 @@ where
 
         match link.test {
             LinkTest::Inactive => {
-                if let Some((mut since, reason)) = &link.unconfirmed {
-                    if link.tx_polling().is_none()
-                        && link.current_ping_sent.is_none()
-                        && !link.has_outstanding_ack()
-                    {
-                        if *reason != NotWorkingReason::AckTimeout || self.cfg.link_test_after_ack_timeout {
-                            if link.is_blocked() {
-                                // We do not test links that are blocked; however, to prevent them from
-                                // being disconnected due to the non-working timeout we regularly update
-                                // the unconfirmed timestamp.
-                                if since.elapsed() >= self.cfg.link_non_working_timeout / 2 {
-                                    tracing::trace!(
-                                        ?link_id, tag =% link.tag(),
-                                        "postponing test of link that is currently blocked"
-                                    );
-                                    since = Instant::now();
-                                    link.unconfirmed = Some((since, reason.clone()));
-                                }
-                                return Some(since + self.cfg.link_non_working_timeout / 2);
+                if let &Some((mut since, ref reason)) = &link.unconfirmed
+                    && link.tx_polling().is_none()
+                    && link.current_ping_sent.is_none()
+                    && !link.has_outstanding_ack()
+                {
+                    if *reason != NotWorkingReason::AckTimeout || self.cfg.link_test_after_ack_timeout {
+                        if link.is_blocked() {
+                            // We do not test links that are blocked; however, to prevent them from
+                            // being disconnected due to the non-working timeout we regularly update
+                            // the unconfirmed timestamp.
+                            if since.elapsed() >= self.cfg.link_non_working_timeout / 2 {
+                                tracing::trace!(
+                                    ?link_id, tag =% link.tag(),
+                                    "postponing test of link that is currently blocked"
+                                );
+                                since = Instant::now();
+                                link.unconfirmed = Some((since, reason.clone()));
                             }
-
-                            let test_data_limit = if self.cfg.link_max_ping.is_some() {
-                                self.cfg.link_unacked_init.get()
-                            } else {
-                                self.cfg.link_unacked_limit.get().min(self.cfg.send_buffer.get() as usize)
-                            }
-                            .min(self.cfg.link_test_data_limit);
-                            let test_data = link.send_test_data(self.cfg.io_write_size.get(), test_data_limit);
-                            link.send_ping = true;
-                            link.test = LinkTest::InProgress;
-                            tracing::debug!(
-                                ?link_id, tag =% link.tag(),
-                                "started test of link using {test_data} bytes of test data"
-                            );
-                        } else {
-                            tracing::debug!(
-                                ?link_id, tag =% link.tag(),
-                                "link recovered after {} ms with ping {} ms",
-                                since.elapsed().as_millis(), link.roundtrip.as_millis()
-                            );
-                            link.unconfirmed = None;
-
-                            self.idle_links.retain(|&idle_id| idle_id != id);
-                            link.report_ready();
+                            return Some(since + self.cfg.link_non_working_timeout / 2);
                         }
+
+                        let test_data_limit = if self.cfg.link_max_ping.is_some() {
+                            self.cfg.link_unacked_init.get()
+                        } else {
+                            self.cfg.link_unacked_limit.get().min(self.cfg.send_buffer.get() as usize)
+                        }
+                        .min(self.cfg.link_test_data_limit);
+                        let test_data = link.send_test_data(self.cfg.io_write_size.get(), test_data_limit);
+                        link.send_ping = true;
+                        link.test = LinkTest::InProgress;
+                        tracing::debug!(
+                            ?link_id, tag =% link.tag(),
+                            "started test of link using {test_data} bytes of test data"
+                        );
+                    } else {
+                        tracing::debug!(
+                            ?link_id, tag =% link.tag(),
+                            "link recovered after {} ms with ping {} ms",
+                            since.elapsed().as_millis(), link.roundtrip.as_millis()
+                        );
+                        link.unconfirmed = None;
+
+                        self.idle_links.retain(|&idle_id| idle_id != id);
+                        link.report_ready();
                     }
                 }
 
@@ -2029,7 +2029,7 @@ where
                 return Ok(true);
             }
             LinkMsg::Welcome { .. } | LinkMsg::Connect { .. } | LinkMsg::Accepted | LinkMsg::Refused { .. } => {
-                return Err(protocol_err!("received unexpected message"))
+                return Err(protocol_err!("received unexpected message"));
             }
         }
 

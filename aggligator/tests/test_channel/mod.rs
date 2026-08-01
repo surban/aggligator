@@ -2,24 +2,24 @@
 #![allow(dead_code)]
 
 use bytes::Bytes;
-use futures::{future, ready, Sink, SinkExt, Stream, StreamExt};
+use futures::{Sink, SinkExt, Stream, StreamExt, future, ready};
 use std::{
     io::{Error, ErrorKind},
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     task::{Context, Poll},
     time::Duration,
 };
-use tokio::sync::{mpsc, oneshot, Semaphore};
+use tokio::sync::{Semaphore, mpsc, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::{PollSemaphore, PollSender};
 
 use aggligator::{
     exec,
-    exec::time::{sleep, sleep_until, Instant},
+    exec::time::{Instant, sleep, sleep_until},
 };
 
 /// Test channel configuration.

@@ -3,18 +3,18 @@
 use crossterm::{
     cursor,
     cursor::{MoveTo, MoveToColumn, MoveToNextLine},
-    event::{poll, read, Event, KeyCode, KeyEvent},
+    event::{Event, KeyCode, KeyEvent, poll, read},
     execute, queue,
     style::{Print, Stylize},
     terminal,
-    terminal::{disable_raw_mode, enable_raw_mode, ClearType},
+    terminal::{ClearType, disable_raw_mode, enable_raw_mode},
 };
-use futures::{future, stream::FuturesUnordered, FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, future, stream::FuturesUnordered};
 use std::{
     collections::{HashMap, HashSet},
     fmt::{Display, Write},
     hash::Hash,
-    io::{stdout, Error},
+    io::{Error, stdout},
     time::Duration,
 };
 use tokio::sync::{broadcast, broadcast::error::TryRecvError, watch};
@@ -385,10 +385,10 @@ where
                 Event::Key(KeyEvent { code: KeyCode::Char(c), .. }) if c.is_ascii_digit() => {
                     let n = c.to_digit(10).unwrap();
                     if disabled_tags_tx.is_some() {
-                        if let Some(tag) = tags.and_then(|tags| tags.get(n as usize).cloned()) {
-                            if !disabled.remove(&tag) {
-                                disabled.insert(tag);
-                            }
+                        if let Some(tag) = tags.and_then(|tags| tags.get(n as usize).cloned())
+                            && !disabled.remove(&tag)
+                        {
+                            disabled.insert(tag);
                         }
                     } else {
                         toggle_link_block = Some(n as usize);
