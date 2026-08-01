@@ -425,7 +425,7 @@ where
     #[tracing::instrument(name = "aggligator::connection", level = "info", skip_all, 
                           fields(conn_id =? self.conn_id, dir =% self.direction), ret)]
     pub async fn run(mut self) -> Result<(), TaskError> {
-        tracing::debug!("link aggregator task starting");
+        tracing::debug!(cfg =? self.cfg, "link aggregator task starting");
         self.start_time = Instant::now();
 
         let mut stat_timers = stream::select_all(self.cfg.stats_intervals.iter().map(|t| interval_stream(*t)));

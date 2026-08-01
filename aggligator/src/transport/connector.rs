@@ -8,7 +8,7 @@ use futures::{
 };
 use std::{
     collections::HashSet,
-    fmt::{self, Debug},
+    fmt,
     future::IntoFuture,
     io::{Error, Result},
     iter,
@@ -18,12 +18,11 @@ use std::{
 use tokio::sync::{RwLock, broadcast, mpsc, oneshot, watch};
 use tracing::Instrument;
 
-use super::{BoxControl, BoxLink, BoxLinkError, BoxTask, LinkTag, LinkTagBox};
+use super::{BoxControl, BoxLink, BoxLinkError, BoxTask, LinkCfgFn, LinkTag, LinkTagBox};
 use crate::{
-    Cfg, Link, Outgoing, connect,
+    Cfg, Link, LinkCfg, Outgoing, connect,
     control::DisconnectReason,
-    exec,
-    exec::time::sleep,
+    exec::{self, time::sleep},
     io::{StreamBox, TxRxBox},
 };
 
@@ -84,20 +83,39 @@ struct TransportPack {
 }
 
 /// Builds a customized [`Connector`].
-#[derive(Debug)]
 pub struct ConnectorBuilder {
     task: BoxTask,
     outgoing: Outgoing,
     control: BoxControl,
     reconnect_delay: Duration,
     wrappers: Vec<BoxConnectingWrapper>,
+    link_cfg_fn: LinkCfgFn,
+}
+
+impl fmt::Debug for ConnectorBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("ConnectorBuilder")
+            .field("task", &self.task)
+            .field("outgoing", &self.outgoing)
+            .field("control", &self.control)
+            .field("reconnect_delay", &self.reconnect_delay)
+            .field("wrappers", &self.wrappers)
+            .finish_non_exhaustive()
+    }
 }
 
 impl ConnectorBuilder {
     /// Creates a new builder.
     pub fn new(cfg: Cfg) -> Self {
         let (task, outgoing, control) = connect(cfg);
-        Self { task, outgoing, control, reconnect_delay: Duration::from_secs(10), wrappers: Vec::new() }
+        Self {
+            task,
+            outgoing,
+            control,
+            reconnect_delay: Duration::from_secs(10),
+            wrappers: Vec::new(),
+            link_cfg_fn: Arc::new(|_, _| ()),
+        }
     }
 
     /// Accesses the connection manager task.
@@ -110,6 +128,14 @@ impl ConnectorBuilder {
         self.reconnect_delay = reconnect_delay
     }
 
+    /// Sets the link configuration function.
+    ///
+    /// This is called each time before a link is connected and may modify
+    /// the link-specific configuration.
+    pub fn set_link_cfg(&mut self, link_cfg_fn: impl Fn(&dyn LinkTag, &mut LinkCfg) + Send + Sync + 'static) {
+        self.link_cfg_fn = Arc::new(link_cfg_fn);
+    }
+
     /// Adds a connection wrapper to the wrapper stack.
     pub fn wrap(&mut self, wrapper: impl ConnectingWrapper) {
         self.wrappers.push(Box::new(wrapper))
@@ -117,7 +143,7 @@ impl ConnectorBuilder {
 
     /// Builds the connector.
     pub fn build(self) -> Connector {
-        let Self { mut task, outgoing, control, reconnect_delay, wrappers } = self;
+        let Self { mut task, outgoing, control, reconnect_delay, wrappers, link_cfg_fn } = self;
 
         // Configure link filter.
         let active_transports = Arc::new(RwLock::new(Vec::<Weak<dyn ConnectingTransport>>::new()));
@@ -156,6 +182,7 @@ impl ConnectorBuilder {
                 error_tx,
                 reconnect_delay,
                 wrappers,
+                link_cfg_fn,
             )
             .in_current_span(),
         );
@@ -260,7 +287,7 @@ impl Connector {
         control: BoxControl, active_transports: Arc<RwLock<Vec<Weak<dyn ConnectingTransport>>>>,
         mut transport_rx: mpsc::UnboundedReceiver<TransportPack>, tags_tx: watch::Sender<HashSet<LinkTagBox>>,
         disabled_tags_rx: watch::Receiver<HashSet<LinkTagBox>>, link_error_tx: broadcast::Sender<BoxLinkError>,
-        reconnect_delay: Duration, wrappers: Vec<BoxConnectingWrapper>,
+        reconnect_delay: Duration, wrappers: Vec<BoxConnectingWrapper>, link_cfg_fn: LinkCfgFn,
     ) {
         let wrappers = Arc::new(wrappers);
         let mut transport_tasks = FuturesUnordered::new();
@@ -331,6 +358,7 @@ impl Connector {
                         link_error_tx.clone(),
                         reconnect_delay,
                         wrappers.clone(),
+                        link_cfg_fn.clone(),
                     ));
                 }
                 ConnectorEvent::TagsChanged => (),
@@ -341,11 +369,12 @@ impl Connector {
 
     /// Task for handling a transport.
     #[tracing::instrument(name = "transport", level = "info", skip_all, fields(name = transport_pack.transport.name()))]
+    #[allow(clippy::too_many_arguments)]
     async fn transport_task(
         transport_pack: TransportPack, control: BoxControl, tags_fw_tx: watch::Sender<HashSet<LinkTagBox>>,
         mut disabled_tags_rx: watch::Receiver<HashSet<LinkTagBox>>,
         link_error_tx: broadcast::Sender<BoxLinkError>, reconnect_delay: Duration,
-        wrappers: Arc<Vec<BoxConnectingWrapper>>,
+        wrappers: Arc<Vec<BoxConnectingWrapper>>, link_cfg_fn: LinkCfgFn,
     ) {
         let TransportPack { transport, result_tx, remove_rx } = transport_pack;
         let mut remove_rx = remove_rx.fuse();
@@ -433,18 +462,20 @@ impl Connector {
                             }
                         }
 
+                        // Determine link configuration.
+                        let mut link_cfg = control.cfg().link.clone();
+                        tag.link_cfg(&mut link_cfg);
+                        link_cfg_fn(&*tag, &mut link_cfg);
+                        let link_io_packet_size = link_cfg.io_packet_size.get();
+                        let link_cfg = if link_cfg == control.cfg().link { None } else { Some(link_cfg) };
+
                         // Add link to aggregated connection.
-                        tracing::debug!(%tag, "adding link to connection");
-                        let link_cfg = tag.link_cfg();
-                        let link_io_packet_size = match &link_cfg {
-                            Some(link_cfg) => link_cfg.io_packet_size.get(),
-                            None => control.cfg().link.io_packet_size.get(),
-                        };
+                        tracing::debug!(%tag, ?link_cfg, "adding outgoing link to connection");
                         let TxRxBox { tx, rx } = stream_box.into_tx_rx_with_capacity(link_io_packet_size);
                         let link = match control.add(tx, rx, tag.clone(), &tag.user_data(), link_cfg).await {
                             Ok(link) => link,
                             Err(err) => {
-                                tracing::warn!(%tag, %err, "adding link to connection failed");
+                                tracing::warn!(%tag, %err, "adding outgoing link to connection failed");
                                 let err = Error::from(err);
                                 transport.link_disconnected(&*tag, Err(&err)).await;
                                 let _ = link_error_tx.send(BoxLinkError::outgoing(conn_id, &tag, err));
@@ -452,7 +483,7 @@ impl Connector {
                                 return (tag, None);
                             }
                         };
-                        tracing::info!(link_id =? link.id(), %tag, "link connected");
+                        tracing::info!(link_id =? link.id(), %tag, "outgoing link connected");
 
                         // Disconnect link when transport is removed.
                         struct DisconnectLink<'a>(&'a BoxLink);
@@ -466,7 +497,7 @@ impl Connector {
                         // Wait for disconnection and publish reason.
                         let sleep_until = sleep(reconnect_delay);
                         let reason = link.disconnected().await;
-                        tracing::info!(link_id =? link.id(), %tag, %reason, "link disconnected");
+                        tracing::info!(link_id =? link.id(), %tag, %reason, "outgoing link disconnected");
                         transport.link_disconnected(&*tag, Ok(reason.clone())).await;
                         let _ = link_error_tx.send(BoxLinkError::outgoing(conn_id, &tag, reason.clone().into()));
                         sleep_until.await;

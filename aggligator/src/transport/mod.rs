@@ -137,14 +137,12 @@ pub trait LinkTag: Debug + Display + Send + Sync + 'static {
     /// User data to send to the remote endpoint when connecting.
     fn user_data(&self) -> Vec<u8>;
 
-    /// Link-specific configuration to apply.
+    /// Allows the transport to apply link-specific configuration.
     ///
-    /// This is only applied to newly established links.
-    /// Changes are not propagated to already established links.
-    ///
-    /// If `None` (the default) the [global link configuration](crate::Cfg::link) is used.
-    fn link_cfg(&self) -> Option<LinkCfg> {
-        None
+    /// This is called before establishing a new link and may modify the
+    /// link-specific configuration.
+    fn link_cfg(&self, link_cfg: &mut LinkCfg) {
+        let _ = link_cfg;
     }
 
     /// Cast this type as [`Any`].
@@ -218,3 +216,6 @@ pub type BoxLink = Link<LinkTagBox>;
 
 /// Link error information for boxed link tag.
 pub type BoxLinkError = LinkError<LinkTagBox>;
+
+/// Link configuration function.
+type LinkCfgFn = Arc<dyn Fn(&dyn LinkTag, &mut LinkCfg) + Send + Sync>;

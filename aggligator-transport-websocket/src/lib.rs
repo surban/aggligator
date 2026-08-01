@@ -82,9 +82,9 @@ impl LinkTag for OutgoingWebSocketLinkTag {
         self.local.user_data()
     }
 
-    fn link_cfg(&self) -> Option<LinkCfg> {
+    fn link_cfg(&self, link_cfg: &mut LinkCfg) {
         // Web browser connections tend to lag.
-        Some(LinkCfg { ack_timeout_min: Duration::from_secs(3), ..Default::default() })
+        link_cfg.ack_timeout_min += Duration::from_secs(3);
     }
 
     fn as_any(&self) -> &dyn Any {

@@ -12,9 +12,11 @@ use std::{
 use tokio::sync::{Mutex, OwnedSemaphorePermit, RwLock, Semaphore, broadcast, mpsc, oneshot, watch};
 use tracing::Instrument;
 
-use super::{BoxControl, BoxLink, BoxLinkError, BoxListener, BoxServer, BoxTask, LinkError, LinkTag, LinkTagBox};
+use super::{
+    BoxControl, BoxLink, BoxLinkError, BoxListener, BoxServer, BoxTask, LinkCfgFn, LinkError, LinkTag, LinkTagBox,
+};
 use crate::{
-    Cfg, Server,
+    Cfg, LinkCfg, Server,
     alc::Channel,
     exec,
     exec::time::{Instant, sleep_until},
@@ -84,6 +86,17 @@ pub struct AcceptorBuilder {
     task_cfg: TaskCfgFn,
     wrappers: Vec<BoxAcceptingWrapper>,
     no_transport_timeout: Duration,
+    link_cfg_fn: LinkCfgFn,
+}
+
+impl fmt::Debug for AcceptorBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("AcceptorBuilder")
+            .field("server", &self.server)
+            .field("wrappers", &self.wrappers)
+            .field("no_transport_timeout", &self.no_transport_timeout)
+            .finish_non_exhaustive()
+    }
 }
 
 impl AcceptorBuilder {
@@ -91,7 +104,13 @@ impl AcceptorBuilder {
     pub fn new(cfg: Cfg) -> Self {
         let server = Server::new(cfg);
         let task_cfg: TaskCfgFn = Box::new(|_| ());
-        Self { server, task_cfg, wrappers: Vec::new(), no_transport_timeout: Duration::from_secs(30) }
+        Self {
+            server,
+            task_cfg,
+            wrappers: Vec::new(),
+            no_transport_timeout: Duration::from_secs(30),
+            link_cfg_fn: Arc::new(|_, _| ()),
+        }
     }
 
     /// Sets the function configuring the connection task of each incoming connection.
@@ -104,6 +123,14 @@ impl AcceptorBuilder {
         self.no_transport_timeout = no_transport_timeout;
     }
 
+    /// Sets the link configuration function.
+    ///
+    /// This is called each time before a link is accepted and may modify
+    /// the link-specific configuration.
+    pub fn set_link_cfg(&mut self, link_cfg_fn: impl Fn(&dyn LinkTag, &mut LinkCfg) + Send + Sync + 'static) {
+        self.link_cfg_fn = Arc::new(link_cfg_fn);
+    }
+
     /// Adds a connection wrapper to the wrapper stack.
     pub fn wrap(&mut self, wrapper: impl AcceptingWrapper) {
         self.wrappers.push(Box::new(wrapper))
@@ -111,7 +138,7 @@ impl AcceptorBuilder {
 
     /// Builds the acceptor.
     pub fn build(self) -> Acceptor {
-        let Self { server, task_cfg, wrappers, no_transport_timeout } = self;
+        let Self { server, task_cfg, wrappers, no_transport_timeout, link_cfg_fn } = self;
 
         let active_transports = Arc::new(RwLock::new(Vec::<Weak<dyn AcceptingTransport>>::new()));
         let (transport_tx, transport_rx) = mpsc::unbounded_channel();
@@ -127,6 +154,7 @@ impl AcceptorBuilder {
                 error_tx,
                 transports_present_tx,
                 wrappers,
+                link_cfg_fn,
             )
             .in_current_span(),
         );
@@ -292,7 +320,7 @@ impl Acceptor {
         server: BoxServer, active_transports: Arc<RwLock<Vec<Weak<dyn AcceptingTransport>>>>,
         mut transport_rx: mpsc::UnboundedReceiver<AcceptingTransportPack>,
         link_error_tx: broadcast::Sender<BoxLinkError>, transports_present_tx: watch::Sender<bool>,
-        wrappers: Vec<BoxAcceptingWrapper>,
+        wrappers: Vec<BoxAcceptingWrapper>, link_cfg_fn: LinkCfgFn,
     ) {
         let wrappers = Arc::new(wrappers);
         let mut transport_tasks = FuturesUnordered::new();
@@ -339,6 +367,7 @@ impl Acceptor {
                         transport_pack,
                         link_error_tx.clone(),
                         wrappers.clone(),
+                        link_cfg_fn.clone(),
                     ));
                 }
                 ListenerEvent::TaskEnded => (),
@@ -350,7 +379,7 @@ impl Acceptor {
     #[tracing::instrument(name = "transport", level = "info", skip_all, fields(name = transport.transport.name()))]
     async fn transport_task(
         server: BoxServer, transport: AcceptingTransportPack, link_error_tx: broadcast::Sender<BoxLinkError>,
-        wrappers: Arc<Vec<BoxAcceptingWrapper>>,
+        wrappers: Arc<Vec<BoxAcceptingWrapper>>, link_cfg_fn: LinkCfgFn,
     ) {
         let AcceptingTransportPack { transport, result_tx, remove_rx, _permit: _ } = transport;
         let mut remove_rx = remove_rx.fuse();
@@ -378,6 +407,7 @@ impl Acceptor {
             let wrappers = &*wrappers;
             let server = &server;
             let link_error_tx = &link_error_tx;
+            let link_cfg_fn = &link_cfg_fn;
             let task = async move {
                 // Apply wrappers to IO stream.
                 for wrapper in wrappers {
@@ -394,24 +424,26 @@ impl Acceptor {
                     }
                 }
 
+                // Determine link configuration.
+                let mut link_cfg = server.cfg().link.clone();
+                tag.link_cfg(&mut link_cfg);
+                link_cfg_fn(&*tag, &mut link_cfg);
+                let link_io_packet_size = link_cfg.io_packet_size.get();
+                let link_cfg = if link_cfg == server.cfg().link { None } else { Some(link_cfg) };
+
                 // Add link to aggregated connection.
-                tracing::debug!(%tag, "adding link to connection");
+                tracing::debug!(%tag, ?link_cfg, "adding incoming link to connection");
                 let user_data = tag.user_data();
-                let link_cfg = tag.link_cfg();
-                let link_io_packet_size = match &link_cfg {
-                    Some(link_cfg) => link_cfg.io_packet_size.get(),
-                    None => server.cfg().link.io_packet_size.get(),
-                };
                 let TxRxBox { tx, rx } = stream_box.into_tx_rx_with_capacity(link_io_packet_size);
                 let link = match server.add_incoming(tx, rx, tag.clone(), &user_data, link_cfg).await {
                     Ok(link) => link,
                     Err(err) => {
-                        tracing::warn!(%tag, %err, "adding link to connection failed");
+                        tracing::warn!(%tag, %err, "adding incoming link to connection failed");
                         let _ = link_error_tx.send(LinkError::incoming(&tag, err.into()));
                         return;
                     }
                 };
-                tracing::info!(link_id =? link.id(), %tag, conn_id =? link.conn_id(), "link connected");
+                tracing::info!(link_id =? link.id(), %tag, conn_id =? link.conn_id(), "incoming link connected");
 
                 // Disconnect link when transport is removed.
                 struct DisconnectLink<'a>(&'a BoxLink);
@@ -424,7 +456,7 @@ impl Acceptor {
 
                 // Wait for disconnection and publish reason.
                 let reason = link.disconnected().await;
-                tracing::info!(link_id =? link.id(), %tag, %reason, "link disconnected");
+                tracing::info!(link_id =? link.id(), %tag, %reason, "incoming link disconnected");
                 let _ = link_error_tx.send(BoxLinkError::incoming(&tag, reason.into()));
             };
             accepting_tasks.push(task);

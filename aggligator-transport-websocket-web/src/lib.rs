@@ -22,6 +22,7 @@ use std::{
     hash::{Hash, Hasher},
     io::{Error, ErrorKind, Result},
     sync::Arc,
+    time::Duration,
 };
 use threadporter::{ThreadBound, thread_bound};
 use tokio::sync::watch;
@@ -48,7 +49,7 @@ pub struct OutgoingWebSocketLinkTag {
 
 impl fmt::Display for OutgoingWebSocketLinkTag {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", &self.url)
+        write!(f, "{}", self.url)
     }
 }
 
@@ -65,9 +66,9 @@ impl LinkTag for OutgoingWebSocketLinkTag {
         "web".into()
     }
 
-    fn link_cfg(&self) -> Option<LinkCfg> {
+    fn link_cfg(&self, link_cfg: &mut LinkCfg) {
         // Web browser connections tend to lag.
-        Some(LinkCfg { ack_timeout_min: Duration::from_secs(3), ..Default::default() })
+        link_cfg.ack_timeout_min += Duration::from_secs(3);
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -106,7 +107,7 @@ impl fmt::Debug for WebSocketConnector {
 impl fmt::Display for WebSocketConnector {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let urls: Vec<_> = self.urls.iter().map(|url| url.to_string()).collect();
-        if self.urls.len() > 1 { write!(f, "[{}]", urls.join(", ")) } else { write!(f, "{}", &urls[0]) }
+        if self.urls.len() > 1 { write!(f, "[{}]", urls.join(", ")) } else { write!(f, "{}", urls[0]) }
     }
 }
 
