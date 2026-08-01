@@ -30,7 +30,7 @@ pub enum LinkPing {
 ///
 /// The parameters critical to performance are the buffer sizes, in particular
 /// [`send_buffer`](Self::send_buffer), [`recv_buffer`](Self::recv_buffer)
-/// and [`link_unacked_limit`](Self::link_unacked_limit).
+/// and [`LinkCfg::unacked_limit`].
 /// Thus, if the connection is under-performing, try increasing these limits.
 #[cfg_attr(feature = "dump", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "dump", serde(default))]
@@ -42,8 +42,8 @@ pub struct Cfg {
     /// Ignore explicit flush requests by [`Sender::flush`](crate::alc::Sender::flush)
     /// and the [sender sink](crate::alc::SenderSink).
     ///
-    /// Automatic flushing by [`link_flush_delay`](Self::link_flush_delay) and
-    /// [`link_flush_interval`](Self::link_flush_interval) is unaffected.
+    /// Automatic flushing by [`LinkCfg::flush_delay`] and [`LinkCfg::flush_interval`]
+    /// is unaffected.
     pub ignore_flush: bool,
     /// Maximum number of unacknowledged sent bytes.
     pub send_buffer: NonZeroU32,
@@ -53,46 +53,8 @@ pub struct Cfg {
     pub recv_buffer: NonZeroU32,
     /// Length of queue for received data packets.
     pub recv_queue: NonZeroUsize,
-    /// Minimum timeout waiting for a packet to be acknowledged.
-    pub link_ack_timeout_min: Duration,
-    /// Factor to calculate acknowledgement timeout from roundtrip time.
-    ///
-    /// Timeout is given by current roundtrip time (ping) of the link times this factor.
-    pub link_ack_timeout_roundtrip_factor: NonZeroU32,
-    /// Maximum timeout waiting for a packet to be acknowledged.
-    pub link_ack_timeout_max: Duration,
-    /// Start value for discovering the amount of sent unacknowledged data.
-    pub link_unacked_init: NonZeroUsize,
-    /// Maximum amount of sent unacknowledged data per link.
-    pub link_unacked_limit: NonZeroUsize,
-    /// Link pinging mode.
-    pub link_ping: LinkPing,
-    /// Timeout for waiting for ping response, which when exceeded leads to removal of the link.
-    pub link_ping_timeout: Duration,
-    /// Maximum ping for a link to be usable.
-    ///
-    /// A link is used anyways if all links have a ping higher than the specified value.
-    pub link_max_ping: Option<Duration>,
     /// Maximum factor by which highest ping may exceed lowest ping.
     pub link_max_ping_spread: Option<NonZeroU32>,
-    /// Maximum amount of data to send to test the functionality of a link before using it.
-    pub link_test_data_limit: usize,
-    /// Test a link after an acknowledgement timeout.
-    pub link_test_after_ack_timeout: bool,
-    /// Time to wait before link is tested again after a test has failed.
-    pub link_retest_interval: Duration,
-    /// Timeout after which a non-working link is disconnected.
-    pub link_non_working_timeout: Duration,
-    /// Delay before flushing a link when it has become idle.
-    pub link_flush_delay: Duration,
-    /// Interval for flushing non-idle links.
-    pub link_flush_interval: Option<Duration>,
-    /// Maximum age of unflushed acknowledgements.
-    pub link_ack_flush_interval: Option<Duration>,
-    /// Maximum amount of sent data on a link before triggering a flush.
-    pub link_unflushed_limit: Option<NonZeroUsize>,
-    /// Target packet size for [IO-stream-based links](crate::io).
-    pub link_io_packet_size: NonZeroUsize,
     /// Timeout after which connection is closed when no working links are present.
     pub no_link_timeout: Duration,
     /// Timeout after which connection is forcefully closed when sender and receiver are closed.
@@ -103,6 +65,9 @@ pub struct Cfg {
     pub disconnect_on_server_id_mismatch: bool,
     /// Link speed statistics interval durations.
     pub stats_intervals: Vec<Duration>,
+    /// Link-specific configuration. Can be overridden per link using
+    /// [`Link::set_link_cfg`](crate::Link::set_link_cfg).
+    pub link: LinkCfg,
     #[doc(hidden)]
     pub _non_exhaustive: (),
 }
@@ -117,24 +82,7 @@ impl Default for Cfg {
             send_queue: NonZeroUsize::new(16).unwrap(),
             recv_buffer: NonZeroU32::new(134_217_728).unwrap(),
             recv_queue: NonZeroUsize::new(16).unwrap(),
-            link_ack_timeout_min: Duration::from_secs(1),
-            link_ack_timeout_roundtrip_factor: NonZeroU32::new(3).unwrap(),
-            link_ack_timeout_max: Duration::from_secs(30),
-            link_unacked_init: NonZeroUsize::new(8192).unwrap(),
-            link_unacked_limit: NonZeroUsize::new(134_217_728).unwrap(),
-            link_ping: LinkPing::WhenIdle(Duration::from_secs(15)),
-            link_ping_timeout: Duration::from_secs(40),
-            link_max_ping: None,
             link_max_ping_spread: Some(NonZeroU32::new(5).unwrap()),
-            link_test_data_limit: 65_536,
-            link_test_after_ack_timeout: false,
-            link_retest_interval: Duration::from_secs(3),
-            link_non_working_timeout: Duration::from_secs(20),
-            link_flush_delay: Duration::from_millis(50),
-            link_flush_interval: None,
-            link_ack_flush_interval: Some(Duration::from_millis(50)),
-            link_unflushed_limit: Some(NonZeroUsize::new(131_072).unwrap()),
-            link_io_packet_size: NonZeroUsize::new(65_536).unwrap(),
             no_link_timeout: Duration::from_secs(120),
             termination_timeout: Duration::from_secs(300),
             connect_queue: NonZeroUsize::new(32).unwrap(),
@@ -145,6 +93,84 @@ impl Default for Cfg {
                 Duration::from_secs(5),
                 Duration::from_secs(10),
             ],
+            link: LinkCfg::default(),
+            _non_exhaustive: (),
+        }
+    }
+}
+
+/// Link-specific configuration.
+///
+/// For most use cases the default configuration, i.e. [`LinkCfg::default()`](Self::default),
+/// should be used.
+#[cfg_attr(feature = "dump", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "dump", serde(default))]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[allow(clippy::manual_non_exhaustive)]
+pub struct LinkCfg {
+    /// Target packet size for [IO-stream-based links](crate::io).
+    pub io_packet_size: NonZeroUsize,
+    /// Minimum timeout waiting for a packet to be acknowledged.
+    pub ack_timeout_min: Duration,
+    /// Factor to calculate acknowledgement timeout from roundtrip time.
+    ///
+    /// Timeout is given by current roundtrip time (ping) of the link times this factor.
+    pub ack_timeout_roundtrip_factor: NonZeroU32,
+    /// Maximum timeout waiting for a packet to be acknowledged.
+    pub ack_timeout_max: Duration,
+    /// Start value for discovering the amount of sent unacknowledged data.
+    pub unacked_init: NonZeroUsize,
+    /// Maximum amount of sent unacknowledged data per link.
+    pub unacked_limit: NonZeroUsize,
+    /// Link pinging mode.
+    pub ping: LinkPing,
+    /// Timeout for waiting for ping response, which when exceeded leads to removal of the link.
+    pub ping_timeout: Duration,
+    /// Maximum ping for a link to be usable.
+    ///
+    /// A link is used anyways if all links have a ping higher than the specified value.
+    pub max_ping: Option<Duration>,
+    /// Maximum amount of data to send to test the functionality of a link before using it.
+    pub test_data_limit: usize,
+    /// Test a link after an acknowledgement timeout.
+    pub test_after_ack_timeout: bool,
+    /// Time to wait before link is tested again after a test has failed.
+    pub retest_interval: Duration,
+    /// Timeout after which a non-working link is disconnected.
+    pub non_working_timeout: Duration,
+    /// Delay before flushing a link when it has become idle.
+    pub flush_delay: Duration,
+    /// Interval for flushing non-idle links.
+    pub flush_interval: Option<Duration>,
+    /// Maximum age of unflushed acknowledgements.
+    pub ack_flush_interval: Option<Duration>,
+    /// Maximum amount of sent data on a link before triggering a flush.
+    pub unflushed_limit: Option<NonZeroUsize>,
+    #[doc(hidden)]
+    pub _non_exhaustive: (),
+}
+
+impl Default for LinkCfg {
+    /// The default link-specific configuration.
+    fn default() -> Self {
+        Self {
+            io_packet_size: NonZeroUsize::new(65_536).unwrap(),
+            ack_timeout_min: Duration::from_secs(1),
+            ack_timeout_roundtrip_factor: NonZeroU32::new(3).unwrap(),
+            ack_timeout_max: Duration::from_secs(30),
+            unacked_init: NonZeroUsize::new(8192).unwrap(),
+            unacked_limit: NonZeroUsize::new(134_217_728).unwrap(),
+            ping: LinkPing::WhenIdle(Duration::from_secs(15)),
+            ping_timeout: Duration::from_secs(40),
+            max_ping: None,
+            test_data_limit: 65_536,
+            test_after_ack_timeout: false,
+            retest_interval: Duration::from_secs(3),
+            non_working_timeout: Duration::from_secs(20),
+            flush_delay: Duration::from_millis(50),
+            flush_interval: None,
+            ack_flush_interval: Some(Duration::from_millis(50)),
+            unflushed_limit: Some(NonZeroUsize::new(131_072).unwrap()),
             _non_exhaustive: (),
         }
     }

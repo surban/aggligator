@@ -26,7 +26,7 @@ use tokio::{
 use crate::{
     agg::link_int::{DisconnectInitiator, LinkInt, LinkIntEvent, LinkTest},
     alc::{RecvError, SendError},
-    cfg::{Cfg, ExchangedCfg, LinkPing},
+    cfg::{Cfg, ExchangedCfg, LinkCfg, LinkPing},
     control::{Direction, DisconnectReason, Link, NotWorkingReason, Stats},
     exec::time::{Instant, interval_stream, sleep_until, timeout},
     id::{ConnId, LinkId, OwnedConnId},
@@ -535,20 +535,22 @@ where
             };
 
             // Timeout for expecting ping reply.
-            let next_pong_timeout =
-                self.earliest_link_specific_timeout(self.cfg.link_ping_timeout, |link| link.current_ping_sent);
+            let next_pong_timeout = self
+                .earliest_link_specific_timeout(|link_cfg| link_cfg.ping_timeout, |link| link.current_ping_sent);
 
             // Timeout for removing an unconfirmed link.
-            let next_unconfirmed_timeout =
-                self.earliest_link_specific_timeout(self.cfg.link_non_working_timeout, |link| {
-                    link.unconfirmed.as_ref().and_then(|(since, reason)| {
+            let next_unconfirmed_timeout = self.earliest_link_specific_timeout(
+                |link_cfg| link_cfg.non_working_timeout,
+                |link| {
+                    link.unconfirmed().as_ref().and_then(|(since, reason)| {
                         (*reason != NotWorkingReason::MaxPingExceeded).then_some(*since)
                     })
-                });
+                },
+            );
 
             // Timeout for removing a link that takes too long to send data.
             let next_send_timeout =
-                self.earliest_link_specific_timeout(self.cfg.link_ping_timeout, |link| link.tx_polling());
+                self.earliest_link_specific_timeout(|link_cfg| link_cfg.ping_timeout, |link| link.tx_polling());
 
             // Timeout for next link testing step.
             let next_link_testing = (0..self.links.len()).filter_map(|id| self.link_testing_step(id)).min();
@@ -762,7 +764,7 @@ where
                         self.add_link(*link);
                     } else {
                         tracing::debug!(?link_id, %tag, "link was refused by link filter");
-                        let link_non_working_timeout = self.cfg.link_non_working_timeout;
+                        let link_non_working_timeout = link.link_cfg().non_working_timeout;
                         if link.needs_tx_accepted {
                             self.refused_links_tasks.push(
                                 async move {
@@ -833,7 +835,7 @@ where
                                 tracing::trace!(?link_id, tag =% link.tag(), "acking sequence {recved_seq} over non-idle link");
                                 self.idle_links.retain(|&idle_id| idle_id != id);
                                 link.start_send_msg(LinkMsg::Ack { received: recved_seq }, None);
-                            } else if link.unconfirmed.is_none() && !link.is_blocked() {
+                            } else if link.unconfirmed().is_none() && !link.is_blocked() {
                                 // This is a link that is believed to be working, so we can submit
                                 // reliable messages over it. Do so by priority.
                                 if is_consume_ack_required {
@@ -967,6 +969,12 @@ where
                             link.blocked_changed_out_tx.send_replace(());
                         }
 
+                        LinkIntEvent::LinkCfgChanged => {
+                            // Link configuration was changed.
+                            let link = self.links[id].as_mut().unwrap();
+                            link.update_link_cfg();
+                        }
+
                         LinkIntEvent::Disconnect => {
                             // Local request to disconnect link.
                             let link = self.links[id].as_mut().unwrap();
@@ -1026,7 +1034,7 @@ where
                         .enumerate()
                         .filter_map(|(id, link_opt)| {
                             link_opt.as_mut().and_then(|link| {
-                                if link.unconfirmed.is_none() {
+                                if link.unconfirmed().is_none() {
                                     link.start_flush();
                                     Some(id)
                                 } else {
@@ -1232,7 +1240,7 @@ where
     /// Adds a newly established link and returns its id.
     fn add_link(&mut self, mut link: LinkInt<TX, RX, TAG>) -> usize {
         link.report_ready();
-        link.unconfirmed = Some((Instant::now(), NotWorkingReason::New));
+        link.set_unconfirmed(Some((Instant::now(), NotWorkingReason::New)));
 
         for (id, link_opt) in self.links.iter_mut().enumerate() {
             if link_opt.is_none() {
@@ -1281,7 +1289,7 @@ where
         let links_working = self
             .links
             .iter()
-            .any(|link_opt| link_opt.as_ref().map(|link| link.unconfirmed.is_none()).unwrap_or_default());
+            .any(|link_opt| link_opt.as_ref().map(|link| link.unconfirmed().is_none()).unwrap_or_default());
 
         match (links_working, &self.links_not_working_since) {
             (true, Some(_)) => self.links_not_working_since = None,
@@ -1316,7 +1324,7 @@ where
             .iter()
             .filter_map(|link_opt| link_opt.as_ref())
             .filter(|link| {
-                link.unconfirmed.is_none()
+                link.unconfirmed().is_none()
                     && !link.is_blocked()
                     && link.roundtrip_estimates.is_some_and(|n| n >= RELIABLE_ROUNDTRIP_ESTIMATES)
             })
@@ -1337,24 +1345,24 @@ where
             .iter()
             .enumerate()
             .filter_map(|(id, link)| link.as_ref().map(|link| (id, link)))
-            .filter(|(_id, link)| link.unconfirmed.is_none())
+            .filter(|(_id, link)| link.unconfirmed().is_none())
             .collect();
 
         // Check for link ping exceeding configured limit.
-        if let Some(max_ping) = self.cfg.link_max_ping {
-            let all_links_slow =
-                confirmed_links.iter().all(|(_id, link)| link.is_blocked() || link.roundtrip > max_ping);
-
-            if !all_links_slow {
-                for (id, link) in &confirmed_links {
-                    if link.roundtrip > max_ping {
-                        tracing::debug!(
-                            link_id =? link.link_id(), tag =% link.tag(),
-                            "unconfirming link due to slow ping of {} ms",
-                            link.roundtrip.as_millis(),
-                        );
-                        to_unconfirm.push((*id, NotWorkingReason::MaxPingExceeded));
-                    }
+        let all_links_slow = confirmed_links.iter().all(|(_id, link)| {
+            link.is_blocked() || link.link_cfg().max_ping.is_none_or(|max_ping| link.roundtrip > max_ping)
+        });
+        if !all_links_slow {
+            for (id, link) in &confirmed_links {
+                if let Some(max_ping) = link.link_cfg().max_ping
+                    && link.roundtrip > max_ping
+                {
+                    tracing::debug!(
+                        link_id =? link.link_id(), tag =% link.tag(),
+                        "unconfirming link due to slow ping of {} ms",
+                        link.roundtrip.as_millis(),
+                    );
+                    to_unconfirm.push((*id, NotWorkingReason::MaxPingExceeded));
                 }
             }
         }
@@ -1435,55 +1443,44 @@ where
         }
 
         // Rearm send overrun handling if it is blocked for too long.
-        match self.tx_overrun_since {
-            Some(since) if since.elapsed() >= Duration::from_secs(1) => {
-                tracing::trace!("re-arming send overrun handling due to timeout");
-                self.tx_overrun = SendOverrun::Armed;
-                self.tx_overrun_since = None
-            }
-            _ => (),
+        if let Some(since) = self.tx_overrun_since
+            && since.elapsed() >= Duration::from_secs(1)
+        {
+            tracing::trace!("re-arming send overrun handling due to timeout");
+            self.tx_overrun = SendOverrun::Armed;
+            self.tx_overrun_since = None
         }
 
         // Decrease data limits of links that approach maximum ping.
-        let all_links_slow;
-        match self.cfg.link_max_ping {
-            Some(max_ping) => {
-                all_links_slow = self.links.iter().all(|link_opt| {
-                    link_opt
-                        .as_ref()
-                        .map(|link| {
-                            link.unconfirmed.is_some() || link.is_blocked() || link.roundtrip > max_ping / 2
-                        })
-                        .unwrap_or(true)
-                });
+        let all_links_slow = self.links.iter().all(|link_opt| {
+            link_opt.as_ref().is_none_or(|link| {
+                link.unconfirmed().is_some()
+                    || link.is_blocked()
+                    || link.link_cfg().max_ping.is_none_or(|max_ping| link.roundtrip > max_ping / 2)
+            })
+        });
+        if !all_links_slow {
+            for link_opt in &mut self.links {
+                if let Some(link) = link_opt
+                    && let Some(max_ping) = link.link_cfg().max_ping
+                    && link.unconfirmed().is_none()
+                    && link.txed_unacked_data_limit_increased.is_none()
+                    && link.roundtrip > max_ping * 3 / 4
+                {
+                    // Decrease limit.
+                    let current = link.txed_unacked_data.min(link.txed_unacked_data_limit);
+                    link.txed_unacked_data_limit = current * 95 / 100;
+                    tracing::trace!(
+                        link_id =? link.link_id(), tag =% link.tag(),
+                        "decreasing unacked limit of link to {} bytes due to ping",
+                        link.txed_unacked_data_limit
+                    );
 
-                if !all_links_slow {
-                    for link_opt in &mut self.links {
-                        match link_opt {
-                            Some(link)
-                                if link.unconfirmed.is_none()
-                                    && link.txed_unacked_data_limit_increased.is_none()
-                                    && link.roundtrip > max_ping * 3 / 4 =>
-                            {
-                                // Decrease limit.
-                                let current = link.txed_unacked_data.min(link.txed_unacked_data_limit);
-                                link.txed_unacked_data_limit = current * 95 / 100;
-                                tracing::trace!(
-                                    link_id =? link.link_id(), tag =% link.tag(),
-                                    "decreasing unacked limit of link to {} bytes due to ping",
-                                    link.txed_unacked_data_limit
-                                );
-
-                                // Block link from increasing its send data limit.
-                                link.txed_unacked_data_limit_increased = Some(coming_seq);
-                                link.txed_unacked_data_limit_increased_consecutively = 0;
-                            }
-                            _ => (),
-                        }
-                    }
+                    // Block link from increasing its send data limit.
+                    link.txed_unacked_data_limit_increased = Some(coming_seq);
+                    link.txed_unacked_data_limit_increased_consecutively = 0;
                 }
             }
-            None => all_links_slow = true,
         }
 
         // Determine minimum ping and calculate allowable ping spread.
@@ -1492,30 +1489,27 @@ where
         // Decrease limit of links with ping above allowable ping spread.
         if let Some(limit_ping) = limit_ping {
             for link_opt in &mut self.links {
-                match link_opt {
-                    Some(link)
-                        if link.unconfirmed.is_none()
-                            && !link.is_blocked()
-                            && link.roundtrip > limit_ping
-                            && link.roundtrip_estimates.is_some_and(|n| n >= RELIABLE_ROUNDTRIP_ESTIMATES) =>
-                    {
-                        // Decrease limit.
-                        let current = link.txed_unacked_data.min(link.txed_unacked_data_limit);
-                        link.txed_unacked_data_limit = current * 95 / 100;
-                        tracing::trace!(
-                            link_id =? link.link_id(), tag =% link.tag(),
-                            "decreasing unacked limit of link to {} bytes due to ping spread limit ({} ms, limit={} ms)",
-                            link.txed_unacked_data_limit,
-                            link.roundtrip.as_millis(),
-                            limit_ping.as_millis(),
-                        );
+                if let Some(link) = link_opt
+                    && link.unconfirmed().is_none()
+                    && !link.is_blocked()
+                    && link.roundtrip > limit_ping
+                    && link.roundtrip_estimates.is_some_and(|n| n >= RELIABLE_ROUNDTRIP_ESTIMATES)
+                {
+                    // Decrease limit.
+                    let current = link.txed_unacked_data.min(link.txed_unacked_data_limit);
+                    link.txed_unacked_data_limit = current * 95 / 100;
+                    tracing::trace!(
+                        link_id =? link.link_id(), tag =% link.tag(),
+                        "decreasing unacked limit of link to {} bytes due to ping spread limit ({} ms, limit={} ms)",
+                        link.txed_unacked_data_limit,
+                        link.roundtrip.as_millis(),
+                        limit_ping.as_millis(),
+                    );
 
-                        // Block link from increasing its send data limit.
-                        link.txed_unacked_data_limit_increased = Some(coming_seq);
-                        link.txed_unacked_data_limit_increased_consecutively = 0;
-                        link.roundtrip_estimates = None;
-                    }
-                    _ => (),
+                    // Block link from increasing its send data limit.
+                    link.txed_unacked_data_limit_increased = Some(coming_seq);
+                    link.txed_unacked_data_limit_increased_consecutively = 0;
+                    link.roundtrip_estimates = None;
                 }
             }
         }
@@ -1525,7 +1519,7 @@ where
             .links
             .iter()
             .filter(|link_opt| {
-                link_opt.as_ref().is_some_and(|link| link.unconfirmed.is_none() && !link.is_blocked())
+                link_opt.as_ref().is_some_and(|link| link.unconfirmed().is_none() && !link.is_blocked())
             })
             .count();
 
@@ -1535,7 +1529,7 @@ where
         let sendable_link_avail = self.links.iter().any(|link_opt| {
             link_opt.as_ref().is_some_and(|link| {
                 !link.tx_pending
-                    && link.unconfirmed.is_none()
+                    && link.unconfirmed().is_none()
                     && !link.is_blocked()
                     && link.txed_unacked_data < link.txed_unacked_data_limit
             })
@@ -1544,79 +1538,83 @@ where
         // Increase the unacked data limits of links that are currently blocked by it.
         if send_data_avail && !sendable_link_avail {
             for link_opt in &mut self.links {
-                match link_opt {
-                    Some(link)
-                        if !link.tx_pending
-                            && link.unconfirmed.is_none()
-                            && !link.is_blocked()
-                            && link.txed_unacked_data >= link.txed_unacked_data_limit
-                            && link.txed_unacked_data_limit_increased.is_none()
-                            && link.txed_unacked_data_limit < self.cfg.link_unacked_limit.get()
-                            && self
-                                .cfg
-                                .link_max_ping
-                                .is_none_or(|max_ping| link.roundtrip <= max_ping / 2 || all_links_slow)
-                            && good_ping.is_none_or(|good_ping| {
-                                link.roundtrip <= good_ping
-                                    && link.roundtrip_estimates.is_some_and(|n| n >= RELIABLE_ROUNDTRIP_ESTIMATES)
-                            }) =>
-                    {
-                        // Increase limit, faster if done many times consecutively.
-                        link.txed_unacked_data_limit = if working_link_count == 1 {
-                            link.txed_unacked_data_limit * 2
-                        } else if link.txed_unacked_data_limit_increased_consecutively >= 100 {
-                            link.txed_unacked_data_limit * 120 / 100
-                        } else if link.txed_unacked_data_limit_increased_consecutively >= 50 {
-                            link.txed_unacked_data_limit * 110 / 100
-                        } else if link.txed_unacked_data_limit_increased_consecutively >= 25 {
-                            link.txed_unacked_data_limit * 105 / 100
-                        } else if link.txed_unacked_data_limit_increased_consecutively >= 10 {
-                            link.txed_unacked_data_limit * 102 / 100
-                        } else {
-                            link.txed_unacked_data_limit * 101 / 100
-                        }
-                        .max(100);
-
-                        tracing::trace!(
-                            link_id =? link.link_id(), tag =% link.tag(),
-                            "increasing unacked limit of link to {} bytes (done {} times without overrun)",
-                            link.txed_unacked_data_limit,
-                            link.txed_unacked_data_limit_increased_consecutively
-                        );
-
-                        // Block link from increasing limit again until newly sent data is received.
-                        link.txed_unacked_data_limit_increased = Some(coming_seq);
-                        link.txed_unacked_data_limit_increased_consecutively =
-                            link.txed_unacked_data_limit_increased_consecutively.saturating_add(1);
-                        link.roundtrip_estimates = None;
+                if let Some(link) = link_opt
+                    && !link.tx_pending
+                    && link.unconfirmed().is_none()
+                    && !link.is_blocked()
+                    && link.txed_unacked_data >= link.txed_unacked_data_limit
+                    && link.txed_unacked_data_limit_increased.is_none()
+                    && link.txed_unacked_data_limit < link.link_cfg().unacked_limit.get()
+                    && link
+                        .link_cfg()
+                        .max_ping
+                        .is_none_or(|max_ping| link.roundtrip <= max_ping / 2 || all_links_slow)
+                    && good_ping.is_none_or(|good_ping| {
+                        link.roundtrip <= good_ping
+                            && link.roundtrip_estimates.is_some_and(|n| n >= RELIABLE_ROUNDTRIP_ESTIMATES)
+                    })
+                {
+                    // Increase limit, faster if done many times consecutively.
+                    link.txed_unacked_data_limit = if working_link_count == 1 {
+                        link.txed_unacked_data_limit * 2
+                    } else if link.txed_unacked_data_limit_increased_consecutively >= 100 {
+                        link.txed_unacked_data_limit * 120 / 100
+                    } else if link.txed_unacked_data_limit_increased_consecutively >= 50 {
+                        link.txed_unacked_data_limit * 110 / 100
+                    } else if link.txed_unacked_data_limit_increased_consecutively >= 25 {
+                        link.txed_unacked_data_limit * 105 / 100
+                    } else if link.txed_unacked_data_limit_increased_consecutively >= 10 {
+                        link.txed_unacked_data_limit * 102 / 100
+                    } else {
+                        link.txed_unacked_data_limit * 101 / 100
                     }
-                    _ => (),
+                    .max(100);
+
+                    tracing::trace!(
+                        link_id =? link.link_id(), tag =% link.tag(),
+                        "increasing unacked limit of link to {} bytes (done {} times without overrun)",
+                        link.txed_unacked_data_limit,
+                        link.txed_unacked_data_limit_increased_consecutively
+                    );
+
+                    // Block link from increasing limit again until newly sent data is received.
+                    link.txed_unacked_data_limit_increased = Some(coming_seq);
+                    link.txed_unacked_data_limit_increased_consecutively =
+                        link.txed_unacked_data_limit_increased_consecutively.saturating_add(1);
+                    link.roundtrip_estimates = None;
                 }
             }
         }
 
         // Reset consecutive increase count.
         if !low_level {
-            for link_opt in self.links.iter_mut() {
-                if let Some(link) = link_opt.as_mut() {
-                    link.txed_unacked_data_limit_increased_consecutively = 0;
-                }
+            for link in self.links.iter_mut().flatten() {
+                link.txed_unacked_data_limit_increased_consecutively = 0;
             }
         }
     }
 
     /// Computes the earliest link-specific timeout.
-    fn earliest_link_specific_timeout<F>(
-        &self, timeout: Duration, since_fn: F,
-    ) -> impl Future<Output = usize> + use<TX, RX, TAG, F>
+    fn earliest_link_specific_timeout<T, S>(
+        &self, timeout_fn: T, since_fn: S,
+    ) -> impl Future<Output = usize> + use<TX, RX, TAG, T, S>
     where
-        F: Fn(&LinkInt<TX, RX, TAG>) -> Option<Instant>,
+        T: Fn(&LinkCfg) -> Duration,
+        S: Fn(&LinkInt<TX, RX, TAG>) -> Option<Instant>,
     {
         let earliest_timeout = self
             .links
             .iter()
             .enumerate()
-            .filter_map(|(id, link_opt)| link_opt.as_ref().and_then(&since_fn).map(|sent| (id, sent + timeout)))
+            .filter_map(|(id, link_opt)| {
+                if let Some(link) = &link_opt
+                    && let Some(since) = since_fn(link)
+                {
+                    Some((id, since + timeout_fn(link.link_cfg())))
+                } else {
+                    None
+                }
+            })
             .min_by_key(|(_id, t)| *t);
 
         async move {
@@ -1642,8 +1640,8 @@ where
                 if link.roundtrip_estimates.unwrap_or_default() < RELIABLE_ROUNDTRIP_ESTIMATES {
                     dur_factor *= 3;
                 }
-                let dur = (link.roundtrip * self.cfg.link_ack_timeout_roundtrip_factor.get() * dur_factor)
-                    .clamp(self.cfg.link_ack_timeout_min, self.cfg.link_ack_timeout_max);
+                let dur = (link.roundtrip * link.link_cfg().ack_timeout_roundtrip_factor.get() * dur_factor)
+                    .clamp(link.link_cfg().ack_timeout_min, link.link_cfg().ack_timeout_max);
                 return Some((*link_id, definitely_sent + dur, flushed.is_some()));
             }
         }
@@ -1658,9 +1656,9 @@ where
             .enumerate()
             .filter_map(|(id, link_opt)| match &link_opt {
                 Some(link)
-                    if link.current_ping_sent.is_none() && !link.send_ping && link.unconfirmed.is_none() =>
+                    if link.current_ping_sent.is_none() && !link.send_ping && link.unconfirmed().is_none() =>
                 {
-                    match self.cfg.link_ping {
+                    match link.link_cfg().ping {
                         LinkPing::Periodic(interval) => {
                             Some((id, link.last_ping.map(|last| last + interval).unwrap_or_else(Instant::now)))
                         }
@@ -1771,7 +1769,7 @@ where
 
         // Mark link as unconfirmed.
         let link = self.links[id].as_mut().unwrap();
-        link.unconfirmed = Some((Instant::now(), reason));
+        link.set_unconfirmed(Some((Instant::now(), reason)));
         self.idle_links.retain(|&idle_id| idle_id != id);
         self.unflushed_links.remove(&id);
 
@@ -1812,26 +1810,20 @@ where
     /// Returns time when next testing step is due.
     fn link_testing_step(&mut self, id: usize) -> Option<Instant> {
         let (limit_ping, _good_ping) = self.ping_spread_limits().unzip();
-        let others_slow = match self.cfg.link_max_ping {
-            Some(max_ping) => self.links.iter().enumerate().all(|(link_id, link_opt)| {
-                link_opt
-                    .as_ref()
-                    .map(|link| {
-                        link_id == id
-                            || link.unconfirmed.is_some()
-                            || link.is_blocked()
-                            || link.roundtrip > max_ping
-                    })
-                    .unwrap_or(true)
-            }),
-            None => false,
-        };
+        let others_slow = self.links.iter().enumerate().all(|(link_id, link_opt)| {
+            link_opt.as_ref().is_none_or(|link| {
+                link_id == id
+                    || link.unconfirmed().is_some()
+                    || link.is_blocked()
+                    || link.link_cfg().max_ping.is_none_or(|max_ping| link.roundtrip > max_ping)
+            })
+        });
 
         let link = self.links[id].as_mut()?;
         let link_id = link.link_id();
 
         match link.test {
-            LinkTest::Failed(when) if when.elapsed() >= self.cfg.link_retest_interval => {
+            LinkTest::Failed(when) if when.elapsed() >= link.link_cfg().retest_interval => {
                 tracing::trace!(?link_id, tag =% link.tag(), "link {id} is ready for retry of test");
                 link.test = LinkTest::Inactive;
             }
@@ -1840,33 +1832,33 @@ where
 
         match link.test {
             LinkTest::Inactive => {
-                if let &Some((mut since, ref reason)) = &link.unconfirmed
+                if let &Some((mut since, ref reason)) = link.unconfirmed()
                     && link.tx_polling().is_none()
                     && link.current_ping_sent.is_none()
                     && !link.has_outstanding_ack()
                 {
-                    if *reason != NotWorkingReason::AckTimeout || self.cfg.link_test_after_ack_timeout {
+                    if *reason != NotWorkingReason::AckTimeout || link.link_cfg().test_after_ack_timeout {
                         if link.is_blocked() {
                             // We do not test links that are blocked; however, to prevent them from
                             // being disconnected due to the non-working timeout we regularly update
                             // the unconfirmed timestamp.
-                            if since.elapsed() >= self.cfg.link_non_working_timeout / 2 {
+                            if since.elapsed() >= link.link_cfg().non_working_timeout / 2 {
                                 tracing::trace!(
                                     ?link_id, tag =% link.tag(),
                                     "postponing test of link that is currently blocked"
                                 );
                                 since = Instant::now();
-                                link.unconfirmed = Some((since, reason.clone()));
+                                link.set_unconfirmed(Some((since, reason.clone())));
                             }
-                            return Some(since + self.cfg.link_non_working_timeout / 2);
+                            return Some(since + link.link_cfg().non_working_timeout / 2);
                         }
 
-                        let test_data_limit = if self.cfg.link_max_ping.is_some() {
-                            self.cfg.link_unacked_init.get()
+                        let test_data_limit = if link.link_cfg().max_ping.is_some() {
+                            link.link_cfg().unacked_init.get()
                         } else {
-                            self.cfg.link_unacked_limit.get().min(self.cfg.send_buffer.get() as usize)
+                            link.link_cfg().unacked_limit.get().min(self.cfg.send_buffer.get() as usize)
                         }
-                        .min(self.cfg.link_test_data_limit);
+                        .min(link.link_cfg().test_data_limit);
                         let test_data = link.send_test_data(self.cfg.io_write_size.get(), test_data_limit);
                         link.send_ping = true;
                         link.test = LinkTest::InProgress;
@@ -1880,7 +1872,7 @@ where
                             "link recovered after {} ms with ping {} ms",
                             since.elapsed().as_millis(), link.roundtrip.as_millis()
                         );
-                        link.unconfirmed = None;
+                        link.set_unconfirmed(None);
 
                         self.idle_links.retain(|&idle_id| idle_id != id);
                         link.report_ready();
@@ -1893,10 +1885,11 @@ where
             LinkTest::InProgress => {
                 if link.current_ping_sent.is_none() && !link.send_ping {
                     // Ping has completed.
-                    let mut limits = vec![self.cfg.link_ack_timeout_max / 2];
-                    match self.cfg.link_max_ping {
-                        Some(link_max_ping) if !others_slow => limits.push(link_max_ping),
-                        _ => (),
+                    let mut limits = vec![link.link_cfg().ack_timeout_max / 2];
+                    if let Some(link_max_ping) = link.link_cfg().max_ping
+                        && !others_slow
+                    {
+                        limits.push(link_max_ping);
                     }
                     if let Some(limit_ping) = limit_ping {
                         limits.push(limit_ping);
@@ -1910,7 +1903,7 @@ where
                             "link successfully completed test with ping {} ms",
                             link.roundtrip.as_millis()
                         );
-                        link.unconfirmed = None;
+                        link.set_unconfirmed(None);
                         link.test = LinkTest::Inactive;
 
                         self.idle_links.retain(|&idle_id| idle_id != id);
@@ -1926,18 +1919,19 @@ where
                         );
                         let when = Instant::now();
                         link.test = LinkTest::Failed(when);
-                        match &mut link.unconfirmed {
-                            Some((_since, reason)) => *reason = NotWorkingReason::MaxPingExceeded,
-                            None => link.unconfirmed = Some((Instant::now(), NotWorkingReason::MaxPingExceeded)),
-                        }
-                        Some(when + self.cfg.link_retest_interval)
+                        let since = match link.unconfirmed() {
+                            Some((since, _reason)) => *since,
+                            None => when,
+                        };
+                        link.set_unconfirmed(Some((since, NotWorkingReason::MaxPingExceeded)));
+                        Some(when + link.link_cfg().retest_interval)
                     }
                 } else {
                     None
                 }
             }
 
-            LinkTest::Failed(when) => Some(when + self.cfg.link_retest_interval),
+            LinkTest::Failed(when) => Some(when + link.link_cfg().retest_interval),
         }
     }
 

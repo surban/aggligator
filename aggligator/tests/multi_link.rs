@@ -14,7 +14,7 @@ use crate::test_data::send_and_verify;
 use aggligator::{
     TaskError,
     alc::{RecvError, SendError},
-    cfg::{Cfg, LinkPing},
+    cfg::{Cfg, LinkCfg, LinkPing},
     connect::{Server, connect},
     control::DisconnectReason,
     exec::{
@@ -64,7 +64,7 @@ async fn multi_link_test(
         let mut added_links = Vec::new();
         for (n, (rx, tx)) in server_links.into_iter().enumerate() {
             println!("server: adding incoming link {n}");
-            added_links.push(server.add_incoming(tx, rx, format!("{n}"), &[]).await.unwrap());
+            added_links.push(server.add_incoming(tx, rx, format!("{n}"), &[], None).await.unwrap());
         }
 
         println!("server: getting incoming connection");
@@ -236,7 +236,7 @@ async fn multi_link_test(
         let mut added_links_tasks = Vec::new();
         for (n, (rx, tx)) in client_links.into_iter().enumerate() {
             println!("client: adding outgoing link {n}");
-            added_links_tasks.push(control.add(tx, rx, format!("{n}"), &[]));
+            added_links_tasks.push(control.add(tx, rx, format!("{n}"), &[], None));
         }
         let added_links = future::try_join_all(added_links_tasks).await.unwrap();
 
@@ -428,9 +428,12 @@ async fn five_x_very_high_latency() {
         recv_buffer: NonZeroU32::new(20_000_000).unwrap(),
         send_queue: NonZeroUsize::new(50).unwrap(),
         recv_queue: NonZeroUsize::new(50).unwrap(),
-        link_ack_timeout_max: Duration::from_secs(15),
-        link_non_working_timeout: Duration::from_secs(30),
-        link_unacked_init: NonZeroUsize::new(10_000_000).unwrap(),
+        link: LinkCfg {
+            ack_timeout_max: Duration::from_secs(15),
+            non_working_timeout: Duration::from_secs(30),
+            unacked_init: NonZeroUsize::new(10_000_000).unwrap(),
+            ..Default::default()
+        },
         ..Default::default()
     };
 
@@ -493,7 +496,10 @@ async fn ten_x_paused_link() {
         link_descs.push(LinkDesc { pause: Some((n * 100, Duration::from_secs(3))), ..link_desc.clone() });
     }
 
-    let alc_cfg = Cfg { link_retest_interval: Duration::from_secs(2), ..Default::default() };
+    let alc_cfg = Cfg {
+        link: LinkCfg { retest_interval: Duration::from_secs(2), ..Default::default() },
+        ..Default::default()
+    };
 
     multi_link_test(&link_descs, alc_cfg, 16384, 10_000, 3_000_000, false, None).await;
 }
@@ -520,7 +526,7 @@ async fn ten_x_failed_link() {
     }
 
     let alc_cfg = Cfg {
-        link_retest_interval: Duration::from_secs(2),
+        link: LinkCfg { retest_interval: Duration::from_secs(2), ..Default::default() },
         no_link_timeout: Duration::from_secs(10),
         ..Default::default()
     };
@@ -552,7 +558,7 @@ async fn ten_x_all_failed_link() {
     }
 
     let alc_cfg = Cfg {
-        link_retest_interval: Duration::from_secs(2),
+        link: LinkCfg { retest_interval: Duration::from_secs(2), ..Default::default() },
         no_link_timeout: Duration::from_secs(5),
         ..Default::default()
     };
@@ -582,11 +588,14 @@ async fn ten_x_link_timeout() {
     }
 
     let alc_cfg = Cfg {
-        link_ping_timeout: Duration::from_secs(10),
-        link_non_working_timeout: Duration::from_secs(5),
-        link_retest_interval: Duration::from_secs(2),
+        link: LinkCfg {
+            ping_timeout: Duration::from_secs(10),
+            non_working_timeout: Duration::from_secs(5),
+            retest_interval: Duration::from_secs(2),
+            ping: LinkPing::WhenIdle(Duration::from_secs(1)),
+            ..Default::default()
+        },
         no_link_timeout: Duration::from_secs(10),
-        link_ping: LinkPing::WhenIdle(Duration::from_secs(1)),
         ..Default::default()
     };
 
@@ -614,9 +623,12 @@ async fn forceful_termination() {
         recv_buffer: NonZeroU32::new(20_000_000).unwrap(),
         send_queue: NonZeroUsize::new(50).unwrap(),
         recv_queue: NonZeroUsize::new(50).unwrap(),
-        link_ack_timeout_max: Duration::from_secs(15),
-        link_non_working_timeout: Duration::from_secs(30),
-        link_unacked_init: NonZeroUsize::new(10_000_000).unwrap(),
+        link: LinkCfg {
+            ack_timeout_max: Duration::from_secs(15),
+            non_working_timeout: Duration::from_secs(30),
+            unacked_init: NonZeroUsize::new(10_000_000).unwrap(),
+            ..Default::default()
+        },
         ..Default::default()
     };
 

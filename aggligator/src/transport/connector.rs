@@ -435,9 +435,13 @@ impl Connector {
 
                         // Add link to aggregated connection.
                         tracing::debug!(%tag, "adding link to connection");
-                        let TxRxBox { tx, rx } =
-                            stream_box.into_tx_rx_with_capacity(control.cfg().link_io_packet_size.get());
-                        let link = match control.add(tx, rx, tag.clone(), &tag.user_data()).await {
+                        let link_cfg = tag.link_cfg();
+                        let link_io_packet_size = match &link_cfg {
+                            Some(link_cfg) => link_cfg.io_packet_size.get(),
+                            None => control.cfg().link.io_packet_size.get(),
+                        };
+                        let TxRxBox { tx, rx } = stream_box.into_tx_rx_with_capacity(link_io_packet_size);
+                        let link = match control.add(tx, rx, tag.clone(), &tag.user_data(), link_cfg).await {
                             Ok(link) => link,
                             Err(err) => {
                                 tracing::warn!(%tag, %err, "adding link to connection failed");

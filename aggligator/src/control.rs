@@ -22,7 +22,7 @@ use x25519_dalek::{PublicKey, StaticSecret};
 use crate::{
     TaskError,
     agg::{link_int::LinkInt, task::FatalConnectError},
-    cfg::Cfg,
+    cfg::{Cfg, LinkCfg},
     exec::time::{Instant, error::Elapsed, timeout},
     id::{ConnId, EncryptedConnId, LinkId, ServerId},
     io::{IoRx, IoTx},
@@ -323,82 +323,89 @@ where
     /// It can be used to transfer link-specific information and queried using [`Link::remote_user_data`].
     /// Aggligator does not process the user data.
     ///
+    /// Use `link_cfg` to specify a link-specific link configuration.
+    /// If `None` the link configuration from [`Cfg::link`] is used.
+    ///
     /// Returns a handle to the link.
     ///
     /// # Panics
     /// Panics when the size of `user_data` exceeds [`u16::MAX`].
     pub async fn add(
-        &self, mut tx: TX, mut rx: RX, tag: TAG, user_data: &[u8],
+        &self, mut tx: TX, mut rx: RX, tag: TAG, user_data: &[u8], link_cfg: Option<LinkCfg>,
     ) -> Result<Link<TAG>, AddLinkError> {
         assert!(user_data.len() <= u16::MAX as usize, "user_data is too big");
 
+        let link_ping_timeout = match &link_cfg {
+            Some(link_cfg) => link_cfg.ping_timeout,
+            None => self.cfg.link.ping_timeout,
+        };
+
         // Perform protocol handshake.
-        let (remote_cfg, roundtrip, remote_user_data, was_connected) =
-            timeout(self.cfg.link_ping_timeout, async {
-                let random: [u8; 32] = rand::random();
-                let client_secret = StaticSecret::from(random);
-                let client_public_key = PublicKey::from(&client_secret);
+        let (remote_cfg, roundtrip, remote_user_data, was_connected) = timeout(link_ping_timeout, async {
+            let random: [u8; 32] = rand::random();
+            let client_secret = StaticSecret::from(random);
+            let client_public_key = PublicKey::from(&client_secret);
 
-                let LinkMsg::Welcome {
-                    extensions: _,
-                    public_key: server_public_key,
-                    server_id,
-                    cfg,
-                    user_data: remote_user_data,
-                } = LinkMsg::recv(&mut rx).await?
-                else {
-                    return Err::<_, AddLinkError>(protocol_err!("expected Welcome message").into());
-                };
+            let LinkMsg::Welcome {
+                extensions: _,
+                public_key: server_public_key,
+                server_id,
+                cfg,
+                user_data: remote_user_data,
+            } = LinkMsg::recv(&mut rx).await?
+            else {
+                return Err::<_, AddLinkError>(protocol_err!("expected Welcome message").into());
+            };
 
-                let shared_secret = client_secret.diffie_hellman(&server_public_key);
+            let shared_secret = client_secret.diffie_hellman(&server_public_key);
 
-                {
-                    let mut remote_server_id = self.remote_server_id.lock().await;
-                    match &*remote_server_id {
-                        Some(remote_server_id) if *remote_server_id != server_id => {
-                            if self.cfg.disconnect_on_server_id_mismatch {
-                                let _ = self.fatal_connect_error_tx.try_send(FatalConnectError::ServerIdMismatch);
-                            }
-                            return Err(AddLinkError::ServerIdMismatch {
-                                expected: *remote_server_id,
-                                present: server_id,
-                            });
+            {
+                let mut remote_server_id = self.remote_server_id.lock().await;
+                match &*remote_server_id {
+                    Some(remote_server_id) if *remote_server_id != server_id => {
+                        if self.cfg.disconnect_on_server_id_mismatch {
+                            let _ = self.fatal_connect_error_tx.try_send(FatalConnectError::ServerIdMismatch);
                         }
-                        Some(_) => (),
-                        None => {
-                            *remote_server_id = Some(server_id);
-                        }
+                        return Err(AddLinkError::ServerIdMismatch {
+                            expected: *remote_server_id,
+                            present: server_id,
+                        });
+                    }
+                    Some(_) => (),
+                    None => {
+                        *remote_server_id = Some(server_id);
                     }
                 }
+            }
 
-                let start = Instant::now();
-                LinkMsg::Connect {
-                    extensions: 0,
-                    public_key: client_public_key,
-                    server_id: self.server_id,
-                    connection_id: EncryptedConnId::new(self.conn_id, &shared_secret),
-                    existing_connection: self.connected.load(Ordering::Relaxed),
-                    user_data: user_data.to_vec(),
-                    cfg: (&*self.cfg).into(),
-                }
-                .send(&mut tx)
-                .await?;
+            let start = Instant::now();
+            LinkMsg::Connect {
+                extensions: 0,
+                public_key: client_public_key,
+                server_id: self.server_id,
+                connection_id: EncryptedConnId::new(self.conn_id, &shared_secret),
+                existing_connection: self.connected.load(Ordering::Relaxed),
+                user_data: user_data.to_vec(),
+                cfg: (&*self.cfg).into(),
+            }
+            .send(&mut tx)
+            .await?;
 
-                match LinkMsg::recv(&mut rx).await? {
-                    LinkMsg::Accepted => {
-                        let was_connected = self.connected.swap(true, Ordering::Relaxed);
-                        Ok((cfg, start.elapsed(), remote_user_data, was_connected))
-                    }
-                    LinkMsg::Refused { reason } => {
-                        if reason == RefusedReason::Closed {
-                            let _ = self.fatal_connect_error_tx.try_send(FatalConnectError::Closed);
-                        }
-                        Err(reason.into())
-                    }
-                    _ => Err(protocol_err!("expected Accepted or Refused message").into()),
+            match LinkMsg::recv(&mut rx).await? {
+                LinkMsg::Accepted => {
+                    let was_connected = self.connected.swap(true, Ordering::Relaxed);
+                    Ok((cfg, start.elapsed(), remote_user_data, was_connected))
                 }
-            })
-            .await??;
+                LinkMsg::Refused { reason } => {
+                    if reason == RefusedReason::Closed {
+                        let _ = self.fatal_connect_error_tx.try_send(FatalConnectError::Closed);
+                    }
+                    Err(reason.into())
+                }
+                _ => Err(protocol_err!("expected Accepted or Refused message").into()),
+            }
+        })
+        .await??;
 
         // Create link.
         let link_int = LinkInt::new(
@@ -408,6 +415,7 @@ where
             rx,
             self.cfg.clone(),
             remote_cfg,
+            link_cfg,
             Direction::Outgoing,
             roundtrip,
             remote_user_data,
@@ -445,14 +453,25 @@ where
     /// It can be used to transfer link-specific information and queried using [`Link::remote_user_data`].
     /// Aggligator does not process the user data.
     ///
+    /// Use `link_cfg` to specify a link-specific link configuration.
+    /// If `None` the link configuration from [`Cfg::link`] is used.
+    ///
     /// Returns a handle to the link.
     ///
     /// # Panics
     /// Panics when the size of `user_data` exceeds [`u16::MAX`].
-    pub async fn add_io(&self, read: R, write: W, tag: TAG, user_data: &[u8]) -> Result<Link<TAG>, AddLinkError> {
-        let tx = IoTx::with_capacity(write, self.cfg.link_io_packet_size.get());
-        let rx = IoRx::with_capacity(read, self.cfg.link_io_packet_size.get());
-        self.add(tx, rx, tag, user_data).await
+    pub async fn add_io(
+        &self, read: R, write: W, tag: TAG, user_data: &[u8], link_cfg: Option<LinkCfg>,
+    ) -> Result<Link<TAG>, AddLinkError> {
+        let link_io_packet_size = match &link_cfg {
+            Some(link_cfg) => link_cfg.io_packet_size.get(),
+            None => self.cfg.link.io_packet_size.get(),
+        };
+
+        let tx = IoTx::with_capacity(write, link_io_packet_size);
+        let rx = IoRx::with_capacity(read, link_io_packet_size);
+
+        self.add(tx, rx, tag, user_data, link_cfg).await
     }
 }
 
@@ -493,6 +512,7 @@ pub struct Link<TAG> {
     pub(crate) direction: Direction,
     pub(crate) tag: Arc<TAG>,
     pub(crate) cfg: Arc<Cfg>,
+    pub(crate) link_cfg_tx: watch::Sender<Option<LinkCfg>>,
     pub(crate) disconnected_rx: watch::Receiver<DisconnectReason>,
     pub(crate) disconnect_tx: mpsc::Sender<()>,
     pub(crate) stats_rx: watch::Receiver<LinkStats>,
@@ -512,6 +532,7 @@ impl<TAG> Clone for Link<TAG> {
             direction: self.direction,
             tag: self.tag.clone(),
             cfg: self.cfg.clone(),
+            link_cfg_tx: self.link_cfg_tx.clone(),
             disconnected_rx: self.disconnected_rx.clone(),
             disconnect_tx: self.disconnect_tx.clone(),
             stats_rx: self.stats_rx.clone(),
@@ -584,6 +605,20 @@ impl<TAG> Link<TAG> {
     /// The configuration of the connection.
     pub fn cfg(&self) -> &Cfg {
         &self.cfg
+    }
+
+    /// The link-specific configuration.
+    ///
+    /// If unset [`Cfg::link`] is used.
+    pub fn link_cfg(&self) -> Option<LinkCfg> {
+        self.link_cfg_tx.borrow().clone()
+    }
+
+    /// Sets the link-specific configuration.
+    ///
+    /// If unset [`Cfg::link`] is used.
+    pub fn set_link_cfg(&self, link_cfg: Option<LinkCfg>) {
+        self.link_cfg_tx.send_replace(link_cfg);
     }
 
     /// The user-defined tag of this link.

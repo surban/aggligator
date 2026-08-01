@@ -27,7 +27,7 @@ use x25519_dalek::{PublicKey, StaticSecret};
 use crate::{
     agg::{AggParts, link_int::LinkInt, task::Task},
     alc::Channel,
-    cfg::{Cfg, ExchangedCfg},
+    cfg::{Cfg, ExchangedCfg, LinkCfg},
     control::{Control, Direction, Link},
     exec::time::{Instant, error::Elapsed, timeout},
     id::{ConnId, OwnedConnId, ServerId},
@@ -248,7 +248,7 @@ where
         let send_refused = future::join_all(self.links.iter_mut().map(|link| async move {
             let _ = link.send_msg_and_flush(LinkMsg::Refused { reason: RefusedReason::ConnectionRefused }).await;
         }));
-        let _ = timeout(self.cfg.link_non_working_timeout, send_refused).await;
+        let _ = timeout(self.cfg.link.non_working_timeout, send_refused).await;
     }
 }
 
@@ -387,12 +387,15 @@ where
     /// It can be used to transfer link-specific information and queried using [`Link::remote_user_data`].
     /// Aggligator does not process the user data.
     ///
+    /// Use `link_cfg` to specify a link-specific link configuration.
+    /// If `None` the link configuration from [`Cfg::link`] is used.
+    ///
     /// Returns a handle to the link.
     ///
     /// # Panics
     /// Panics when the size of `user_data` exceeds [`u16::MAX`].
     pub async fn add_incoming(
-        &self, mut tx: TX, mut rx: RX, tag: TAG, user_data: &[u8],
+        &self, mut tx: TX, mut rx: RX, tag: TAG, user_data: &[u8], link_cfg: Option<LinkCfg>,
     ) -> Result<Link<TAG>, IncomingError> {
         assert!(user_data.len() <= u16::MAX as usize, "user_data is too big");
 
@@ -407,9 +410,14 @@ where
             closed_conns_tx = inner.closed_conns_tx.clone();
         }
 
+        let link_ping_timeout = match &link_cfg {
+            Some(link_cfg) => link_cfg.ping_timeout,
+            None => cfg.link.ping_timeout,
+        };
+
         // Perform protocol handshake.
         let (remote_server_id, conn_id, existing, remote_cfg, roundtrip, remote_user_data) =
-            timeout(cfg.link_ping_timeout, async {
+            timeout(link_ping_timeout, async {
                 let random: [u8; 32] = rand::random();
                 let server_secret = StaticSecret::from(random);
                 let server_public_key = PublicKey::from(&server_secret);
@@ -512,6 +520,7 @@ where
                         rx,
                         cfg,
                         remote_cfg,
+                        link_cfg,
                         Direction::Incoming,
                         roundtrip,
                         remote_user_data,
@@ -528,11 +537,8 @@ where
                 }
                 Err(_) => {
                     tracing::debug!(?conn_id, %tag, "refusing link that belongs to closed connection");
-                    timeout(
-                        cfg.link_ping_timeout,
-                        LinkMsg::Refused { reason: RefusedReason::Closed }.send(&mut tx),
-                    )
-                    .await??;
+                    timeout(link_ping_timeout, LinkMsg::Refused { reason: RefusedReason::Closed }.send(&mut tx))
+                        .await??;
                     Err(IncomingError::Closed)
                 }
             },
@@ -546,6 +552,7 @@ where
                     rx,
                     cfg.clone(),
                     remote_cfg,
+                    link_cfg,
                     Direction::Incoming,
                     roundtrip,
                     remote_user_data,
@@ -574,7 +581,7 @@ where
             // Link cannot be accepted.
             Connection::Refuse { reason, err } => {
                 tracing::debug!(?conn_id, %tag, ?reason, %err, "refusing link");
-                timeout(cfg.link_ping_timeout, LinkMsg::Refused { reason }.send(&mut tx)).await??;
+                timeout(link_ping_timeout, LinkMsg::Refused { reason }.send(&mut tx)).await??;
                 Err(err)
             }
         }
@@ -606,16 +613,25 @@ where
     /// It can be used to transfer link-specific information and queried using [`Link::remote_user_data`].
     /// Aggligator does not process the user data.
     ///
+    /// Use `link_cfg` to specify a link-specific link configuration.
+    /// If `None` the link configuration from [`Cfg::link`] is used.
+    ///
     /// Returns a handle to the link.
     ///
     /// # Panics
     /// Panics when the size of `user_data` exceeds [`u16::MAX`].
     pub async fn add_incoming_io(
-        &self, read: R, write: W, tag: TAG, user_data: &[u8],
+        &self, read: R, write: W, tag: TAG, user_data: &[u8], link_cfg: Option<LinkCfg>,
     ) -> Result<Link<TAG>, IncomingError> {
-        let tx = IoTx::with_capacity(write, self.cfg.link_io_packet_size.get());
-        let rx = IoRx::with_capacity(read, self.cfg.link_io_packet_size.get());
-        self.add_incoming(tx, rx, tag, user_data).await
+        let link_io_packet_size = match &link_cfg {
+            Some(link_cfg) => link_cfg.io_packet_size.get(),
+            None => self.cfg.link.io_packet_size.get(),
+        };
+
+        let tx = IoTx::with_capacity(write, link_io_packet_size);
+        let rx = IoRx::with_capacity(read, link_io_packet_size);
+
+        self.add_incoming(tx, rx, tag, user_data, link_cfg).await
     }
 }
 

@@ -72,6 +72,7 @@ use std::{
 
 use crate::{
     Control, Link, Listener, Server, Task,
+    cfg::LinkCfg,
     control::Direction,
     id::ConnId,
     io::{RxBox, TxBox},
@@ -135,6 +136,16 @@ pub trait LinkTag: Debug + Display + Send + Sync + 'static {
 
     /// User data to send to the remote endpoint when connecting.
     fn user_data(&self) -> Vec<u8>;
+
+    /// Link-specific configuration to apply.
+    ///
+    /// This is only applied to newly established links.
+    /// Changes are not propagated to already established links.
+    ///
+    /// If `None` (the default) the [global link configuration](crate::Cfg::link) is used.
+    fn link_cfg(&self) -> Option<LinkCfg> {
+        None
+    }
 
     /// Cast this type as [`Any`].
     fn as_any(&self) -> &dyn Any;

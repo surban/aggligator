@@ -13,7 +13,7 @@ use wasm_bindgen_test::wasm_bindgen_test;
 use crate::test_data::send_and_verify;
 use aggligator::{
     alc::{RecvError, SendError},
-    cfg::Cfg,
+    cfg::{Cfg, LinkCfg},
     connect::{Server, connect},
     exec,
     exec::time::timeout,
@@ -38,7 +38,7 @@ async fn single_link_test(
         let mut listener = server.listen().unwrap();
 
         println!("server: adding incoming link");
-        let link = server.add_incoming(link_b_tx, link_a_rx, "incoming", &[]).await.unwrap();
+        let link = server.add_incoming(link_b_tx, link_a_rx, "incoming", &[], None).await.unwrap();
 
         println!("server: getting incoming connection");
         let mut incoming = listener.next().await.unwrap();
@@ -141,7 +141,7 @@ async fn single_link_test(
         let task = exec::spawn(task.into_future());
 
         println!("client: adding outgoing link");
-        control.add(link_a_tx, link_b_rx, "outgoing", &[]).await.unwrap();
+        control.add(link_a_tx, link_b_rx, "outgoing", &[], None).await.unwrap();
 
         println!("client: waiting for link");
         timeout(Duration::from_secs(1), async {
@@ -286,8 +286,11 @@ async fn very_high_latency() {
         recv_buffer: NonZeroU32::new(20_000_000).unwrap(),
         send_queue: NonZeroUsize::new(50).unwrap(),
         recv_queue: NonZeroUsize::new(50).unwrap(),
-        link_unacked_init: NonZeroUsize::new(10_000_000).unwrap(),
-        link_ack_timeout_max: Duration::from_secs(10),
+        link: LinkCfg {
+            unacked_init: NonZeroUsize::new(10_000_000).unwrap(),
+            ack_timeout_max: Duration::from_secs(10),
+            ..Default::default()
+        },
         ..Default::default()
     };
 
@@ -339,7 +342,10 @@ async fn paused_link() {
         buffer_size: 100_000,
         ..Default::default()
     };
-    let alc_cfg = Cfg { link_retest_interval: Duration::from_secs(2), ..Default::default() };
+    let alc_cfg = Cfg {
+        link: LinkCfg { retest_interval: Duration::from_secs(2), ..Default::default() },
+        ..Default::default()
+    };
 
     single_link_test(ch_cfg, alc_cfg, 16384, 300, 0, Some((100, Duration::from_secs(3))), None).await;
 }
@@ -358,8 +364,11 @@ async fn timed_out_link() {
         recv_buffer: NonZeroU32::new(10_000).unwrap(),
         send_queue: NonZeroUsize::new(50).unwrap(),
         recv_queue: NonZeroUsize::new(50).unwrap(),
-        link_retest_interval: Duration::from_secs(2),
-        link_non_working_timeout: Duration::from_secs(5),
+        link: LinkCfg {
+            retest_interval: Duration::from_secs(2),
+            non_working_timeout: Duration::from_secs(5),
+            ..Default::default()
+        },
         no_link_timeout: Duration::from_secs(10),
         ..Default::default()
     };
@@ -381,8 +390,11 @@ async fn failed_link() {
         recv_buffer: NonZeroU32::new(10_000).unwrap(),
         send_queue: NonZeroUsize::new(50).unwrap(),
         recv_queue: NonZeroUsize::new(50).unwrap(),
-        link_retest_interval: Duration::from_secs(2),
-        link_non_working_timeout: Duration::from_secs(5),
+        link: LinkCfg {
+            retest_interval: Duration::from_secs(2),
+            non_working_timeout: Duration::from_secs(5),
+            ..Default::default()
+        },
         no_link_timeout: Duration::from_secs(10),
         ..Default::default()
     };

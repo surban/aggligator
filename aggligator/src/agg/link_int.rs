@@ -21,7 +21,7 @@ use tokio::{
 
 use crate::{
     agg::task::{SentReliable, SentReliableStatus},
-    cfg::{Cfg, ExchangedCfg},
+    cfg::{Cfg, ExchangedCfg, LinkCfg},
     control::{Direction, DisconnectReason, Link, LinkIntervalStats, LinkStats, NotWorkingReason},
     exec::time::{Instant, sleep_until},
     id::{ConnId, LinkId},
@@ -85,6 +85,8 @@ pub(crate) enum LinkIntEvent {
     Disconnect,
     /// Link blocked status has changed.
     BlockedChanged,
+    /// Link configuration changed.
+    LinkCfgChanged,
 }
 
 /// Link test status.
@@ -117,10 +119,16 @@ pub(crate) struct LinkInt<TX, RX, TAG> {
     link_id: LinkId,
     /// Direction of link.
     direction: Direction,
-    /// Configuration.
+    /// Connection configuration.
     cfg: Arc<Cfg>,
     /// Configuration of remote endpoint.
     remote_cfg: Arc<ExchangedCfg>,
+    /// Link-specific configuration.
+    link_cfg: Option<LinkCfg>,
+    /// Sender for updating link-specific configuration.
+    link_cfg_tx: watch::Sender<Option<LinkCfg>>,
+    /// Receiver for updating link-specific configuration.
+    link_cfg_rx: watch::Receiver<Option<LinkCfg>>,
     /// Whether the Accepeted message needs to be sent.
     pub(crate) needs_tx_accepted: bool,
     /// Transmit sink.
@@ -189,7 +197,7 @@ pub(crate) struct LinkInt<TX, RX, TAG> {
     pub(crate) remotely_blocked: Arc<AtomicBool>,
     /// Since when the link is unconfirmed, i.e. it has not been tested or message
     /// acknowledgement timed out.
-    pub(crate) unconfirmed: Option<(Instant, NotWorkingReason)>,
+    unconfirmed: Option<(Instant, NotWorkingReason)>,
     /// Channel for publishing `unconfirmed`.
     unconfirmed_tx: watch::Sender<Option<(Instant, NotWorkingReason)>>,
     /// Channel for publishing `unconfirmed`.
@@ -254,15 +262,21 @@ where
     /// Creates new internal link data.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        tag: TAG, conn_id: ConnId, tx: TX, rx: RX, cfg: Arc<Cfg>, remote_cfg: ExchangedCfg, direction: Direction,
-        roundtrip: Duration, remote_user_data: Vec<u8>,
+        tag: TAG, conn_id: ConnId, tx: TX, rx: RX, cfg: Arc<Cfg>, remote_cfg: ExchangedCfg,
+        link_cfg: Option<LinkCfg>, direction: Direction, roundtrip: Duration, remote_user_data: Vec<u8>,
     ) -> Self {
+        let (link_cfg_tx, link_cfg_rx) = watch::channel(link_cfg.clone());
         let (disconnected_tx, _) = watch::channel(DisconnectReason::TaskTerminated);
         let (disconnect_tx, disconnect_rx) = mpsc::channel(1);
         let (blocked_changed_tx, blocked_changed_rx) = mpsc::channel(2);
         let stats = LinkStatistican::new(&cfg.stats_intervals, roundtrip);
         let (unconfirmed_tx, unconfirmed_rx) = watch::channel(None);
         let (blocked_changed_out_tx, blocked_changed_out_rx) = watch::channel(());
+
+        let txed_unacked_data_limit = match &link_cfg {
+            Some(link_cfg) => link_cfg.unacked_init.get(),
+            None => cfg.link.unacked_init.get(),
+        };
 
         Self {
             tag: Arc::new(tag),
@@ -274,6 +288,10 @@ where
             tx_error: None,
             tx_failed: false,
             rx,
+            cfg,
+            link_cfg,
+            link_cfg_tx,
+            link_cfg_rx,
             remote_cfg: Arc::new(remote_cfg),
             needs_tx_accepted: direction == Direction::Incoming,
             disconnected_tx,
@@ -308,7 +326,7 @@ where
             roundtrip_estimates: Some(0),
             disconnecting: None,
             txed_unacked_data: 0,
-            txed_unacked_data_limit: cfg.link_unacked_init.get(),
+            txed_unacked_data_limit,
             txed_unacked_data_limit_increased: None,
             txed_unacked_data_limit_increased_consecutively: 45,
             txed_acks_unflushed: 0,
@@ -316,7 +334,6 @@ where
             tx_ack_queue: VecDeque::new(),
             tx_idle_since: None,
             tx_pending: false,
-            cfg,
             remote_user_data: Arc::new(remote_user_data),
         }
     }
@@ -324,6 +341,16 @@ where
     /// Link id.
     pub(crate) fn link_id(&self) -> LinkId {
         self.link_id
+    }
+
+    /// Link-specific configuration.
+    pub(crate) fn link_cfg(&self) -> &LinkCfg {
+        self.link_cfg.as_ref().unwrap_or(&self.cfg.link)
+    }
+
+    /// Update link-specific configuration.
+    pub(crate) fn update_link_cfg(&mut self) {
+        self.link_cfg = self.link_cfg_rx.borrow_and_update().clone();
     }
 
     /// Checks whether the sink has failed.
@@ -334,19 +361,15 @@ where
         }
     }
 
-    /// Returns the next event for this link.
-    pub(crate) async fn event(&mut self) -> LinkIntEvent {
-        let link_id = self.link_id();
-        let tag = &self.tag;
+    /// Since when the link is unconfirmed, i.e. it has not been tested or message
+    /// acknowledgement timed out.    
+    pub(crate) fn unconfirmed(&self) -> &Option<(Instant, NotWorkingReason)> {
+        &self.unconfirmed
+    }
 
-        if let Some(err) = self.tx_error.take() {
-            return LinkIntEvent::TxError(err);
-        }
-        if let Err(err) = self.check_tx_failed() {
-            return LinkIntEvent::TxError(err);
-        }
-
-        // Publish unconfirmed status.
+    /// Sets the unconfirmed state and publishes it.
+    pub(crate) fn set_unconfirmed(&mut self, unconfirmed: Option<(Instant, NotWorkingReason)>) {
+        self.unconfirmed = unconfirmed;
         self.unconfirmed_tx.send_if_modified(|m| {
             if *m != self.unconfirmed {
                 m.clone_from(&self.unconfirmed);
@@ -355,11 +378,50 @@ where
                 false
             }
         });
+    }
 
-        let txed_first_unflushed_data = self.txed_first_unflushed_data;
-        let tx_flushing = self.tx_flushing;
-        let txed_first_unflushed_ack = self.txed_first_unflushed_ack;
+    /// Returns the next event for this link.
+    pub(crate) async fn event(&mut self) -> LinkIntEvent {
+        let link_id = self.link_id();
+        let tag = &self.tag;
 
+        // Check for errors.
+        if let Some(err) = self.tx_error.take() {
+            return LinkIntEvent::TxError(err);
+        }
+        if let Err(err) = self.check_tx_failed() {
+            return LinkIntEvent::TxError(err);
+        }
+
+        // Flush request task.
+        let flush_req_task = {
+            let mut deadline = Deadline::new();
+
+            match self.txed_first_unflushed_data {
+                Some(tx_first_sent) if !self.tx_flushing => {
+                    if let Some(idle_since) = self.tx_idle_since {
+                        deadline.require("link data idle flush", idle_since + self.link_cfg().flush_delay);
+                    }
+                    if let Some(link_flush_interval) = self.link_cfg().flush_interval {
+                        deadline.require("link data flush interval", tx_first_sent + link_flush_interval);
+                    }
+                }
+                _ => (),
+            }
+
+            if let (Some(txed_first_unflushed_ack), Some(link_ack_flush_interval)) =
+                (self.txed_first_unflushed_ack, self.link_cfg().ack_flush_interval)
+            {
+                deadline.require("link ack flush interval", txed_first_unflushed_ack + link_ack_flush_interval);
+            }
+
+            async move {
+                let reason = deadline.wait().await;
+                tracing::trace!(?link_id, %tag, "deadline for {reason} elapsed");
+            }
+        };
+
+        // Transmit task.
         let tx_task = async {
             loop {
                 if self.tx_polling.is_none() {
@@ -410,6 +472,7 @@ where
             }
         };
 
+        // Receive task.
         let rx_task = async {
             loop {
                 match self.rx.next().await {
@@ -454,37 +517,13 @@ where
             }
         };
 
-        let flush_req_task = async {
-            let mut deadline = Deadline::new();
-
-            match txed_first_unflushed_data {
-                Some(tx_first_sent) if !tx_flushing => {
-                    if let Some(idle_since) = self.tx_idle_since {
-                        deadline.require("link data idle flush", idle_since + self.cfg.link_flush_delay);
-                    }
-                    if let Some(link_flush_interval) = self.cfg.link_flush_interval {
-                        deadline.require("link data flush interval", tx_first_sent + link_flush_interval);
-                    }
-                }
-                _ => (),
-            }
-
-            if let (Some(txed_first_unflushed_ack), Some(link_ack_flush_interval)) =
-                (txed_first_unflushed_ack, self.cfg.link_ack_flush_interval)
-            {
-                deadline.require("link ack flush interval", txed_first_unflushed_ack + link_ack_flush_interval);
-            }
-
-            let reason = deadline.wait().await;
-            tracing::trace!(?link_id, %tag, "deadline for {reason} elapsed");
-        };
-
         select! {
             tx_event = tx_task => tx_event,
             rx_event = rx_task => rx_event,
             () = flush_req_task => LinkIntEvent::FlushRequired,
             Some(()) = self.blocked_changed_rx.recv() => LinkIntEvent::BlockedChanged,
             Some(()) = self.disconnect_rx.recv() => LinkIntEvent::Disconnect,
+            Ok(()) = self.link_cfg_rx.changed() => LinkIntEvent::LinkCfgChanged,
         }
     }
 
@@ -554,7 +593,7 @@ where
             _ => (),
         }
 
-        if let Some(link_unflushed_limit) = self.cfg.link_unflushed_limit
+        if let Some(link_unflushed_limit) = self.link_cfg().unflushed_limit
             && self.txed_unflushed >= link_unflushed_limit.get()
         {
             self.start_flush();
@@ -790,6 +829,7 @@ impl<TX, RX, TAG> From<&LinkInt<TX, RX, TAG>> for Link<TAG> {
             direction: link_int.direction,
             tag: link_int.tag.clone(),
             cfg: link_int.cfg.clone(),
+            link_cfg_tx: link_int.link_cfg_tx.clone(),
             disconnected_rx: link_int.disconnected_tx.subscribe(),
             disconnect_tx: link_int.disconnect_tx.clone(),
             stats_rx: link_int.stats.subscribe(),
