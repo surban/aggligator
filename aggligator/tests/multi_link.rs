@@ -411,6 +411,19 @@ async fn five_x_unlimited_current_thread() {
 
 #[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "multi_thread")))]
 #[cfg_attr(feature = "js", wasm_bindgen_test)]
+async fn five_x_without_link_test() {
+    let link_desc = LinkDesc {
+        cfg: test_channel::Cfg { speed: 0, latency: None, ..Default::default() },
+        ..Default::default()
+    };
+    let link_descs: Vec<_> = std::iter::repeat_n(link_desc, 5).collect();
+    let alc_cfg = Cfg { link: LinkCfg { test_data_limit: 0, ..Default::default() }, ..Default::default() };
+
+    multi_link_test(&link_descs, alc_cfg, 16384, 10000, 10_000_000, false, None).await;
+}
+
+#[cfg_attr(not(feature = "js"), test_log::test(tokio::test(flavor = "multi_thread")))]
+#[cfg_attr(feature = "js", wasm_bindgen_test)]
 async fn five_x_very_high_latency() {
     let link_desc = LinkDesc {
         cfg: test_channel::Cfg {

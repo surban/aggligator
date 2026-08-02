@@ -1240,7 +1240,14 @@ where
     /// Adds a newly established link and returns its id.
     fn add_link(&mut self, mut link: LinkInt<TX, RX, TAG>) -> usize {
         link.report_ready();
-        link.set_unconfirmed(Some((Instant::now(), NotWorkingReason::New)));
+
+        if link.link_cfg().test_data_limit > 0 {
+            link.set_unconfirmed(Some((Instant::now(), NotWorkingReason::New)));
+        } else {
+            // Without test data the handshake has already proven that the link works and
+            // provided a roundtrip time, thus a confirmation ping would be redundant.
+            link.last_ping = Some(Instant::now());
+        }
 
         for (id, link_opt) in self.links.iter_mut().enumerate() {
             if link_opt.is_none() {

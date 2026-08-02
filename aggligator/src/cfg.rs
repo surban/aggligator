@@ -131,6 +131,9 @@ pub struct LinkCfg {
     /// A link is used anyways if all links have a ping higher than the specified value.
     pub max_ping: Option<Duration>,
     /// Maximum amount of data to send to test the functionality of a link before using it.
+    ///
+    /// If zero, no test data is sent and a newly established link is used immediately,
+    /// relying on the roundtrip time measured during the handshake.
     pub test_data_limit: usize,
     /// Test a link after an acknowledgement timeout.
     pub test_after_ack_timeout: bool,
