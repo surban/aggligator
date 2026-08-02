@@ -32,7 +32,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    net::{TcpListener, TcpSocket},
+    net::{TcpListener, TcpSocket, TcpStream},
     sync::{Notify, mpsc, watch},
     time::{Instant, sleep},
 };
@@ -48,6 +48,9 @@ pub mod simple;
 pub mod util;
 
 static NAME: &str = "tcp";
+
+/// Backlog of pending connections per listening socket.
+const LISTEN_BACKLOG: u32 = 64;
 
 /// IP protocol version.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -201,6 +204,8 @@ pub struct TcpConnector {
     link_filter: TcpLinkFilter,
     multi_interface: bool,
     interface_filter: Arc<dyn Fn(&NetworkInterface) -> bool + Send + Sync>,
+    socket_setup: Arc<dyn Fn(&TcpSocket, &TcpLinkTag) -> Result<()> + Send + Sync>,
+    stream_setup: Arc<dyn Fn(&TcpStream, &TcpLinkTag) -> Result<()> + Send + Sync>,
     link_disconnected: Arc<Notify>,
 }
 
@@ -275,6 +280,8 @@ impl TcpConnector {
             link_filter: TcpLinkFilter::default(),
             multi_interface: !cfg!(target_os = "android"),
             interface_filter: Arc::new(|_| true),
+            socket_setup: Arc::new(|_, _| Ok(())),
+            stream_setup: Arc::new(|_, _| Ok(())),
             link_disconnected: Arc::new(Notify::new()),
         })
     }
@@ -319,6 +326,30 @@ impl TcpConnector {
         &mut self, interface_filter: impl Fn(&NetworkInterface) -> bool + Send + Sync + 'static,
     ) {
         self.interface_filter = Arc::new(interface_filter);
+    }
+
+    /// Sets a function for configuring each socket before connecting.
+    ///
+    /// Use this for options that must be set before the connection is established,
+    /// for example socket buffer sizes.
+    ///
+    /// If the function returns an error, establishing that link fails.
+    pub fn set_socket_setup(
+        &mut self, socket_setup: impl Fn(&TcpSocket, &TcpLinkTag) -> Result<()> + Send + Sync + 'static,
+    ) {
+        self.socket_setup = Arc::new(socket_setup);
+    }
+
+    /// Sets a function for configuring each stream after the connection has been established.
+    ///
+    /// Use this for options such as TCP keepalive. `TCP_NODELAY` is enabled before
+    /// the function is called and may be overridden by it.
+    ///
+    /// If the function returns an error, establishing that link fails.
+    pub fn set_stream_setup(
+        &mut self, stream_setup: impl Fn(&TcpStream, &TcpLinkTag) -> Result<()> + Send + Sync + 'static,
+    ) {
+        self.stream_setup = Arc::new(stream_setup);
     }
 
     /// Resolve target to socket addresses.
@@ -399,8 +430,11 @@ impl ConnectingTransport for TcpConnector {
             util::bind_socket_to_interface(&socket, interface, tag.remote.ip())?;
         }
 
+        (self.socket_setup)(&socket, tag)?;
+
         let stream = socket.connect(tag.remote).await?;
         let _ = stream.set_nodelay(true);
+        (self.stream_setup)(&stream, tag)?;
 
         if let Local::Address(req_addr) = &tag.local {
             let local_addr = stream.local_addr()?.ip().to_canonical();
@@ -465,9 +499,15 @@ impl ConnectingTransport for TcpConnector {
 /// TCP transport for incoming connections.
 ///
 /// This transport is IO-stream based.
-#[derive(Debug)]
 pub struct TcpAcceptor {
     listeners: Vec<TcpListener>,
+    stream_setup: Arc<dyn Fn(&TcpStream, &TcpLinkTag) -> Result<()> + Send + Sync>,
+}
+
+impl fmt::Debug for TcpAcceptor {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("TcpAcceptor").field("listeners", &self.listeners).finish()
+    }
 }
 
 impl fmt::Display for TcpAcceptor {
@@ -497,8 +537,13 @@ impl TcpAcceptor {
                     socket
                 }
             };
+
+            // Not set on Windows, where it would allow other processes to hijack the port.
+            #[cfg(not(windows))]
+            let _ = socket.set_reuseaddr(true);
+
             socket.bind(addr)?;
-            listeners.push(socket.listen(16)?);
+            listeners.push(socket.listen(LISTEN_BACKLOG)?);
         }
 
         Self::from_listeners(listeners)
@@ -512,7 +557,7 @@ impl TcpAcceptor {
             return Err(Error::new(ErrorKind::InvalidInput, "at least one listener is required"));
         }
 
-        Ok(Self { listeners: listeners.into_iter().collect() })
+        Ok(Self { listeners: listeners.into_iter().collect(), stream_setup: Arc::new(|_, _| Ok(())) })
     }
 
     /// Create a new TCP transport for incoming connections, listening individually on all interfaces.
@@ -561,6 +606,10 @@ impl TcpAcceptor {
             let _ = SockRef::from(&socket).set_only_v6(false);
         }
 
+        // Not set on Windows, where it would allow other processes to hijack the port.
+        #[cfg(not(windows))]
+        let _ = socket.set_reuseaddr(true);
+
         socket.bind(addr)?;
 
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
@@ -568,7 +617,19 @@ impl TcpAcceptor {
 
         tracing::debug!(%addr, interface =% interface.name, "listening");
 
-        socket.listen(8)
+        socket.listen(LISTEN_BACKLOG)
+    }
+
+    /// Sets a function for configuring each stream after the connection has been accepted.
+    ///
+    /// Use this for options such as TCP keepalive. `TCP_NODELAY` is enabled before
+    /// the function is called and may be overridden by it.
+    ///
+    /// If the function returns an error, the connection is rejected.
+    pub fn set_stream_setup(
+        &mut self, stream_setup: impl Fn(&TcpStream, &TcpLinkTag) -> Result<()> + Send + Sync + 'static,
+    ) {
+        self.stream_setup = Arc::new(stream_setup);
     }
 }
 
@@ -604,6 +665,11 @@ impl AcceptingTransport for TcpAcceptor {
 
             // Configure socket.
             let _ = socket.set_nodelay(true);
+            if let Err(err) = (self.stream_setup)(&socket, &tag) {
+                tracing::warn!(%remote, %err, "Configuring incoming connection failed, rejecting.");
+                continue;
+            }
+
             let (rh, wh) = socket.into_split();
 
             let _ = tx.send(AcceptedStreamBox::new(IoBox::new(rh, wh).into(), tag)).await;

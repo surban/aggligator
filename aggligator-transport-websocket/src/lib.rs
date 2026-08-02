@@ -31,7 +31,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    net::TcpSocket,
+    net::{TcpSocket, TcpStream},
     sync::{Mutex, Notify, mpsc, watch},
     time::{Instant, sleep},
 };
@@ -117,6 +117,8 @@ pub struct WebSocketConnector {
     web_socket_config: Option<WebSocketConfig>,
     multi_interface: bool,
     interface_filter: Arc<dyn Fn(&NetworkInterface) -> bool + Send + Sync>,
+    socket_setup: Arc<dyn Fn(&TcpSocket, &OutgoingWebSocketLinkTag) -> Result<()> + Send + Sync>,
+    stream_setup: Arc<dyn Fn(&TcpStream, &OutgoingWebSocketLinkTag) -> Result<()> + Send + Sync>,
     link_disconnected: Arc<Notify>,
 }
 
@@ -193,6 +195,8 @@ impl WebSocketConnector {
             web_socket_config: None,
             multi_interface: !cfg!(target_os = "android"),
             interface_filter: Arc::new(|_| true),
+            socket_setup: Arc::new(|_, _| Ok(())),
+            stream_setup: Arc::new(|_, _| Ok(())),
             link_disconnected: Arc::new(Notify::new()),
         })
     }
@@ -244,6 +248,33 @@ impl WebSocketConnector {
         &mut self, interface_filter: impl Fn(&NetworkInterface) -> bool + Send + Sync + 'static,
     ) {
         self.interface_filter = Arc::new(interface_filter);
+    }
+
+    /// Sets a function for configuring each TCP socket before connecting.
+    ///
+    /// Use this for options that must be set before the connection is established,
+    /// for example socket buffer sizes.
+    ///
+    /// If the function returns an error, establishing that link fails.
+    pub fn set_socket_setup(
+        &mut self,
+        socket_setup: impl Fn(&TcpSocket, &OutgoingWebSocketLinkTag) -> Result<()> + Send + Sync + 'static,
+    ) {
+        self.socket_setup = Arc::new(socket_setup);
+    }
+
+    /// Sets a function for configuring each TCP stream after the connection has been
+    /// established, but before the WebSocket handshake is performed.
+    ///
+    /// Use this for options such as TCP keepalive. `TCP_NODELAY` is enabled before
+    /// the function is called and may be overridden by it.
+    ///
+    /// If the function returns an error, establishing that link fails.
+    pub fn set_stream_setup(
+        &mut self,
+        stream_setup: impl Fn(&TcpStream, &OutgoingWebSocketLinkTag) -> Result<()> + Send + Sync + 'static,
+    ) {
+        self.stream_setup = Arc::new(stream_setup);
     }
 
     /// Resolve URLs to socket addresses.
@@ -346,8 +377,11 @@ impl ConnectingTransport for WebSocketConnector {
             util::bind_socket_to_interface(&socket, interface, tag.remote.ip())?;
         }
 
+        (self.socket_setup)(&socket, tag)?;
+
         let stream = socket.connect(tag.remote).await?;
         let _ = stream.set_nodelay(true);
+        (self.stream_setup)(&stream, tag)?;
 
         if let Local::Address(req_addr) = &tag.local {
             let local_addr = stream.local_addr()?.ip().to_canonical();
