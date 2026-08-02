@@ -1570,8 +1570,7 @@ where
                             .unacked_increase
                             .iter()
                             .filter(|step| {
-                                link.txed_unacked_data_limit_increased_consecutively
-                                    >= step.consecutive as usize
+                                link.txed_unacked_data_limit_increased_consecutively >= step.consecutive as usize
                             })
                             .max_by_key(|step| step.consecutive)
                             .copied();
@@ -1648,12 +1647,17 @@ where
         for p in &self.txed_packets {
             if let SentReliableStatus::Sent { link_id, sent, flushed, resent, .. } = &*p.status.borrow() {
                 let link = self.links[*link_id].as_ref().unwrap();
-                let definitely_sent = flushed.unwrap_or(*sent);
-                let mut dur_factor = if *resent { 3 } else { 1 };
-                if link.roundtrip_estimates.unwrap_or_default() < RELIABLE_ROUNDTRIP_ESTIMATES {
-                    dur_factor *= 3;
+
+                let mut fac = 1;
+                if *resent {
+                    fac *= link.link_cfg().ack_timeout_resent_factor.get()
                 }
-                let dur = (link.roundtrip * link.link_cfg().ack_timeout_roundtrip_factor.get() * dur_factor)
+                if link.roundtrip_estimates.unwrap_or_default() < RELIABLE_ROUNDTRIP_ESTIMATES {
+                    fac *= link.link_cfg().ack_timeout_unreliable_factor.get();
+                }
+
+                let definitely_sent = flushed.unwrap_or(*sent);
+                let dur = (link.roundtrip * link.link_cfg().ack_timeout_roundtrip_factor.get() * fac)
                     .clamp(link.link_cfg().ack_timeout_min, link.link_cfg().ack_timeout_max);
                 return Some((*link_id, definitely_sent + dur, flushed.is_some()));
             }

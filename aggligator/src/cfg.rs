@@ -128,6 +128,14 @@ pub struct LinkCfg {
     ///
     /// Timeout is given by current roundtrip time (ping) of the link times this factor.
     pub ack_timeout_roundtrip_factor: NonZeroU32,
+    /// Additional factor applied to the acknowledgement timeout of a packet that has
+    /// already been resent over another link.
+    ///
+    /// This avoids a packet cascading over all links in quick succession.
+    pub ack_timeout_resent_factor: NonZeroU32,
+    /// Additional factor applied to the acknowledgement timeout while the roundtrip time
+    /// of the link has not been measured often enough to be considered reliable.
+    pub ack_timeout_unreliable_factor: NonZeroU32,
     /// Maximum timeout waiting for a packet to be acknowledged.
     pub ack_timeout_max: Duration,
     /// Start value for discovering the amount of sent unacknowledged data.
@@ -185,6 +193,8 @@ impl Default for LinkCfg {
             io_packet_size: NonZeroUsize::new(65_536).unwrap(),
             ack_timeout_min: Duration::from_secs(1),
             ack_timeout_roundtrip_factor: NonZeroU32::new(3).unwrap(),
+            ack_timeout_resent_factor: NonZeroU32::new(3).unwrap(),
+            ack_timeout_unreliable_factor: NonZeroU32::new(3).unwrap(),
             ack_timeout_max: Duration::from_secs(30),
             unacked_init: NonZeroUsize::new(8192).unwrap(),
             unacked_limit: NonZeroUsize::new(134_217_728).unwrap(),
