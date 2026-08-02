@@ -1562,20 +1562,26 @@ where
                     })
                 {
                     // Increase limit, faster if done many times consecutively.
-                    link.txed_unacked_data_limit = if working_link_count == 1 {
-                        link.txed_unacked_data_limit * 2
-                    } else if link.txed_unacked_data_limit_increased_consecutively >= 100 {
-                        link.txed_unacked_data_limit * 120 / 100
-                    } else if link.txed_unacked_data_limit_increased_consecutively >= 50 {
-                        link.txed_unacked_data_limit * 110 / 100
-                    } else if link.txed_unacked_data_limit_increased_consecutively >= 25 {
-                        link.txed_unacked_data_limit * 105 / 100
-                    } else if link.txed_unacked_data_limit_increased_consecutively >= 10 {
-                        link.txed_unacked_data_limit * 102 / 100
+                    let percent = if working_link_count == 1 {
+                        link.link_cfg().unacked_increase_single_link
                     } else {
-                        link.txed_unacked_data_limit * 101 / 100
-                    }
-                    .max(100);
+                        let step = link
+                            .link_cfg()
+                            .unacked_increase
+                            .iter()
+                            .filter(|step| {
+                                link.txed_unacked_data_limit_increased_consecutively
+                                    >= step.consecutive as usize
+                            })
+                            .max_by_key(|step| step.consecutive)
+                            .copied();
+                        match step {
+                            Some(step) => step.percent,
+                            None => continue,
+                        }
+                    };
+                    link.txed_unacked_data_limit =
+                        (link.txed_unacked_data_limit * percent as usize / 100).max(100);
 
                     tracing::trace!(
                         link_id =? link.link_id(), tag =% link.tag(),

@@ -22,6 +22,18 @@ pub enum LinkPing {
     WhenTimedOut,
 }
 
+/// Step of the schedule for increasing the limit of sent unacknowledged data of a link.
+#[cfg_attr(feature = "dump", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct UnackedIncrease {
+    /// Minimum number of consecutive increases without buffer overrun for this step to apply.
+    pub consecutive: u32,
+    /// Percentage of the current limit the new limit is set to.
+    ///
+    /// Must be greater than 100 for the limit to actually increase.
+    pub percent: u32,
+}
+
 /// Configuration of a connection consisting of aggregated links.
 ///
 /// For most use cases the default configuration, i.e. [`Cfg::default()`](Self::default),
@@ -122,6 +134,19 @@ pub struct LinkCfg {
     pub unacked_init: NonZeroUsize,
     /// Maximum amount of sent unacknowledged data per link.
     pub unacked_limit: NonZeroUsize,
+    /// Schedule for increasing the limit of sent unacknowledged data of a link.
+    ///
+    /// Whenever a link is blocked by its limit and no other link is available for sending,
+    /// the limit is increased. The step with the highest number of matching consecutive
+    /// increases is applied; if no step matches, the limit is not increased.
+    ///
+    /// This does not apply when only one link is working; see
+    /// [`unacked_increase_single_link`](Self::unacked_increase_single_link).
+    pub unacked_increase: Vec<UnackedIncrease>,
+    /// Percentage of the current limit the new limit is set to when only one link is working.
+    ///
+    /// Must be greater than 100 for the limit to actually increase.
+    pub unacked_increase_single_link: u32,
     /// Link pinging mode.
     pub ping: LinkPing,
     /// Timeout for waiting for ping response, which when exceeded leads to removal of the link.
@@ -163,6 +188,14 @@ impl Default for LinkCfg {
             ack_timeout_max: Duration::from_secs(30),
             unacked_init: NonZeroUsize::new(8192).unwrap(),
             unacked_limit: NonZeroUsize::new(134_217_728).unwrap(),
+            unacked_increase: vec![
+                UnackedIncrease { consecutive: 0, percent: 101 },
+                UnackedIncrease { consecutive: 10, percent: 102 },
+                UnackedIncrease { consecutive: 25, percent: 105 },
+                UnackedIncrease { consecutive: 50, percent: 110 },
+                UnackedIncrease { consecutive: 100, percent: 120 },
+            ],
+            unacked_increase_single_link: 200,
             ping: LinkPing::WhenIdle(Duration::from_secs(15)),
             ping_timeout: Duration::from_secs(40),
             max_ping: None,
