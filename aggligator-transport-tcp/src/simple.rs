@@ -39,14 +39,14 @@ use crate::{TcpAcceptor, TcpConnector};
 ///
 /// #[tokio::main]
 /// async fn main() -> std::io::Result<()> {
-///     let stream = tcp_connect(["server".to_string()], 5900).await?;
+///     let stream = tcp_connect(["server"], 5900).await?;
 ///
 ///     // use the connection
 ///
 ///     Ok(())
 /// }
 /// ```
-pub async fn tcp_connect(target: impl IntoIterator<Item = String>, default_port: u16) -> Result<Stream> {
+pub async fn tcp_connect(target: impl IntoIterator<Item = impl AsRef<str>>, default_port: u16) -> Result<Stream> {
     let mut connector = Connector::new();
     connector.add(TcpConnector::new(target, default_port).await?);
     let ch = connector.channel().unwrap().await?;
@@ -153,7 +153,7 @@ mod tls {
     ///     );
     ///
     ///     let stream = tls_connect(
-    ///         [server_name.to_string()],
+    ///         [server_name],
     ///         5901,
     ///         tls_cfg,
     ///         ServerName::try_from(server_name).unwrap(),
@@ -165,7 +165,7 @@ mod tls {
     /// }
     /// ```
     pub async fn tls_connect(
-        target: impl IntoIterator<Item = String>, default_port: u16, tls_client_cfg: Arc<ClientConfig>,
+        target: impl IntoIterator<Item = impl AsRef<str>>, default_port: u16, tls_client_cfg: Arc<ClientConfig>,
         server_name: ServerName<'static>,
     ) -> Result<Stream> {
         let mut connector = Connector::wrapped(TlsClient::new(tls_client_cfg, server_name));

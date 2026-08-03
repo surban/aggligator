@@ -241,7 +241,7 @@ impl TcpConnector {
     ///
     /// Host name resolution is retried periodically, thus DNS updates will be taken
     /// into account without the need to recreate this transport.
-    pub async fn new(hosts: impl IntoIterator<Item = String>, default_port: u16) -> Result<Self> {
+    pub async fn new(hosts: impl IntoIterator<Item = impl AsRef<str>>, default_port: u16) -> Result<Self> {
         let this = Self::unresolved(hosts, default_port).await?;
 
         let addrs = this.resolve().await;
@@ -260,8 +260,8 @@ impl TcpConnector {
     ///
     /// Host name resolution is retried periodically, thus DNS updates will be taken
     /// into account without the need to recreate this transport.
-    pub async fn unresolved(hosts: impl IntoIterator<Item = String>, default_port: u16) -> Result<Self> {
-        let mut hosts: Vec<_> = hosts.into_iter().collect();
+    pub async fn unresolved(hosts: impl IntoIterator<Item = impl AsRef<str>>, default_port: u16) -> Result<Self> {
+        let mut hosts: Vec<String> = hosts.into_iter().map(|host| host.as_ref().to_string()).collect();
 
         if hosts.is_empty() {
             return Err(Error::new(ErrorKind::InvalidInput, "at least one host is required"));

@@ -20,7 +20,7 @@
 //! #[tokio::main]
 //! async fn main() -> std::io::Result<()> {
 //!     let mut connector = Connector::new();
-//!     connector.add(TcpConnector::new(["server".to_string()], 5900).await?);
+//!     connector.add(TcpConnector::new(["server"], 5900).await?);
 //!     let ch = connector.channel().unwrap().await?;
 //!     let stream = ch.into_stream();
 //!
