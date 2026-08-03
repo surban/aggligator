@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "aggligator"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "async-trait",
  "atomic_refcell",
@@ -113,7 +113,7 @@ dependencies = [
 
 [[package]]
 name = "aggligator-util"
-version = "0.19.0"
+version = "0.19.1"
 dependencies = [
  "aggligator",
  "aggligator-monitor",
