@@ -312,8 +312,6 @@ pub struct Task<TX, RX, TAG> {
     rxed_reliable_size: usize,
     /// Size of that that has been consumed since last acknowledgement.
     rxed_reliable_consumed_since_last_ack: usize,
-    /// Forces acking consumed data.
-    rxed_reliable_consumed_force_ack: bool,
     /// Ids of links that are currently being flushed by user request.
     unflushed_links: HashSet<usize>,
     /// Channel for sending notification when flushing completed.
@@ -400,7 +398,6 @@ where
             txed_unconsumable: 0,
             txed_last_consumed: Seq::MINUS_ONE,
             rxed_reliable_size: 0,
-            rxed_reliable_consumed_force_ack: false,
             unflushed_links: HashSet::new(),
             flushed_tx: None,
             start_time: Instant::now(),
@@ -847,7 +844,6 @@ where
                                     self.idle_links.retain(|&idle_id| idle_id != id);
                                     self.send_reliable_over_link(id, ReliableMsg::Consumed(consumed));
                                     self.rxed_reliable_consumed_since_last_ack = 0;
-                                    self.rxed_reliable_consumed_force_ack = false;
                                 } else if resending
                                     && link.is_sendable()
                                     && Some(link.link_id()) != non_resendable_link
@@ -1007,7 +1003,6 @@ where
                     );
                     self.send_reliable_over_link(id, ReliableMsg::Consumed(consumed));
                     self.rxed_reliable_consumed_since_last_ack = 0;
-                    self.rxed_reliable_consumed_force_ack = false;
                 }
 
                 TaskEvent::WriteEnd => {
@@ -1108,7 +1103,6 @@ where
                             self.read_error_tx.send_replace(None);
                             self.read_tx = None;
                             self.receive_finish_sent = true;
-                            self.rxed_reliable_consumed_force_ack = true;
                         }
                         // Handled in handle_received_reliable_msg.
                         ReliableMsg::ReceiveClose | ReliableMsg::ReceiveFinish | ReliableMsg::Consumed(_) => {
@@ -1981,6 +1975,7 @@ where
                 link.send_pong = true;
                 self.flush_link(id);
             }
+
             LinkMsg::Pong => {
                 if let Some(current_ping_sent) = link.current_ping_sent.take() {
                     let elapsed = current_ping_sent.elapsed();
@@ -1991,6 +1986,7 @@ where
                     self.link_testing_step(id);
                 }
             }
+
             msg @ (LinkMsg::Data { .. }
             | LinkMsg::Consumed { .. }
             | LinkMsg::SendFinish { .. }
@@ -2000,13 +1996,16 @@ where
                 tracing::trace!(?link_id, %tag, "received reliable message {seq}: {reliable_msg:?}");
                 self.handle_received_reliable_msg(id, seq, reliable_msg)?;
             }
+
             LinkMsg::Ack { received } => {
                 tracing::trace!(?link_id, %tag, "link acked reception up to {received}");
                 self.handle_ack(id, received);
             }
+
             LinkMsg::TestData { size } => {
                 tracing::trace!(?link_id, %tag, "link received {size} bytes of test data");
             }
+
             LinkMsg::SetBlock { blocked } => {
                 tracing::debug!(?link_id, %tag, %blocked, "remote block status of link changed");
                 link.remotely_blocked.store(blocked, Ordering::Relaxed);
@@ -2014,6 +2013,7 @@ where
                 link.report_ready();
                 link.blocked_changed_out_tx.send_replace(());
             }
+
             LinkMsg::Goodbye => {
                 match link.disconnecting {
                     Some(DisconnectInitiator::Local) => {
@@ -2035,10 +2035,12 @@ where
                     }
                 }
             }
+
             LinkMsg::Terminate => {
                 tracing::trace!(?link_id, %tag, "link recevied forceful connection termination request");
                 return Ok(true);
             }
+
             LinkMsg::Welcome { .. } | LinkMsg::Connect { .. } | LinkMsg::Accepted | LinkMsg::Refused { .. } => {
                 return Err(protocol_err!("received unexpected message"));
             }
@@ -2097,13 +2099,11 @@ where
                     ReliableMsg::ReceiveClose => {
                         self.write_error_tx.send_replace(SendError::Closed);
                         self.write_closed.store(true, Ordering::Relaxed);
-                        self.rxed_reliable_consumed_force_ack = true;
                     }
                     ReliableMsg::ReceiveFinish => {
                         self.write_error_tx.send_replace(SendError::Dropped);
                         self.write_rx = None;
                         self.send_finish_sent = true;
-                        self.rxed_reliable_consumed_force_ack = true;
                     }
                 }
 
@@ -2132,8 +2132,11 @@ where
 
     /// Returns whether sending a Consumed message is required.
     fn is_consume_ack_required(&self) -> bool {
-        self.rxed_reliable_consumed_since_last_ack > self.cfg.recv_buffer.get() as usize / 10
-            || self.rxed_reliable_consumed_force_ack
+        let threshold = match &self.read_tx {
+            Some(_) => self.cfg.recv_buffer.get() as usize / 10,
+            None => 0,
+        };
+        self.rxed_reliable_consumed_since_last_ack > threshold
     }
 
     /// Handles a received acknowledgement.
