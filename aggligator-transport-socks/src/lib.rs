@@ -42,6 +42,20 @@ pub enum Socks5Target {
     Domain(String, u16),
 }
 
+impl Socks5Target {
+    /// Parses a target address, using `default_port` if it does not specify a port number.
+    ///
+    /// A target that is not an IP address is passed to the proxy as domain name
+    /// and thus resolved by the proxy.
+    ///
+    /// The result can be passed as target to [`Socks5Connector::new`].
+    pub fn parse(target: &str, default_port: u16) -> Result<Self> {
+        let target = with_default_port(target, default_port);
+        let target = target.into_target_addr().map_err(|err| Error::new(ErrorKind::InvalidInput, err))?;
+        Ok(target.into())
+    }
+}
+
 impl fmt::Display for Socks5Target {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -122,21 +136,21 @@ impl LinkTag for Socks5LinkTag {
     }
 }
 
-/// Adds the default proxy port to a proxy specification that does not contain a port number.
-fn with_default_port(proxy: &str) -> String {
-    if proxy.parse::<SocketAddr>().is_ok() {
-        return proxy.to_string();
+/// Adds the specified port to an address that does not contain a port number.
+fn with_default_port(addr: &str, default_port: u16) -> String {
+    if addr.parse::<SocketAddr>().is_ok() {
+        return addr.to_string();
     }
 
-    if let Ok(ip) = proxy.parse::<IpAddr>() {
-        return SocketAddr::new(ip, DEFAULT_PROXY_PORT).to_string();
+    if let Ok(ip) = addr.parse::<IpAddr>() {
+        return SocketAddr::new(ip, default_port).to_string();
     }
 
-    if proxy.rsplit_once(':').is_some_and(|(_, port)| port.parse::<u16>().is_ok()) {
-        return proxy.to_string();
+    if addr.rsplit_once(':').is_some_and(|(_, port)| port.parse::<u16>().is_ok()) {
+        return addr.to_string();
     }
 
-    format!("{proxy}:{DEFAULT_PROXY_PORT}")
+    format!("{addr}:{default_port}")
 }
 
 /// SOCKS5 transport for outgoing connections.
@@ -160,15 +174,17 @@ impl fmt::Display for Socks5Connector {
 }
 
 impl Socks5Connector {
-    /// Creates a SOCKS5 transport for a target through one or more proxies.
-    ///
-    /// The target hostname is resolved by each proxy.
+    /// Creates a SOCKS5 transport to a target through one or more proxies.
     ///
     /// `proxies` can contain IP addresses and hostnames, including port numbers.
     /// If an entry does not specify a port number, [`DEFAULT_PROXY_PORT`] is used.
     /// Proxy hostnames are resolved locally and one link is established for each
     /// resolved IP address. Resolution is retried periodically, thus DNS updates
     /// will be taken into account without the need to recreate this transport.
+    ///
+    /// `target` is the address the proxies should connect to. A target hostname is
+    /// passed to the proxies as domain name and thus resolved by each proxy.
+    /// Use [`Socks5Target::parse`] to specify a target with a default port number.
     ///
     /// It is *not* checked at creation that the proxies can be resolved.
     ///
@@ -177,7 +193,8 @@ impl Socks5Connector {
     pub fn new<'a>(
         proxies: impl IntoIterator<Item = impl AsRef<str>>, target: impl IntoTargetAddr<'a>,
     ) -> Result<Self> {
-        let proxies: Vec<_> = proxies.into_iter().map(|proxy| with_default_port(proxy.as_ref())).collect();
+        let proxies: Vec<_> =
+            proxies.into_iter().map(|proxy| with_default_port(proxy.as_ref(), DEFAULT_PROXY_PORT)).collect();
         if proxies.is_empty() {
             return Err(Error::new(ErrorKind::InvalidInput, "at least one proxy is required"));
         }

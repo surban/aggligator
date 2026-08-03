@@ -1,4 +1,5 @@
 use super::*;
+use std::net::Ipv6Addr;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpListener,
@@ -11,13 +12,33 @@ fn rejects_empty_proxy_list() {
 }
 
 #[test]
-fn adds_default_proxy_port() {
-    assert_eq!(with_default_port("proxy.example"), format!("proxy.example:{DEFAULT_PROXY_PORT}"));
-    assert_eq!(with_default_port("proxy.example:4242"), "proxy.example:4242");
-    assert_eq!(with_default_port("127.0.0.1"), format!("127.0.0.1:{DEFAULT_PROXY_PORT}"));
-    assert_eq!(with_default_port("127.0.0.1:4242"), "127.0.0.1:4242");
-    assert_eq!(with_default_port("::1"), format!("[::1]:{DEFAULT_PROXY_PORT}"));
-    assert_eq!(with_default_port("[::1]:4242"), "[::1]:4242");
+fn adds_default_port() {
+    assert_eq!(with_default_port("proxy.example", 1080), "proxy.example:1080");
+    assert_eq!(with_default_port("proxy.example:4242", 1080), "proxy.example:4242");
+    assert_eq!(with_default_port("127.0.0.1", 1080), "127.0.0.1:1080");
+    assert_eq!(with_default_port("127.0.0.1:4242", 1080), "127.0.0.1:4242");
+    assert_eq!(with_default_port("::1", 1080), "[::1]:1080");
+    assert_eq!(with_default_port("[::1]:4242", 1080), "[::1]:4242");
+}
+
+#[test]
+fn parses_target() {
+    assert_eq!(
+        Socks5Target::parse("target.example", 4242).unwrap(),
+        Socks5Target::Domain("target.example".into(), 4242)
+    );
+    assert_eq!(
+        Socks5Target::parse("target.example:1234", 4242).unwrap(),
+        Socks5Target::Domain("target.example".into(), 1234)
+    );
+    assert_eq!(
+        Socks5Target::parse("127.0.0.1", 4242).unwrap(),
+        Socks5Target::Ip(SocketAddr::from(([127, 0, 0, 1], 4242)))
+    );
+    assert_eq!(
+        Socks5Target::parse("[::1]:1234", 4242).unwrap(),
+        Socks5Target::Ip(SocketAddr::from((Ipv6Addr::LOCALHOST, 1234)))
+    );
 }
 
 #[tokio::test]
@@ -63,7 +84,7 @@ async fn connects_through_proxy() {
         let domain_len = socket.read_u8().await.unwrap() as usize;
         let mut domain = vec![0; domain_len];
         socket.read_exact(&mut domain).await.unwrap();
-        assert_eq!(domain, b"127.0.0.1");
+        assert_eq!(domain, b"target.example");
         assert_eq!(socket.read_u16().await.unwrap(), 4242);
 
         socket.write_all(&[5, 0, 0, 1, 127, 0, 0, 1, 0, 0]).await.unwrap();
@@ -73,9 +94,9 @@ async fn connects_through_proxy() {
         socket.write_all(b"pong").await.unwrap();
     });
 
-    let target = TargetAddr::Domain(Cow::Borrowed("127.0.0.1"), 4242);
+    let target = Socks5Target::parse("target.example", 4242).unwrap();
     let connector = Socks5Connector::new([proxy.to_string()], target.clone()).unwrap();
-    let tag = Socks5LinkTag::new(proxy, target.into());
+    let tag = Socks5LinkTag::new(proxy, target);
     let stream = connector.connect(&tag).await.unwrap();
     let StreamBox::Io(mut stream) = stream else { panic!("expected IO stream") };
     stream.write_all(b"ping").await.unwrap();

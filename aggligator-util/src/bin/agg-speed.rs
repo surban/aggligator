@@ -35,6 +35,7 @@ use aggligator_monitor::{
     monitor::{format_speed, interactive_monitor},
     speed::{INTERVAL, speed_test},
 };
+use aggligator_transport_socks::{Socks5Connector, Socks5Target};
 use aggligator_transport_tcp::{IpVersion, TcpAcceptor, TcpConnector, TcpLinkFilter};
 use aggligator_transport_websocket::{WebSocketAcceptor, WebSocketConnector};
 use aggligator_util::{init_log, load_cfg, parse_tcp_link_filter, print_default_cfg, wait_sigterm};
@@ -268,6 +269,17 @@ pub struct ClientCli {
     /// interface-ip: one link for each pair of local interface and remote IP address.
     #[arg(long, value_parser = parse_tcp_link_filter, default_value = "interface-interface")]
     tcp_link_filter: TcpLinkFilter,
+    /// SOCKS5 proxy server names or IP addresses, optionally with port numbers.
+    ///
+    /// One link is established through each proxy.
+    /// The default proxy port number is 1080.
+    #[arg(long)]
+    socks: Vec<String>,
+    /// Target server name or IP address reached through the SOCKS5 proxies.
+    ///
+    /// Defaults to the first TCP target.
+    #[arg(long)]
+    socks_target: Option<String>,
     /// WebSocket hosts or URLs.
     ///
     /// Default server port number is 8080 and path is /agg-speed.
@@ -328,6 +340,19 @@ impl ClientCli {
             tcp_connector.set_link_filter(self.tcp_link_filter);
             targets.push(tcp_connector.to_string());
             connector.add(tcp_connector);
+        }
+
+        if !self.socks.is_empty() {
+            let target = self
+                .socks_target
+                .clone()
+                .or_else(|| self.tcp.first().cloned())
+                .context("specify the target reached through the SOCKS5 proxies using --socks-target")?;
+            let target = Socks5Target::parse(&target, TCP_PORT).context("invalid SOCKS5 target")?;
+            let socks_connector =
+                Socks5Connector::new(self.socks.clone(), target).context("cannot use SOCKS5 proxies")?;
+            targets.push(socks_connector.to_string());
+            connector.add(socks_connector);
         }
 
         #[cfg(feature = "bluer")]

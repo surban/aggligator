@@ -118,6 +118,7 @@ dependencies = [
  "aggligator",
  "aggligator-monitor",
  "aggligator-transport-bluer",
+ "aggligator-transport-socks",
  "aggligator-transport-tcp",
  "aggligator-transport-usb",
  "aggligator-transport-websocket",

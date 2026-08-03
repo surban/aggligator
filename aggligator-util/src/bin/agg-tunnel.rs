@@ -31,6 +31,7 @@ use aggligator::{
     transport::{AcceptorBuilder, ConnectingTransport, ConnectorBuilder, LinkTagBox},
 };
 use aggligator_monitor::monitor::{interactive_monitor, watch_tags};
+use aggligator_transport_socks::{Socks5Connector, Socks5Target};
 use aggligator_transport_tcp::{IpVersion, TcpAcceptor, TcpConnector, TcpLinkFilter};
 use aggligator_util::{init_log, load_cfg, parse_tcp_link_filter, print_default_cfg, wait_sigterm};
 
@@ -160,6 +161,17 @@ pub struct ClientCli {
     /// interface-ip: one link for each pair of local interface and remote IP address.
     #[arg(long, value_parser = parse_tcp_link_filter, default_value = "interface-interface")]
     tcp_link_filter: TcpLinkFilter,
+    /// SOCKS5 proxy server names or IP addresses, optionally with port numbers.
+    ///
+    /// One link is established through each proxy.
+    /// The default proxy port number is 1080.
+    #[arg(long)]
+    socks: Vec<String>,
+    /// Target server name or IP address reached through the SOCKS5 proxies.
+    ///
+    /// Defaults to the first TCP target.
+    #[arg(long)]
+    socks_target: Option<String>,
     /// Bluetooth RFCOMM server address.
     #[cfg(feature = "bluer")]
     #[arg(long)]
@@ -198,6 +210,28 @@ impl ClientCli {
                 }
                 Err(err) => {
                     eprintln!("cannot use TCP target: {err}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let socks_connector = if !self.socks.is_empty() {
+            let target = self
+                .socks_target
+                .clone()
+                .or_else(|| self.tcp.first().cloned())
+                .context("specify the target reached through the SOCKS5 proxies using --socks-target")?;
+            let target = Socks5Target::parse(&target, TCP_PORT).context("invalid SOCKS5 target")?;
+            match Socks5Connector::new(self.socks.clone(), target) {
+                Ok(socks) => {
+                    targets.push(socks.to_string());
+                    watch_conn.push(Box::new(socks.clone()));
+                    Some(socks)
+                }
+                Err(err) => {
+                    eprintln!("cannot use SOCKS5 proxies: {err}");
                     None
                 }
             }
@@ -296,6 +330,7 @@ impl ClientCli {
             let disabled_tags_rx = disabled_tags_rx.clone();
             let port_cfg = cfg.clone();
             let tcp_connector = tcp_connector.clone();
+            let socks_connector = socks_connector.clone();
             #[cfg(feature = "bluer")]
             let rfcomm_connector = rfcomm_connector.clone();
             #[cfg(feature = "usb-host")]
@@ -317,6 +352,9 @@ impl ClientCli {
 
                     let mut connector = builder.build();
                     if let Some(c) = tcp_connector.clone() {
+                        connector.add(c);
+                    }
+                    if let Some(c) = socks_connector.clone() {
                         connector.add(c);
                     }
                     #[cfg(feature = "bluer")]
