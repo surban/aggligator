@@ -526,7 +526,7 @@ impl ClientCli {
                 data_limit: self.limit,
                 time_limit: self.time,
                 send_speed: tx_speed,
-                recv_speed: tx_speed,
+                recv_speed: rx_speed,
             };
             println!("{}", serde_json::to_string_pretty(&report).unwrap());
         } else {
