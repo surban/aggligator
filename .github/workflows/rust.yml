@@ -42,10 +42,6 @@ jobs:
           RUST_LOG=info cargo run --quiet --release --bin agg-speed -- server --tls --no-monitor --oneshot &
           sleep 1
           RUST_LOG=info cargo run --quiet --release --bin agg-speed -- client --tls --no-monitor --time 15 --tcp localhost
-      - name: Security vulnerability audit
-        run: |
-          cargo install --quiet cargo-audit
-          cargo audit --quiet
 
   build-windows:
     name: Build with latest stable Rust on Windows

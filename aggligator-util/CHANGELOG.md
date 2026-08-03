@@ -5,6 +5,22 @@ All notable changes to aggligator utilities will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.19.0 - 2026-08-03
+### Added
+- agg-speed and agg-tunnel: support for links through SOCKS5 proxies using the
+  new `--socks` and `--socks-target` options
+### Changed
+- update Aggligator to 0.10.0, which considerably improves the achievable
+  connection speed
+- minimum supported Rust version is 1.97
+### Fixed
+- agg-speed: the JSON report contained the send speed in the receive speed field
+
+## 0.18.12 - 2026-07-31
+### Changed
+- update Aggligator to 0.9.12 to close a potential denial of service attack
+  by a malicious remote endpoint causing memory exhaustion
+
 ## 0.18.11 - 2026-04-13
 ### Changed
 - update Aggligator to 0.9.11

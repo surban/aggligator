@@ -1,6 +1,6 @@
 [package]
 name = "aggligator-transport-usb"
-version = "0.7.0"
+version = "0.8.0"
 description = "Aggligator transport: USB"
 categories = ["asynchronous", "network-programming"]
 keywords = ["aggligator", "aggligator-transport"]
@@ -17,7 +17,7 @@ host = ["upc/host", "dep:nusb"]
 device = ["upc/device", "usb-gadget"]
 
 [dependencies]
-aggligator = { version = "0.9.11", path = "../aggligator" }
+aggligator = { version = "0.10.0", path = "../aggligator" }
 
 async-trait = { workspace = true }
 futures = { workspace = true }

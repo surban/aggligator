@@ -12,7 +12,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-aggligator = { version = "0.9.11", path = "../aggligator" }
+aggligator = { version = "0.10.0", path = "../aggligator" }
 
 async-trait = { workspace = true }
 tokio = { workspace = true, features = ["net", "sync", "time"] }

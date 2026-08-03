@@ -5,6 +5,59 @@ All notable changes to Aggligator will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.10.0 - 2026-08-03
+### Added
+- link-specific configuration via the new `LinkCfg` struct, which can be
+  specified globally using `Cfg::link`, per transport using
+  `Connector::set_link_cfg` and `Acceptor::set_link_cfg`, per link tag using
+  `LinkTag::link_cfg` and changed at runtime using `Link::set_link_cfg`
+- configuration options for explicit and automatic flushing of links:
+  `Cfg::ignore_flush`, `LinkCfg::flush_interval`, `LinkCfg::ack_flush_interval`
+  and `LinkCfg::unflushed_limit`
+- configurable schedule for increasing the amount of unacknowledged data sent
+  over a link (`LinkCfg::unacked_increase`), allowing much faster discovery of
+  the available bandwidth
+- `Cfg::link_max_ping_spread` option to exclude links that are much slower
+  than the fastest link
+- `LinkCfg::test_after_ack_timeout` option to retest a link after an
+  acknowledgement timeout
+- `LinkCfg::ack_timeout_resent_factor` and `LinkCfg::ack_timeout_unreliable_factor`
+  options for fine-tuning of acknowledgement timeouts
+- `LinkCfg::io_packet_size` option for the packet size of IO-stream-based links
+- `ConnectingTransport::link_disconnected` is called when a link has been
+  disconnected, allowing a transport to react, for example by rescanning the
+  available network interfaces
+- `Control::cfg` provides access to the configuration of a connection
+- `IoTx` and `IoRx` can be created with an explicit buffer capacity
+### Changed
+- **breaking:** migration to Rust edition 2024 and minimum supported Rust
+  version 1.97
+- **breaking:** link-specific options have been moved from `Cfg` into `LinkCfg`
+  for example `Cfg::link_ping_timeout` is now `Cfg::link.ping_timeout`
+- **breaking:** `Control::add` and `Control::add_io` take the link-specific
+  configuration as an additional argument
+- **breaking:** the fields of `IoTx` and `IoRx` are now private
+- **breaking:** the variant `AbortedByServer` has been added to `AddLinkError`,
+  `DisconnectReason`, `SendError`, `RecvError` and `TaskError`, to indicate
+  that a connection has been closed by the server while all links were disconnected
+- default configuration has been retuned for significantly higher throughput
+  and faster reaction to link failures: larger send and receive buffers,
+  shorter link test and non-working timeouts, automatic acknowledgement
+  flushing and a limited amount of link test data
+- links that are blocked or unusable are tested and reused faster
+- log messages contain the link tag and connection id, making them much easier
+  to follow
+### Fixed
+- data is not resent over the link it was originally sent on
+- flushing is completed before the sender sink reports readiness
+
+## 0.9.12 - 2026-07-31
+### Fixed
+- Denial of service due to remotely triggered memory exhaustion:
+  a malicious remote endpoint could send a reliable message with a large
+  sequence number offset, triggering a huge memory allocation.
+  This is fixed by limiting the receive queue size to roughly 1 MB.
+
 ## 0.9.11 - 2026-04-13
 ### Fixed
 - panic in SenderSink::poll_flush during teardown
