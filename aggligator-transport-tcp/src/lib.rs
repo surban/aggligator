@@ -193,6 +193,12 @@ pub enum TcpLinkFilter {
     InterfaceIp,
 }
 
+/// Function for setting up a TCP socket before connecting.
+type SocketSetupFn = Arc<dyn Fn(&TcpSocket, &TcpLinkTag) -> Result<()> + Send + Sync>;
+
+/// Function for setting up a TCP stream after it has been established.
+type StreamSetupFn = Arc<dyn Fn(&TcpStream, &TcpLinkTag) -> Result<()> + Send + Sync>;
+
 /// TCP transport for outgoing connections.
 ///
 /// This transport is IO-stream based.
@@ -204,8 +210,8 @@ pub struct TcpConnector {
     link_filter: TcpLinkFilter,
     multi_interface: bool,
     interface_filter: Arc<dyn Fn(&NetworkInterface) -> bool + Send + Sync>,
-    socket_setup: Arc<dyn Fn(&TcpSocket, &TcpLinkTag) -> Result<()> + Send + Sync>,
-    stream_setup: Arc<dyn Fn(&TcpStream, &TcpLinkTag) -> Result<()> + Send + Sync>,
+    socket_setup: SocketSetupFn,
+    stream_setup: StreamSetupFn,
     link_disconnected: Arc<Notify>,
 }
 
@@ -501,7 +507,7 @@ impl ConnectingTransport for TcpConnector {
 /// This transport is IO-stream based.
 pub struct TcpAcceptor {
     listeners: Vec<TcpListener>,
-    stream_setup: Arc<dyn Fn(&TcpStream, &TcpLinkTag) -> Result<()> + Send + Sync>,
+    stream_setup: StreamSetupFn,
 }
 
 impl fmt::Debug for TcpAcceptor {

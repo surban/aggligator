@@ -105,6 +105,12 @@ impl LinkTag for OutgoingWebSocketLinkTag {
     }
 }
 
+/// Function for setting up a TCP socket before connecting.
+type SocketSetupFn = Arc<dyn Fn(&TcpSocket, &OutgoingWebSocketLinkTag) -> Result<()> + Send + Sync>;
+
+/// Function for setting up a TCP stream after it has been established.
+type StreamSetupFn = Arc<dyn Fn(&TcpStream, &OutgoingWebSocketLinkTag) -> Result<()> + Send + Sync>;
+
 /// WebSocket transport for outgoing connections.
 ///
 /// This transport is packet-based.
@@ -117,8 +123,8 @@ pub struct WebSocketConnector {
     web_socket_config: Option<WebSocketConfig>,
     multi_interface: bool,
     interface_filter: Arc<dyn Fn(&NetworkInterface) -> bool + Send + Sync>,
-    socket_setup: Arc<dyn Fn(&TcpSocket, &OutgoingWebSocketLinkTag) -> Result<()> + Send + Sync>,
-    stream_setup: Arc<dyn Fn(&TcpStream, &OutgoingWebSocketLinkTag) -> Result<()> + Send + Sync>,
+    socket_setup: SocketSetupFn,
+    stream_setup: StreamSetupFn,
     link_disconnected: Arc<Notify>,
 }
 
