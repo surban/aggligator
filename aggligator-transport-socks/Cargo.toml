@@ -15,7 +15,8 @@ repository.workspace = true
 aggligator = { version = "0.9.11", path = "../aggligator" }
 
 async-trait = { workspace = true }
-tokio = { workspace = true, features = ["net", "sync"] }
+tokio = { workspace = true, features = ["net", "sync", "time"] }
+tracing = { workspace = true }
 
 tokio-socks = "0.5"
 

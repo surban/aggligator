@@ -19,15 +19,19 @@ use std::{
     borrow::Cow,
     cmp::Ordering,
     collections::HashSet,
-    fmt, future,
+    fmt,
     hash::{Hash, Hasher},
     io::{Error, ErrorKind, Result},
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
+    time::Duration,
 };
-use tokio::sync::watch;
+use tokio::{net::lookup_host, sync::watch, time::sleep};
 use tokio_socks::{IntoTargetAddr, TargetAddr, tcp::Socks5Stream};
 
 static NAME: &str = "socks5";
+
+/// Port used when a proxy is specified without a port number.
+pub const DEFAULT_PROXY_PORT: u16 = 1080;
 
 /// Target for a SOCKS5 connection.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -118,22 +122,39 @@ impl LinkTag for Socks5LinkTag {
     }
 }
 
+/// Adds the default proxy port to a proxy specification that does not contain a port number.
+fn with_default_port(proxy: &str) -> String {
+    if proxy.parse::<SocketAddr>().is_ok() {
+        return proxy.to_string();
+    }
+
+    if let Ok(ip) = proxy.parse::<IpAddr>() {
+        return SocketAddr::new(ip, DEFAULT_PROXY_PORT).to_string();
+    }
+
+    if proxy.rsplit_once(':').is_some_and(|(_, port)| port.parse::<u16>().is_ok()) {
+        return proxy.to_string();
+    }
+
+    format!("{proxy}:{DEFAULT_PROXY_PORT}")
+}
+
 /// SOCKS5 transport for outgoing connections.
 ///
 /// This transport establishes one IO-stream-based link through each configured proxy.
 #[derive(Debug, Clone)]
 pub struct Socks5Connector {
-    proxies: Vec<SocketAddr>,
+    proxies: Vec<String>,
     target: Socks5Target,
+    resolve_interval: Duration,
 }
 
 impl fmt::Display for Socks5Connector {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let proxies: Vec<_> = self.proxies.iter().map(ToString::to_string).collect();
-        if proxies.len() > 1 {
-            write!(f, "[{}] -> {}", proxies.join(", "), self.target)
+        if self.proxies.len() > 1 {
+            write!(f, "[{}] -> {}", self.proxies.join(", "), self.target)
         } else {
-            write!(f, "{} -> {}", proxies[0], self.target)
+            write!(f, "{} -> {}", self.proxies[0], self.target)
         }
     }
 }
@@ -142,21 +163,49 @@ impl Socks5Connector {
     /// Creates a SOCKS5 transport for a target through one or more proxies.
     ///
     /// The target hostname is resolved by each proxy.
-    /// Proxies must be provided as socket addresses.
     ///
-    /// Only a single link per proxy is being used, even when the local and/or remote
-    /// endpoints provide more than one network interface.
+    /// `proxies` can contain IP addresses and hostnames, including port numbers.
+    /// If an entry does not specify a port number, [`DEFAULT_PROXY_PORT`] is used.
+    /// Proxy hostnames are resolved locally and one link is established for each
+    /// resolved IP address. Resolution is retried periodically, thus DNS updates
+    /// will be taken into account without the need to recreate this transport.
+    ///
+    /// It is *not* checked at creation that the proxies can be resolved.
+    ///
+    /// Only a single link per proxy IP address is being used, even when the local and/or
+    /// remote endpoints provide more than one network interface.
     pub fn new<'a>(
-        proxies: impl IntoIterator<Item = SocketAddr>, target: impl IntoTargetAddr<'a>,
+        proxies: impl IntoIterator<Item = impl AsRef<str>>, target: impl IntoTargetAddr<'a>,
     ) -> Result<Self> {
-        let proxies: Vec<_> = proxies.into_iter().collect();
+        let proxies: Vec<_> = proxies.into_iter().map(|proxy| with_default_port(proxy.as_ref())).collect();
         if proxies.is_empty() {
             return Err(Error::new(ErrorKind::InvalidInput, "at least one proxy is required"));
         }
 
         let target = target.into_target_addr().map_err(|err| Error::new(ErrorKind::InvalidInput, err))?.into();
 
-        Ok(Self { proxies, target })
+        Ok(Self { proxies, target, resolve_interval: Duration::from_secs(10) })
+    }
+
+    /// Sets the interval for re-resolving the proxy hostnames.
+    pub fn set_resolve_interval(&mut self, resolve_interval: Duration) {
+        self.resolve_interval = resolve_interval;
+    }
+
+    /// Resolves the proxies to socket addresses.
+    async fn resolve(&self) -> Vec<SocketAddr> {
+        let mut all_addrs = HashSet::new();
+
+        for proxy in &self.proxies {
+            match lookup_host(proxy).await {
+                Ok(addrs) => all_addrs.extend(addrs),
+                Err(err) => tracing::warn!(%proxy, %err, "cannot resolve SOCKS5 proxy"),
+            }
+        }
+
+        let mut all_addrs: Vec<_> = all_addrs.into_iter().collect();
+        all_addrs.sort();
+        all_addrs
     }
 }
 
@@ -167,13 +216,17 @@ impl ConnectingTransport for Socks5Connector {
     }
 
     async fn link_tags(&self, tx: watch::Sender<HashSet<LinkTagBox>>) -> Result<()> {
-        let tags = self
-            .proxies
-            .iter()
-            .map(|proxy| Box::new(Socks5LinkTag::new(*proxy, self.target.clone())) as LinkTagBox)
-            .collect();
-        tx.send_replace(tags);
-        future::pending().await
+        loop {
+            let tags = self
+                .resolve()
+                .await
+                .into_iter()
+                .map(|proxy| Box::new(Socks5LinkTag::new(proxy, self.target.clone())) as LinkTagBox)
+                .collect();
+            tx.send_replace(tags);
+
+            sleep(self.resolve_interval).await;
+        }
     }
 
     async fn connect(&self, tag: &dyn LinkTag) -> Result<StreamBox> {

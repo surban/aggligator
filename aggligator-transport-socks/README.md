@@ -6,7 +6,9 @@
 
 This crate provides unauthenticated SOCKS5 proxy transport for the [Aggligator link aggregator].
 
-Each proxy is configured with a socket address and provides one link to the target.
+Each proxy is configured with an IP address or hostname, optionally including a port
+number, and provides one link to the target. Proxy hostnames are resolved locally and
+re-resolved periodically; one link is established per resolved IP address.
 Target domain names are resolved by the proxy.
 
 [Aggligator link aggregator]: https://crates.io/crates/aggligator

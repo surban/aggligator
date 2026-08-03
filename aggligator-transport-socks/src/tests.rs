@@ -6,14 +6,25 @@ use tokio::{
 
 #[test]
 fn rejects_empty_proxy_list() {
-    let err = Socks5Connector::new([], ("target.example", 4242)).unwrap_err();
+    let err = Socks5Connector::new(Vec::<String>::new(), ("target.example", 4242)).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::InvalidInput);
+}
+
+#[test]
+fn adds_default_proxy_port() {
+    assert_eq!(with_default_port("proxy.example"), format!("proxy.example:{DEFAULT_PROXY_PORT}"));
+    assert_eq!(with_default_port("proxy.example:4242"), "proxy.example:4242");
+    assert_eq!(with_default_port("127.0.0.1"), format!("127.0.0.1:{DEFAULT_PROXY_PORT}"));
+    assert_eq!(with_default_port("127.0.0.1:4242"), "127.0.0.1:4242");
+    assert_eq!(with_default_port("::1"), format!("[::1]:{DEFAULT_PROXY_PORT}"));
+    assert_eq!(with_default_port("[::1]:4242"), "[::1]:4242");
 }
 
 #[tokio::test]
 async fn publishes_one_link_for_each_proxy() {
     let proxies = [SocketAddr::from(([127, 0, 0, 1], 1080)), SocketAddr::from(([127, 0, 0, 2], 1080))];
-    let connector = Socks5Connector::new(proxies, ("target.example", 4242)).unwrap();
+    let connector =
+        Socks5Connector::new(proxies.map(|proxy| proxy.to_string()), ("target.example", 4242)).unwrap();
     let (tx, mut rx) = watch::channel(HashSet::new());
     let task = tokio::spawn(async move { connector.link_tags(tx).await });
 
@@ -63,7 +74,7 @@ async fn connects_through_proxy() {
     });
 
     let target = TargetAddr::Domain(Cow::Borrowed("127.0.0.1"), 4242);
-    let connector = Socks5Connector::new([proxy], target.clone()).unwrap();
+    let connector = Socks5Connector::new([proxy.to_string()], target.clone()).unwrap();
     let tag = Socks5LinkTag::new(proxy, target.into());
     let stream = connector.connect(&tag).await.unwrap();
     let StreamBox::Io(mut stream) = stream else { panic!("expected IO stream") };

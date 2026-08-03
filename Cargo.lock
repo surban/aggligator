@@ -62,6 +62,7 @@ dependencies = [
  "async-trait",
  "tokio",
  "tokio-socks",
+ "tracing",
 ]
 
 [[package]]
